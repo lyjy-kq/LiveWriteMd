@@ -13,6 +13,7 @@ import {
     mermaidSvgCache,
     setMermaidInitialized,
 } from './state.js';
+import { canStepMediaWidth } from './mediaWidth.js';
 
 /**
  * 预览浮层中图片查看器所需的信息。
@@ -627,6 +628,55 @@ export function createPreviewActionGroup(
     });
     group.appendChild(copyButton);
 
+    return group;
+}
+
+/**
+ * 创建媒体宽度调整按钮组（− / 百分比 / +）。
+ *
+ * 这个组会被塞进 createPreviewActionGroup 返回的同一个胶囊里，共用右下角
+ * 定位和底色，所以这里只负责按钮本身。
+ *
+ * @param percent - 当前宽度百分比
+ * @param subject - 被调整的对象名称，用于按钮提示，如“图片”“图表”
+ * @param onStep - 步进回调，参数为 -1（缩小）或 1（放大）
+ * @returns 按钮组容器
+ */
+export function createMediaResizeGroup(
+    percent: number,
+    subject: string,
+    onStep: (delta: number) => void
+): HTMLElement {
+    const group = document.createElement('div');
+    group.className = 'cm-md-resize-actions';
+
+    const shrinkButton = createPreviewActionButton({
+        title: `缩小${subject}宽度（当前 ${percent}%）`,
+        ariaLabel: `缩小${subject}宽度`,
+        icon: '−',
+        onClick: () => onStep(-1),
+    });
+    shrinkButton.classList.add('cm-md-resize-btn');
+    // 已经到最小档位时直接禁用，避免用户点到没有反应的按钮。
+    shrinkButton.disabled = !canStepMediaWidth(percent, -1);
+
+    const value = document.createElement('span');
+    value.className = 'cm-md-resize-value';
+    value.textContent = `${percent}%`;
+    value.title = `${subject}宽度为正文宽度的 ${percent}%`;
+
+    const growButton = createPreviewActionButton({
+        title: `放大${subject}宽度（当前 ${percent}%）`,
+        ariaLabel: `放大${subject}宽度`,
+        icon: '+',
+        onClick: () => onStep(1),
+    });
+    growButton.classList.add('cm-md-resize-btn');
+    growButton.disabled = !canStepMediaWidth(percent, 1);
+
+    group.appendChild(shrinkButton);
+    group.appendChild(value);
+    group.appendChild(growButton);
     return group;
 }
 

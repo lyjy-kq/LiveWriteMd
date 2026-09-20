@@ -219,7 +219,7 @@ export class WebviewMessageSender {
      * @returns void
      */
     public sendEditorAction(
-        action: 'insertImage' | 'setMode' | 'exportAsHtml' | 'downloadRemoteImages',
+        action: 'insertImage' | 'setMode' | 'exportAsHtml' | 'exportAsPdf' | 'downloadRemoteImages',
         mode?: 'live' | 'viewer' | 'source'
     ): void {
         this.vscode.postMessage({

@@ -22,6 +22,8 @@ export interface EditorContextMenuActions {
     onChangeMode: (mode: EditorMode) => void;
     /** 触发导出 HTML 操作。 */
     onExportAsHtml: () => void;
+    /** 触发导出 PDF 操作。 */
+    onExportAsPdf: () => void;
     /** 触发下载正文网络图片到本地操作。 */
     onDownloadRemoteImages: () => void;
     /** 切换大纲显示状态。 */
@@ -45,7 +47,12 @@ export class EditorContextMenu {
 
     /** 菜单项对应的按钮集合。 */
     private readonly buttons = new Map<
-        EditorMode | 'insert-image' | 'export-as-html' | 'download-remote-images' | 'toggle-outline',
+        | EditorMode
+        | 'insert-image'
+        | 'export-as-html'
+        | 'export-as-pdf'
+        | 'download-remote-images'
+        | 'toggle-outline',
         HTMLButtonElement
     >();
 
@@ -113,6 +120,7 @@ export class EditorContextMenu {
         const viewerButton = this.createMenuButton('viewer', '切换到查看模式');
         const sourceButton = this.createMenuButton('source', '切换到源码模式');
         const exportButton = this.createMenuButton('export-as-html', 'Export as HTML');
+        const exportPdfButton = this.createMenuButton('export-as-pdf', '导出为 PDF');
 
         const firstSeparator = document.createElement('div');
         firstSeparator.className = 'flowmd-editor-context-menu-separator';
@@ -128,6 +136,7 @@ export class EditorContextMenu {
         menu.appendChild(sourceButton);
         menu.appendChild(secondSeparator);
         menu.appendChild(exportButton);
+        menu.appendChild(exportPdfButton);
 
         document.body.appendChild(menu);
         this.buttons.set('insert-image', insertButton);
@@ -137,6 +146,7 @@ export class EditorContextMenu {
         this.buttons.set('viewer', viewerButton);
         this.buttons.set('source', sourceButton);
         this.buttons.set('export-as-html', exportButton);
+        this.buttons.set('export-as-pdf', exportPdfButton);
 
         menu.addEventListener('pointerdown', (event: PointerEvent) => {
             event.stopPropagation();
@@ -229,6 +239,7 @@ export class EditorContextMenu {
             | EditorMode
             | 'insert-image'
             | 'export-as-html'
+            | 'export-as-pdf'
             | 'download-remote-images'
             | 'toggle-outline',
         label: string
@@ -333,6 +344,7 @@ export class EditorContextMenu {
             | EditorMode
             | 'insert-image'
             | 'export-as-html'
+            | 'export-as-pdf'
             | 'download-remote-images'
             | 'toggle-outline'
             | undefined;
@@ -353,6 +365,11 @@ export class EditorContextMenu {
 
         if (action === 'export-as-html') {
             this.actions.onExportAsHtml();
+            return;
+        }
+
+        if (action === 'export-as-pdf') {
+            this.actions.onExportAsPdf();
             return;
         }
 
@@ -402,6 +419,7 @@ export class EditorContextMenu {
                 key === 'insert-image' ||
                 key === 'download-remote-images' ||
                 key === 'export-as-html' ||
+                key === 'export-as-pdf' ||
                 key === 'toggle-outline'
             ) {
                 continue;

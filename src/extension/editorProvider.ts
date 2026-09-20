@@ -36,6 +36,7 @@ import { getHtmlForWebview } from './webviewContent.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './configManager.js';
 import { exportMarkdownAsHtml } from './htmlExporter.js';
+import { exportMarkdownAsPdf } from './pdfExporter.js';
 import { handleSaveImage } from './imageSaveHandler.js';
 import { downloadRemoteImagesToAssets } from './remoteImageDownloadHandler.js';
 import { resolveFileLinkTarget } from './fileLinkResolver.js';
@@ -180,6 +181,25 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
     }
 
     /**
+     * 切换当前文档右侧大纲面板的显示状态。
+     *
+     * 可见性由 Webview 侧持有，这里只负责把切换意图转发过去，避免两边各存一份
+     * 状态造成不一致。
+     *
+     * @returns void
+     */
+    public toggleOutline(): void {
+        if (!this.activePanelInfo) {
+            vscode.window.showWarningMessage('FlowMD: 请在 FlowMD 编辑器中切换大纲。');
+            return;
+        }
+
+        const { panel, docUri } = this.activePanelInfo;
+        panel.webview.postMessage({ type: MESSAGE_TYPES.OUTLINE_TOGGLE });
+        Logger.info(`Outline toggled for: ${docUri}`);
+    }
+
+    /**
      * Insert an image via file picker dialog.
      * Alternative to drag & drop (which doesn't work in VS Code webviews).
      * Copies the selected image to the configured save folder and notifies the webview.
@@ -242,7 +262,7 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             Logger.error(`Image insert failed: ${errorMessage}`);
-            vscode.window.showErrorMessage(`鐢诲儚銇尶鍏ャ伀澶辨晽銇椼伨銇椼仧: ${errorMessage}`);
+            vscode.window.showErrorMessage(`FlowMD: 图片插入失败：${errorMessage}`);
         }
     }
 
@@ -295,7 +315,7 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             Logger.error(`Image insert from Explorer failed: ${errorMessage}`);
-            vscode.window.showErrorMessage(`鐢诲儚銇尶鍏ャ伀澶辨晽銇椼伨銇椼仧: ${errorMessage}`);
+            vscode.window.showErrorMessage(`FlowMD: 图片插入失败：${errorMessage}`);
         }
     }
 
@@ -830,6 +850,8 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
                     await this.downloadRemoteImages(document);
                 } else if (actionMsg.action === 'exportAsHtml') {
                     await exportMarkdownAsHtml(document.uri);
+                } else if (actionMsg.action === 'exportAsPdf') {
+                    await exportMarkdownAsPdf(document.uri);
                 } else if (actionMsg.action === 'setMode' && actionMsg.mode) {
                     this.setEditorMode(actionMsg.mode);
                 }

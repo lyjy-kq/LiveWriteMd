@@ -23,6 +23,7 @@ import { FlowMdEditorProvider, VIEW_TYPE } from './editorProvider.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './configManager.js';
 import { exportMarkdownAsHtml } from './htmlExporter.js';
+import { exportMarkdownAsPdf } from './pdfExporter.js';
 
 // =============================================================================
 // Constants
@@ -38,6 +39,8 @@ const COMMAND_EXIT_VIEWER = 'flowMd.exitViewerMode';
 const COMMAND_ENTER_SOURCE = 'flowMd.enterSourceMode';
 const COMMAND_ENTER_LIVE = 'flowMd.enterLiveMode';
 const COMMAND_EXPORT_HTML = 'flowMd.exportAsHtml';
+const COMMAND_EXPORT_PDF = 'flowMd.exportAsPdf';
+const COMMAND_TOGGLE_OUTLINE = 'flowMd.toggleOutline';
 const COMMAND_INSERT_IMAGE = 'flowMd.insertImage';
 const COMMAND_INSERT_IMAGE_FROM_EXPLORER = 'flowMd.insertImageFromExplorer';
 
@@ -171,6 +174,18 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand(COMMAND_EXPORT_HTML, exportMarkdownAsHtml)
     );
     Logger.debug(`Registered command: ${COMMAND_EXPORT_HTML}`);
+
+    // Register PDF export command
+    context.subscriptions.push(
+        vscode.commands.registerCommand(COMMAND_EXPORT_PDF, exportMarkdownAsPdf)
+    );
+    Logger.debug(`Registered command: ${COMMAND_EXPORT_PDF}`);
+
+    // Register outline toggle command (editor title bar button + command palette)
+    context.subscriptions.push(
+        vscode.commands.registerCommand(COMMAND_TOGGLE_OUTLINE, () => provider.toggleOutline())
+    );
+    Logger.debug(`Registered command: ${COMMAND_TOGGLE_OUTLINE}`);
 
     // Register insert image command (alternative to drag & drop)
     context.subscriptions.push(

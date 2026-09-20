@@ -39,7 +39,9 @@
     "qna": "marketplace",
     "activationEvents": [
         "onCustomEditor:flowMd.editor",
-        "onCommand:flowMd.exportAsHtml"
+        "onCommand:flowMd.exportAsHtml",
+        "onCommand:flowMd.exportAsPdf",
+        "onCommand:flowMd.toggleOutline"
     ],
     "main": "./dist/extension.js",
     "contributes": {
@@ -93,6 +95,17 @@
                 "command": "flowMd.exportAsHtml",
                 "title": "Export as HTML",
                 "category": "FlowMD"
+            },
+            {
+                "command": "flowMd.exportAsPdf",
+                "title": "Export as PDF",
+                "category": "FlowMD"
+            },
+            {
+                "command": "flowMd.toggleOutline",
+                "title": "FlowMD: 显示/隐藏大纲",
+                "category": "FlowMD",
+                "icon": "$(list-unordered)"
             },
             {
                 "command": "flowMd.insertImage",
@@ -149,6 +162,18 @@
                     "command": "flowMd.exportAsHtml",
                     "when": "resourceExtname == .md",
                     "group": "1_modification"
+                },
+                {
+                    "command": "flowMd.exportAsPdf",
+                    "when": "resourceExtname == .md",
+                    "group": "1_modification"
+                }
+            ],
+            "editor/title": [
+                {
+                    "command": "flowMd.toggleOutline",
+                    "when": "activeCustomEditorId == flowMd.editor",
+                    "group": "navigation@9"
                 }
             ]
         },
@@ -212,6 +237,12 @@
                     "default": "assets",
                     "description": "Folder name for saved images (relative to .md file). Default: assets"
                 },
+                "flowMd.pdfBrowserPath": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Path to the Edge/Chrome executable used for PDF export. Leave empty to auto-detect.",
+                    "markdownDescription": "导出 PDF 所用的 Edge/Chrome 可执行文件路径。留空则自动探测。"
+                },
                 "flowMd.defaultMode": {
                     "type": "string",
                     "enum": [
@@ -274,12 +305,28 @@
     },
     "dependencies": {
         "@codemirror/commands": "^6.10.1",
+        "@codemirror/lang-cpp": "^6.0.3",
+        "@codemirror/lang-css": "^6.3.1",
+        "@codemirror/lang-go": "^6.0.1",
+        "@codemirror/lang-html": "^6.4.12",
+        "@codemirror/lang-java": "^6.0.2",
+        "@codemirror/lang-javascript": "^6.2.5",
+        "@codemirror/lang-json": "^6.0.2",
         "@codemirror/lang-markdown": "^6.5.0",
+        "@codemirror/lang-php": "^6.0.2",
+        "@codemirror/lang-python": "^6.2.1",
+        "@codemirror/lang-rust": "^6.0.2",
+        "@codemirror/lang-sql": "^6.10.0",
+        "@codemirror/lang-xml": "^6.1.0",
+        "@codemirror/lang-yaml": "^6.1.3",
         "@codemirror/language": "^6.12.1",
         "@codemirror/language-data": "^6.5.2",
+        "@codemirror/legacy-modes": "^6.5.4",
+        "@codemirror/search": "^6.7.2",
         "@codemirror/state": "^6.5.4",
         "@codemirror/view": "^6.39.12",
         "@lezer/common": "^1.5.1",
+        "@lezer/highlight": "^1.2.3",
         "katex": "^0.16.28",
         "marked": "^16.2.0",
         "mermaid": "^11.12.2"

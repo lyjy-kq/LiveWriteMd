@@ -237,7 +237,70 @@ function escapeRegex(str: string): string {
 // =============================================================================
 
 /**
+ * 解析 `{width=NN%}` 形式的媒体宽度属性。
+ *
+ * 编辑器和导出的语法保持一致，这里只做读取，不做单位换算。
+ *
+ * @param text - 含属性文本的片段
+ * @returns 宽度百分比；没有属性或数值非法时返回 null
+ */
+function parseMediaWidthPercent(text: string): number | null {
+    const match = text.match(/\{width=(\d+)%\}/);
+    if (!match) {
+        return null;
+    }
+
+    const percent = Number.parseInt(match[1], 10);
+    if (!Number.isFinite(percent)) {
+        return null;
+    }
+
+    // 收敛到 25%–100%，避免手写的越界值把导出排版撑坏。
+    return Math.min(100, Math.max(25, percent));
+}
+
+/**
+ * 生成媒体宽度的内联变量声明。
+ *
+ * 样式表里统一用 `var(--flowmd-media-width, 75%)` 消费，所以调整过宽度的
+ * 图片和 Mermaid 图只要挂上这个变量就能覆盖默认值。
+ *
+ * @param percent - 宽度百分比
+ * @returns 可直接拼进 style 属性的声明
+ */
+function buildMediaWidthStyle(percent: number): string {
+    return `--flowmd-media-width:${percent}%`;
+}
+
+/**
+ * 把图片语法尾随的 `{width=NN%}` 转成内联宽度变量。
+ *
+ * marked 会把属性当成普通文本原样输出（`<img ...>{width=50%}`），
+ * 这里把它吸进 img 的 style，避免这串花括号出现在导出结果里。
+ *
+ * @param html - marked 渲染后的 HTML 片段
+ * @returns 处理后的 HTML 片段
+ */
+function applyImageWidthAttributes(html: string): string {
+    return html.replace(
+        /(<img\b[^>]*>)\s*\{width=(\d+)%\}/g,
+        (_match, imgTag: string, rawPercent: string) => {
+            const percent = parseMediaWidthPercent(`{width=${rawPercent}%}`);
+            if (percent === null) {
+                return imgTag;
+            }
+
+            // marked 不会给 img 生成 style，直接插在最前面即可。
+            return imgTag.replace(/^<img/, `<img style="${buildMediaWidthStyle(percent)}"`);
+        }
+    );
+}
+
+/**
  * Convert ```mermaid code blocks to <pre class="mermaid"> for CDN rendering.
+ *
+ * 围栏信息行支持 `mermaid 标题 {width=50%}`，宽度会转成内联变量，
+ * 让导出的图宽和编辑器里看到的一致。
  */
 function processMermaid(markdown: string): { text: string; hasMermaid: boolean } {
     let hasMermaid = false;
@@ -248,9 +311,14 @@ function processMermaid(markdown: string): { text: string; hasMermaid: boolean }
     while (i < lines.length) {
         const line = lines[i];
         const trimmed = line.trimStart();
+        const fenceMatch = trimmed.match(/^```\s*mermaid\b(.*)$/);
 
-        if (trimmed === '```mermaid' || trimmed === '``` mermaid') {
+        if (fenceMatch) {
             hasMermaid = true;
+            const widthPercent = parseMediaWidthPercent(fenceMatch[1]);
+            const styleAttribute =
+                widthPercent === null ? '' : ` style="${buildMediaWidthStyle(widthPercent)}"`;
+
             // Find closing ```
             let closingIdx = i + 1;
             while (closingIdx < lines.length && !lines[closingIdx].trimStart().startsWith('```')) {
@@ -258,7 +326,7 @@ function processMermaid(markdown: string): { text: string; hasMermaid: boolean }
             }
 
             const mermaidContent = lines.slice(i + 1, closingIdx).join('\n');
-            result.push(`<pre class="mermaid">`);
+            result.push(`<pre class="mermaid"${styleAttribute}>`);
             result.push(mermaidContent);
             result.push(`</pre>`);
             i = closingIdx + 1;
@@ -306,7 +374,10 @@ async function convertMarkdownToHtml(
     // 5. Restore math placeholders
     html = restoreMath(html, placeholders);
 
-    // 6. Append footnotes
+    // 6. 把图片尾随的宽度属性收进内联样式，保证导出宽度和编辑器一致
+    html = applyImageWidthAttributes(html);
+
+    // 7. Append footnotes
     if (footnotesHtml) {
         html += footnotesHtml;
     }
@@ -355,6 +426,75 @@ function escapeHtml(str: string): string {
 }
 
 // =============================================================================
+// Shared Export Helpers
+// =============================================================================
+
+/**
+ * 解析要导出的 Markdown 文件 URI。
+ *
+ * 优先使用调用方传入的 URI；没有时依次回退到活动文本编辑器和活动标签页，
+ * 这样资源管理器右键、编辑器标题栏按钮和命令面板可以共用同一套解析逻辑。
+ *
+ * @param uri - 调用方传入的候选 URI
+ * @returns 解析出的 Markdown 文件 URI；无法确定时返回 undefined
+ */
+export function resolveMarkdownTargetUri(uri?: vscode.Uri): vscode.Uri | undefined {
+    if (uri) {
+        return uri;
+    }
+
+    const activeEditor = vscode.window.activeTextEditor;
+    if (activeEditor && activeEditor.document.languageId === 'markdown') {
+        return activeEditor.document.uri;
+    }
+
+    // 自定义编辑器（FlowMD 自己）下没有 activeTextEditor，只能从活动标签页取 URI。
+    const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    if (activeTab?.input && typeof activeTab.input === 'object' && 'uri' in activeTab.input) {
+        return (activeTab.input as { uri: vscode.Uri }).uri;
+    }
+
+    return undefined;
+}
+
+/**
+ * 导出的渲染结果。
+ */
+export interface RenderedMarkdownExport {
+    /** 完整的独立 HTML 文档内容。 */
+    html: string;
+    /** 用于标题和文件名的文档名（不含扩展名）。 */
+    title: string;
+    /** 去掉 .md 扩展名后的绝对路径，作为导出文件的输出前缀。 */
+    basePath: string;
+}
+
+/**
+ * 把 Markdown 文件渲染成完整的独立 HTML 文档。
+ *
+ * HTML 导出和 PDF 导出共用这一步，保证两种导出的排版完全一致。
+ *
+ * @param uri - 目标 Markdown 文件 URI
+ * @returns 渲染结果，包含 HTML 文本、标题和输出路径前缀
+ */
+export async function renderMarkdownFile(uri: vscode.Uri): Promise<RenderedMarkdownExport> {
+    const fileContent = await vscode.workspace.fs.readFile(uri);
+    const markdown = Buffer.from(fileContent).toString('utf-8');
+
+    const { body, hasMermaid } = await convertMarkdownToHtml(markdown);
+
+    const mdPath = uri.fsPath;
+    const title = path.basename(mdPath, path.extname(mdPath));
+    const basePath = mdPath.replace(/\.md$/i, '');
+
+    return {
+        html: generateStandaloneHtml(body, title, hasMermaid),
+        title,
+        basePath,
+    };
+}
+
+// =============================================================================
 // Command Handler
 // =============================================================================
 
@@ -366,49 +506,21 @@ function escapeHtml(str: string): string {
  */
 export async function exportMarkdownAsHtml(uri?: vscode.Uri): Promise<void> {
     try {
-        // Resolve the target file URI
-        if (!uri) {
-            const activeEditor = vscode.window.activeTextEditor;
-            if (activeEditor && activeEditor.document.languageId === 'markdown') {
-                uri = activeEditor.document.uri;
-            } else {
-                // Try to get from active custom editor tab
-                const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
-                if (
-                    activeTab?.input &&
-                    typeof activeTab.input === 'object' &&
-                    'uri' in activeTab.input
-                ) {
-                    uri = (activeTab.input as { uri: vscode.Uri }).uri;
-                }
-            }
-        }
-
-        if (!uri) {
+        const targetUri = resolveMarkdownTargetUri(uri);
+        if (!targetUri) {
             vscode.window.showWarningMessage('FlowMD: No Markdown file selected.');
             return;
         }
 
-        Logger.info(`Exporting HTML: ${uri.fsPath}`);
+        Logger.info(`Exporting HTML: ${targetUri.fsPath}`);
 
-        // Read the Markdown file
-        const fileContent = await vscode.workspace.fs.readFile(uri);
-        const markdown = Buffer.from(fileContent).toString('utf-8');
+        const { html, basePath } = await renderMarkdownFile(targetUri);
+        const htmlPath = `${basePath}.html`;
 
-        // Convert to HTML
-        const { body, hasMermaid } = await convertMarkdownToHtml(markdown);
-
-        // Generate output path (foo.md → foo.html)
-        const mdPath = uri.fsPath;
-        const htmlPath = mdPath.replace(/\.md$/i, '.html');
-        const title = path.basename(mdPath, path.extname(mdPath));
-
-        // Generate standalone HTML
-        const html = generateStandaloneHtml(body, title, hasMermaid);
-
-        // Write the HTML file
-        const htmlUri = vscode.Uri.file(htmlPath);
-        await vscode.workspace.fs.writeFile(htmlUri, Buffer.from(html, 'utf-8'));
+        await vscode.workspace.fs.writeFile(
+            vscode.Uri.file(htmlPath),
+            Buffer.from(html, 'utf-8')
+        );
 
         Logger.info(`HTML exported: ${htmlPath}`);
         vscode.window.showInformationMessage(`FlowMD: Exported to ${path.basename(htmlPath)}`);

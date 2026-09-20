@@ -36,6 +36,13 @@ import {
     parseTableNode,
     splitMarkdownImageDestination,
 } from './helpers.js';
+import {
+    DEFAULT_MEDIA_WIDTH_PERCENT,
+    formatMediaWidthAttribute,
+    measureTrailingWidthAttribute,
+    parseMediaWidthPercent,
+    splitTrailingWidthAttribute,
+} from './mediaWidth.js';
 import { getMarkdownBlockRange } from './ranges.js';
 import { scrollPreserverExtension } from './scrollHack.js';
 import {
@@ -113,22 +120,73 @@ function updateImageTitleInSource(
     rawImageText: string,
     nextTitle: string
 ): void {
-    const wikiMatch = rawImageText.match(/^!\[\[([^\]\n]+?)\]\]$/);
+    // 先把宽度属性剥出来，改完标题再原样接回去，避免编辑标题时把宽度丢掉。
+    const { base, attribute } = splitTrailingWidthAttribute(rawImageText);
+
+    const wikiMatch = base.match(/^!\[\[([^\]\n]+?)\]\]$/);
     if (wikiMatch) {
         const [rawTarget] = wikiMatch[1].split('|', 2);
         const title = nextTitle.trim();
         const nextValue = title ? `![[${rawTarget.trim()}|${title}]]` : `![[${rawTarget.trim()}]]`;
-        replaceSourceRange(view, from, to, nextValue);
+        replaceSourceRange(view, from, to, `${nextValue}${attribute}`);
         return;
     }
 
-    const markdownMatch = rawImageText.match(/^!\[([^\]]*?)\]\(([^)\n]+)\)$/);
+    const markdownMatch = base.match(/^!\[([^\]]*?)\]\(([^)\n]+)\)$/);
     if (markdownMatch) {
         const destination = markdownMatch[2];
         const title = nextTitle.trim();
         const nextValue = `![${title}](${destination})`;
-        replaceSourceRange(view, from, to, nextValue);
+        replaceSourceRange(view, from, to, `${nextValue}${attribute}`);
     }
+}
+
+/**
+ * 回写图片的宽度属性。
+ *
+ * `from`/`to` 已经覆盖了原有的宽度属性（decoration 范围特意往后多圈了一段），
+ * 所以这里在去掉属性后的基础语法上重新追加，不会出现属性叠加。
+ *
+ * @param view - 当前 CodeMirror 视图
+ * @param from - 图片语法起始位置（含尾随属性）
+ * @param to - 图片语法结束位置（含尾随属性）
+ * @param rawImageText - 整段原始文本
+ * @param nextPercent - 新的宽度百分比
+ * @returns void
+ */
+function updateImageWidthInSource(
+    view: EditorView,
+    from: number,
+    to: number,
+    rawImageText: string,
+    nextPercent: number
+): void {
+    const { base } = splitTrailingWidthAttribute(rawImageText);
+    replaceSourceRange(view, from, to, `${base}${formatMediaWidthAttribute(nextPercent)}`);
+}
+
+/**
+ * 回写 Mermaid 代码块 info 行里的宽度属性。
+ *
+ * info 行同时承载标题（`mermaid 标题`）和宽度（`{width=50%}`），
+ * 重写时先把宽度剥掉，再把新属性接到标题后面。
+ *
+ * @param view - 当前 CodeMirror 视图
+ * @param codeInfoFrom - CodeInfo 节点起始位置
+ * @param lineTo - fenced code opener 行尾部位置
+ * @param nextPercent - 新的宽度百分比
+ * @returns void
+ */
+function updateMermaidWidthInSource(
+    view: EditorView,
+    codeInfoFrom: number,
+    lineTo: number,
+    nextPercent: number
+): void {
+    const rawInfo = view.state.sliceDoc(codeInfoFrom, lineTo);
+    const baseInfo = splitTrailingWidthAttribute(rawInfo).base.trimEnd();
+    const attribute = formatMediaWidthAttribute(nextPercent);
+    replaceSourceRange(view, codeInfoFrom, lineTo, attribute ? `${baseInfo} ${attribute}` : baseInfo);
 }
 
 /**
@@ -151,7 +209,9 @@ function updateMermaidTitleInSource(
 ): void {
     const title = nextTitle.trim();
     const nextValue = title ? `mermaid ${title}` : 'mermaid';
-    replaceSourceRange(view, codeInfoFrom, lineTo, nextValue);
+    // 同图片：标题写在 info 行前面，宽度属性原样保留在后面。
+    const attribute = splitTrailingWidthAttribute(view.state.sliceDoc(codeInfoFrom, lineTo)).attribute;
+    replaceSourceRange(view, codeInfoFrom, lineTo, `${nextValue}${attribute}`);
 }
 
 // =============================================================================
@@ -649,10 +709,36 @@ function collectImageDecorations(
             }
 
             const altText = alias ?? '';
+            // wiki 图片同样支持尾随宽度属性，范围要把属性一起圈进来。
+            const wikiFrom = from + match.index;
+            const wikiTo =
+                wikiFrom +
+                match[0].length +
+                measureTrailingWidthAttribute(text.slice(match.index + match[0].length));
+            const wikiRawText = state.doc.sliceString(wikiFrom, wikiTo);
+            const wikiWidth =
+                parseMediaWidthPercent(wikiRawText) ?? DEFAULT_MEDIA_WIDTH_PERCENT;
+
             decos.push(
                 Decoration.replace({
-                    widget: new ImageWidget(imageUrl, altText),
-                }).range(from + match.index, from + match.index + match[0].length)
+                    widget: new ImageWidget(
+                        imageUrl,
+                        altText,
+                        wikiFrom,
+                        wikiTo,
+                        null,
+                        wikiWidth,
+                        (widgetView: EditorView, nextPercent: number) => {
+                            updateImageWidthInSource(
+                                widgetView,
+                                wikiFrom,
+                                wikiTo,
+                                wikiRawText,
+                                nextPercent
+                            );
+                        }
+                    ),
+                }).range(wikiFrom, wikiTo)
             );
         }
 
@@ -671,10 +757,35 @@ function collectImageDecorations(
                 continue;
             }
 
+            const spacedFrom = from + match.index;
+            const spacedTo =
+                spacedFrom +
+                match[0].length +
+                measureTrailingWidthAttribute(text.slice(match.index + match[0].length));
+            const spacedRawText = state.doc.sliceString(spacedFrom, spacedTo);
+            const spacedWidth =
+                parseMediaWidthPercent(spacedRawText) ?? DEFAULT_MEDIA_WIDTH_PERCENT;
+
             decos.push(
                 Decoration.replace({
-                    widget: new ImageWidget(rawDestination, altText),
-                }).range(from + match.index, from + match.index + match[0].length)
+                    widget: new ImageWidget(
+                        rawDestination,
+                        altText,
+                        spacedFrom,
+                        spacedTo,
+                        null,
+                        spacedWidth,
+                        (widgetView: EditorView, nextPercent: number) => {
+                            updateImageWidthInSource(
+                                widgetView,
+                                spacedFrom,
+                                spacedTo,
+                                spacedRawText,
+                                nextPercent
+                            );
+                        }
+                    ),
+                }).range(spacedFrom, spacedTo)
             );
         }
     });
@@ -1042,6 +1153,11 @@ function buildDecorations(state: EditorState): DecorationSet {
                             const endLine = state.doc.lineAt(to);
                             const codeInfoNode = syntaxNode.getChild('CodeInfo');
                             const codeInfoFrom = codeInfoNode ? codeInfoNode.from : firstLine.from + 3;
+                            // info 行形如 `mermaid 标题 {width=50%}`，宽度属性也在这里读。
+                            const widthPercent =
+                                parseMediaWidthPercent(
+                                    state.doc.sliceString(codeInfoFrom, firstLine.to)
+                                ) ?? DEFAULT_MEDIA_WIDTH_PERCENT;
                             decos.push(
                                 Decoration.replace({
                                     widget: new MermaidWidget(
@@ -1049,12 +1165,21 @@ function buildDecorations(state: EditorState): DecorationSet {
                                         state.facet(EditorView.darkTheme),
                                         firstLine.from,
                                         endLine.to,
-                                        (nextTitle: string) => {
+                                        (widgetView: EditorView, nextTitle: string) => {
                                             updateMermaidTitleInSource(
-                                                view,
+                                                widgetView,
                                                 codeInfoFrom,
                                                 firstLine.to,
                                                 nextTitle
+                                            );
+                                        },
+                                        widthPercent,
+                                        (widgetView: EditorView, nextPercent: number) => {
+                                            updateMermaidWidthInSource(
+                                                widgetView,
+                                                codeInfoFrom,
+                                                firstLine.to,
+                                                nextPercent
                                             );
                                         }
                                     ),
@@ -1235,9 +1360,20 @@ function buildDecorations(state: EditorState): DecorationSet {
                     const imgUrl = imgUrlNode
                         ? state.doc.sliceString(imgUrlNode.from, imgUrlNode.to)
                         : '';
-                    const imgText = state.doc.sliceString(from, to);
+                    // 宽度属性挂在 Image 节点之外，decoration 要往后多圈一段，
+                    // 否则 `{width=50%}` 会以字面量形式留在图片旁边。
+                    const imageTo =
+                        to +
+                        measureTrailingWidthAttribute(
+                            state.doc.sliceString(to, Math.min(to + 32, state.doc.length))
+                        );
+                    const rawImageText = state.doc.sliceString(from, imageTo);
+                    // 标题编辑只认 `![alt](url)`，比较时先去掉宽度属性。
+                    const imgText = splitTrailingWidthAttribute(rawImageText).base;
                     const altMatch = imgText.match(/!\[([^\]]*)\]/);
                     const altText = altMatch ? altMatch[1] : '';
+                    const widthPercent =
+                        parseMediaWidthPercent(rawImageText) ?? DEFAULT_MEDIA_WIDTH_PERCENT;
 
                     if (imgUrl || altText) {
                         decos.push(
@@ -1246,18 +1382,28 @@ function buildDecorations(state: EditorState): DecorationSet {
                                     imgUrl,
                                     altText,
                                     from,
-                                    to,
-                                    (nextTitle: string) => {
+                                    imageTo,
+                                    (widgetView: EditorView, nextTitle: string) => {
                                         updateImageTitleInSource(
-                                            view,
+                                            widgetView,
                                             from,
-                                            to,
-                                            imgText,
+                                            imageTo,
+                                            rawImageText,
                                             nextTitle
+                                        );
+                                    },
+                                    widthPercent,
+                                    (widgetView: EditorView, nextPercent: number) => {
+                                        updateImageWidthInSource(
+                                            widgetView,
+                                            from,
+                                            imageTo,
+                                            rawImageText,
+                                            nextPercent
                                         );
                                     }
                                 ),
-                            }).range(from, to)
+                            }).range(from, imageTo)
                         );
                     }
                     return false;

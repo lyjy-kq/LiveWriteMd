@@ -767,6 +767,7 @@ function initialize(): void {
         onInsertImage: () => messageSender.sendEditorAction('insertImage'),
         onChangeMode: (mode: EditorMode) => messageSender.sendEditorAction('setMode', mode),
         onExportAsHtml: () => messageSender.sendEditorAction('exportAsHtml'),
+        onExportAsPdf: () => messageSender.sendEditorAction('exportAsPdf'),
         onDownloadRemoteImages: () => messageSender.sendEditorAction('downloadRemoteImages'),
         onToggleOutline: () => outlinePanel?.toggleVisible(),
         isOutlineVisible: () => outlinePanel?.isOutlineVisible() ?? true,
@@ -814,6 +815,11 @@ function initialize(): void {
                     `Settings updated: lineNumbers=${msg.settings.lineNumbers}, wordWrap=${msg.settings.wordWrap}, readableLineLength=${msg.settings.readableLineLength}, fontScale=${msg.settings.fontScale}`
                 );
             }
+        }
+        // 编辑器标题栏的“显示/隐藏大纲”按钮走这条消息，可见性状态仍由 Webview 持有。
+        if (msg && msg.type === 'outlineToggle') {
+            outlinePanel?.toggleVisible();
+            sendLog('INFO', `Outline visibility toggled: ${outlinePanel?.isOutlineVisible()}`);
         }
         if (msg && msg.type === 'imageSaved') {
             handleImageSaved(msg, () => editor?.getView() ?? null);

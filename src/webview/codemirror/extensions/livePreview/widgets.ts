@@ -32,12 +32,66 @@ import {
     widgetHeightCache,
 } from './state.js';
 import {
+    createMediaResizeGroup,
     createPreviewActionGroup,
     copyMermaidRenderedImageSafely,
     openImagePreviewOverlay,
     openMermaidPreviewOverlay,
 } from './previewOverlay.js';
+import { DEFAULT_MEDIA_WIDTH_PERCENT, stepMediaWidthPercent } from './mediaWidth.js';
 import type { FrontmatterProperty, TableData } from './types.js';
+
+// =============================================================================
+// 媒体宽度调整（图片 / Mermaid 共用）
+// =============================================================================
+
+/**
+ * 判断事件是否来自宽度调整按钮。
+ *
+ * CodeMirror 的 WidgetType.ignoreEvent 决定要不要让编辑器接着处理这个事件，
+ * 缩放按钮必须返回 true，否则按钮自己的 mousedown 会被编辑器吞掉。
+ *
+ * @param event - 待判断的事件
+ * @returns 事件是否发生在缩放按钮组内
+ */
+function isMediaResizeEvent(event: Event): boolean {
+    const target = event.target;
+    return target instanceof Element && target.closest('.cm-md-resize-actions') !== null;
+}
+
+/**
+ * 把宽度调整按钮组追加到预览操作胶囊里。
+ *
+ * 拿不到回写通道时（例如源码范围不全的图片分支）就不放按钮，
+ * 避免用户点了没反应。图片和 Mermaid 的处理完全一致，所以两处共用。
+ *
+ * @param actionGroup - createPreviewActionGroup 返回的胶囊容器
+ * @param percent - 当前宽度百分比
+ * @param subject - 被调整的对象名称，用于按钮提示
+ * @param onWidthCommit - 宽度变化后的回写回调
+ * @param view - 当前编辑器视图，由 widget 在渲染时注入
+ * @returns void
+ */
+function appendMediaResizeGroup(
+    actionGroup: HTMLElement,
+    percent: number,
+    subject: string,
+    onWidthCommit: ((view: EditorView, percent: number) => void) | null,
+    view: EditorView
+): void {
+    if (!onWidthCommit) {
+        return;
+    }
+
+    actionGroup.appendChild(
+        createMediaResizeGroup(percent, subject, (delta: number) => {
+            const next = stepMediaWidthPercent(percent, delta);
+            if (next !== percent) {
+                onWidthCommit(view, next);
+            }
+        })
+    );
+}
 
 // =============================================================================
 // Simple Widgets
@@ -267,18 +321,34 @@ export class ImageWidget extends WidgetType {
         private sourceFrom: number,
         /** 图片在源码中的结束位置。 */
         private sourceTo: number,
-        /** 图片标题提交后的回写函数。 */
-        private onTitleCommit: ((title: string) => void) | null = null
+        /**
+         * 图片标题提交后的回写函数。
+         *
+         * 回调第一个参数是 EditorView：decoration 由 StateField 构建，那一层拿不到
+         * 视图，只有 widget 的 toDOM(view) 才有，所以在渲染时注入。
+         */
+        private onTitleCommit: ((view: EditorView, title: string) => void) | null = null,
+        /** 图片宽度占正文宽度的百分比。 */
+        private widthPercent: number = DEFAULT_MEDIA_WIDTH_PERCENT,
+        /** 宽度调整后的回写函数，同样由渲染时注入 EditorView。 */
+        private onWidthCommit: ((view: EditorView, percent: number) => void) | null = null
     ) {
         super();
     }
 
     eq(other: ImageWidget): boolean {
-        return this.url === other.url && this.alt === other.alt;
+        // 宽度也要参与比较：宽度变化时源码变了，但 url/alt 没变，
+        // 少了这一项 CodeMirror 会复用旧 widget，DOM 上的宽度就不会更新。
+        return (
+            this.url === other.url &&
+            this.alt === other.alt &&
+            this.widthPercent === other.widthPercent
+        );
     }
 
-    ignoreEvent(): boolean {
-        return false;
+    ignoreEvent(event: Event): boolean {
+        // 宽度调整按钮要走自己的 mousedown 逻辑，不能被 CodeMirror 当成普通点击吞掉。
+        return isMediaResizeEvent(event);
     }
 
     /**
@@ -291,6 +361,9 @@ export class ImageWidget extends WidgetType {
     toDOM(view: EditorView): HTMLElement {
         const wrapper = document.createElement('span');
         wrapper.className = 'cm-md-image-wrapper';
+        // 宽度通过 CSS 变量下发，样式表里统一用 max-width 消费，
+        // 这样默认档位和小图不会被拉伸变形。
+        wrapper.style.setProperty('--cm-md-media-width', `${this.widthPercent}%`);
         const contentHost = document.createElement('span');
         contentHost.className = 'cm-md-image-content';
         wrapper.appendChild(contentHost);
@@ -326,6 +399,8 @@ export class ImageWidget extends WidgetType {
 
         // 统一把远程地址与本地相对路径解析成 webview 可访问地址。
         const resolvedUrl = resolvePreviewImageUrl(this.url);
+        // 浮层的 onTitleCommit 只回传标题文本，这里把渲染时的 view 补进去。
+        const commitTitle = this.onTitleCommit;
         const actionGroup = createPreviewActionGroup(
             '放大查看图片',
             '复制图片',
@@ -335,7 +410,7 @@ export class ImageWidget extends WidgetType {
                     resolvedUrl,
                     altText: this.alt,
                     titleText: this.alt || null,
-                    onTitleCommit: this.onTitleCommit ?? undefined,
+                    onTitleCommit: commitTitle ? (title: string) => commitTitle(view, title) : undefined,
                     mountHost: view.dom,
                 });
             },
@@ -358,6 +433,8 @@ export class ImageWidget extends WidgetType {
                 await navigator.clipboard.write([new ClipboardItem({ [mimeType]: blob })]);
             }
         );
+        // 缩放按钮并进右下角同一个胶囊，共用现成的定位与底色。
+        appendMediaResizeGroup(actionGroup, this.widthPercent, '图片', this.onWidthCommit, view);
         wrapper.appendChild(actionGroup);
 
         if (resolvedUrl) {
@@ -1185,22 +1262,32 @@ export class MermaidWidget extends WidgetType {
         private sourceFrom: number,
         /** Mermaid 在源码中的结束位置。 */
         private sourceTo: number,
-        /** Mermaid 标题提交后的回写函数。 */
-        private onTitleCommit: ((title: string) => void) | null = null
+        /** Mermaid 标题提交后的回写函数，EditorView 由渲染时注入。 */
+        private onTitleCommit: ((view: EditorView, title: string) => void) | null = null,
+        /** 图表宽度占正文宽度的百分比。 */
+        private widthPercent: number = DEFAULT_MEDIA_WIDTH_PERCENT,
+        /** 宽度调整后的回写函数，同样由渲染时注入 EditorView。 */
+        private onWidthCommit: ((view: EditorView, percent: number) => void) | null = null
     ) {
         super();
     }
 
     eq(other: MermaidWidget): boolean {
-        return this.source === other.source && this.isDark === other.isDark;
+        // 和 ImageWidget 同理，宽度必须参与比较，否则调整后 DOM 不会重建。
+        return (
+            this.source === other.source &&
+            this.isDark === other.isDark &&
+            this.widthPercent === other.widthPercent
+        );
     }
 
     get estimatedHeight(): number {
         return mermaidHeightCache.get(this.source) || 350;
     }
 
-    ignoreEvent(): boolean {
-        return false;
+    ignoreEvent(event: Event): boolean {
+        // 宽度调整按钮要自己处理 mousedown，不能被编辑器吞掉。
+        return isMediaResizeEvent(event);
     }
 
     /**
@@ -1214,9 +1301,13 @@ export class MermaidWidget extends WidgetType {
     toDOM(view: EditorView): HTMLElement {
         const wrapper = document.createElement('div');
         wrapper.className = 'cm-md-mermaid-wrapper';
+        // 宽度通过 CSS 变量下发，和图片保持同一套消费方式。
+        wrapper.style.setProperty('--cm-md-media-width', `${this.widthPercent}%`);
         const contentHost = document.createElement('div');
         contentHost.className = 'cm-md-mermaid-content';
         wrapper.appendChild(contentHost);
+        // 浮层的 onTitleCommit 只回传标题文本，这里把渲染时的 view 补进去。
+        const commitTitle = this.onTitleCommit;
         const actionGroup = createPreviewActionGroup(
             '放大查看图表',
             '复制 Mermaid 图',
@@ -1224,7 +1315,9 @@ export class MermaidWidget extends WidgetType {
                 openMermaidPreviewOverlay({
                     source: this.source,
                     titleText: null,
-                    onTitleCommit: this.onTitleCommit ?? undefined,
+                    onTitleCommit: commitTitle
+                        ? (title: string) => commitTitle(view, title)
+                        : undefined,
                     mountHost: view.dom,
                 });
             },
@@ -1235,6 +1328,7 @@ export class MermaidWidget extends WidgetType {
                 }
             }
         );
+        appendMediaResizeGroup(actionGroup, this.widthPercent, '图表', this.onWidthCommit, view);
         wrapper.appendChild(actionGroup);
 
         const cached = mermaidSvgCache.get(this.source);

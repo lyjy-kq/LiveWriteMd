@@ -156,10 +156,25 @@ body {
     height: 100%;
 }
 
-/* Content padding and max-width for readability */
+/* 正文宽度上限由 flowMd.readableLineLength 决定（默认 900px，设 0 则不限制）。
+   宽度封顶后，多出来的空间用 auto margin 平分到两侧，让「行号 + 正文」作为一组
+   整体居中，而不是正文贴着左边、右边空一大片。 */
 #editor .cm-content {
     max-width: var(--flowmd-max-width, 900px);
     padding: 24px 32px !important;
+    /* 右侧剩余空间由正文吃掉，把正文推到中间。 */
+    margin-right: auto;
+}
+
+/* 有行号栏时，左侧剩余空间交给行号栏，行号因此始终紧贴正文。 */
+#editor .cm-scroller > .cm-gutters {
+    margin-left: auto;
+}
+
+/* 关掉行号后 .cm-content 会成为第一个子元素，此时左侧也要由正文自己吃掉，
+   否则正文会被单边的 auto margin 推到右边而不是居中。 */
+#editor .cm-scroller > .cm-content:first-child {
+    margin-left: auto;
 }
 
 /* Scroller */
@@ -445,7 +460,7 @@ body {
     flex: 0 0 auto;
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: flex-start;
     gap: 6px;
     padding: 6px 6px 6px 6px;
     border-top: 1px solid rgba(128, 128, 128, 0.18);
@@ -454,6 +469,11 @@ body {
 
 .outline-actions:empty {
     display: none;
+}
+
+/* 展开/收起靠左，关闭按钮靠右，三个按钮不会挤在一起。 */
+.outline-action-btn[data-outline-action="close-outline"] {
+    margin-left: auto;
 }
 
 .outline-action-btn {
@@ -519,6 +539,9 @@ body {
 .outline-tooltip[hidden] {
     display: none !important;
 }
+
+/* “展开大纲”浮动按钮的样式由 webview 侧的 OutlinePanel 自行注入，
+   这样样式和创建按钮的代码始终在同一个 bundle 里，不会因扩展宿主未重启而脱节。 */
 
 /* Scroll jump buttons */
 .scroll-jump-container {

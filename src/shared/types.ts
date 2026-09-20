@@ -147,7 +147,7 @@ export interface EditorActionMessage extends BaseMessage {
     /** 消息类型。 */
     type: 'editorAction';
     /** 动作类型。 */
-    action: 'insertImage' | 'setMode' | 'exportAsHtml' | 'downloadRemoteImages';
+    action: 'insertImage' | 'setMode' | 'exportAsHtml' | 'exportAsPdf' | 'downloadRemoteImages';
     /** 目标模式，仅在切换模式时使用。 */
     mode?: 'live' | 'viewer' | 'source';
 }

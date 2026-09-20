@@ -320,9 +320,14 @@ export function createBaseThemeStyles(): Extension {
         // =================================================================
         // Tables
         // =================================================================
+        // 表格宽度随内容走，整块在正文里居中；fit-content 保证加列按钮条
+        // 仍然紧贴表格右边，而不是被撑到正文宽度。
         '.cm-md-table-wrapper': {
             padding: '8px 0',
-            display: 'inline-flex',
+            display: 'flex',
+            width: 'fit-content',
+            maxWidth: '100%',
+            margin: '0 auto',
             flexDirection: 'column',
             alignItems: 'stretch',
         },
@@ -515,6 +520,7 @@ export function createBaseThemeStyles(): Extension {
         // =================================================================
         // Mermaid diagrams
         // =================================================================
+        // Mermaid 图同样默认 75% 宽并居中；它是块级 widget，直接靠 auto margin 居中即可。
         '.cm-md-mermaid-wrapper': {
             position: 'relative',
             borderTop: '12px solid transparent',
@@ -526,6 +532,8 @@ export function createBaseThemeStyles(): Extension {
             textAlign: 'center',
             overflow: 'auto',
             minHeight: '200px',
+            maxWidth: 'var(--cm-md-media-width, 75%)',
+            margin: '0 auto',
         },
         '.cm-md-mermaid-content': {
             position: 'relative',
@@ -582,10 +590,23 @@ export function createBaseThemeStyles(): Extension {
         // =================================================================
         // Images
         // =================================================================
+        // 图片默认占正文宽度的 75%，范围由 −/+ 按钮控制（见 --cm-md-media-width）。
+        // 图片是行内 decoration，这里必须保持 inline-block：行内 widget 的根元素
+        // 一旦变成块级，CM6 的高度估算会跟实际布局对不上，还会把行内图片强制断行。
         '.cm-md-image-wrapper': {
             position: 'relative',
             display: 'inline-block',
-            maxWidth: '100%',
+            maxWidth: 'var(--cm-md-media-width, 75%)',
+            verticalAlign: 'middle',
+        },
+        '.cm-md-image-content': {
+            display: 'block',
+        },
+        // 整行只有一张图片时让它居中；行内还有文字时保持内联，不打断原有排版。
+        // 注意 :only-child 不数文本节点，所以“文字+图片”的行也会命中这条，
+        // 那种情况下整行居中，是刻意的取舍。
+        '.cm-line:has(> .cm-md-image-wrapper:only-child)': {
+            textAlign: 'center',
         },
         '.cm-md-image': {
             maxWidth: '100%',
@@ -654,6 +675,30 @@ export function createBaseThemeStyles(): Extension {
         '&light .cm-md-preview-action-status[data-state=\"error\"]': {
             color: '#7f1d1d',
             backgroundColor: 'rgba(254, 202, 202, 0.96)',
+        },
+        // 图片 / Mermaid 的宽度调整按钮组，嵌在 .cm-md-preview-actions 胶囊内部。
+        '.cm-md-resize-actions': {
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '2px',
+        },
+        '.cm-md-resize-btn': {
+            // − / + 字形比 ⤢ / ⧉ 窄，稍微放宽一点更好点。
+            width: '20px',
+            fontSize: '13px',
+        },
+        '.cm-md-resize-btn:disabled': {
+            opacity: '0.35',
+            cursor: 'default',
+        },
+        '.cm-md-resize-value': {
+            minWidth: '32px',
+            textAlign: 'center',
+            fontSize: '11px',
+            lineHeight: '1',
+            color: '#f3f4f6',
+            fontVariantNumeric: 'tabular-nums',
+            userSelect: 'none',
         },
         '.cm-md-preview-action': {
             width: '18px',

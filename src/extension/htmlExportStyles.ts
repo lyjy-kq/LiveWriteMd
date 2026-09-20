@@ -138,10 +138,11 @@ pre code {
 }
 
 /* Tables */
+/* 表格宽度随内容走，整块在正文里居中，和编辑器里的表现保持一致。 */
 table {
   border-collapse: collapse;
-  margin: 16px 0;
-  width: auto;
+  margin: 16px auto;
+  width: fit-content;
   max-width: 100%;
   overflow: auto;
   display: block;
@@ -169,11 +170,15 @@ hr {
   margin: 24px 0;
 }
 
-/* Images */
+/* Images
+   默认占正文宽度的 75% 并居中；编辑器里调整过的图片会带一个内联的
+   --flowmd-media-width，导出时由 htmlExporter 转成相同的百分比。 */
 img {
-  max-width: 100%;
+  max-width: var(--flowmd-media-width, 75%);
   height: auto;
   border-radius: 4px;
+  display: block;
+  margin: 0 auto;
 }
 
 /* Math (KaTeX MathML) */
@@ -198,12 +203,16 @@ img {
   font-size: 0.9em;
 }
 
-/* Mermaid */
+/* Mermaid
+   和图片一样默认 75% 宽并居中，调整过的图由内联变量覆盖。 */
 pre.mermaid {
   background-color: transparent;
   text-align: center;
   border: none;
   padding: 16px 0;
+  max-width: var(--flowmd-media-width, 75%);
+  margin-left: auto;
+  margin-right: auto;
 }
 
 /* Footnotes */
