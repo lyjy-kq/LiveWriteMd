@@ -34,16 +34,13 @@
 import { CodeMirrorEditor } from './codemirror/editor.js';
 import { switchTheme } from './codemirror/extensions/theme.js';
 import { setDocumentBaseUri } from './codemirror/extensions/livePreview/index.js';
-import {
-    setMermaidTheme,
-    setPostMessage,
-    tableCellSelections,
-    tableDataCache,
-} from './codemirror/extensions/livePreview/state.js';
+import { setMermaidTheme, setPostMessage } from './codemirror/extensions/livePreview/state.js';
 import { WebviewMessageSender, WebviewMessageHandler } from './messageHandler.js';
 import { WebviewThemeManager } from './theme.js';
 import { OutlinePanel } from './outlinePanel.js';
 import { EditorContextMenu, type EditorMode } from './editorContextMenu.js';
+import { cellAt } from './codemirror/extensions/livePreview/tableRender.js';
+import { runTableCommand } from './codemirror/extensions/livePreview/tableCommands.js';
 import { createSearchHistoryController, type SearchHistoryController } from './codemirror/extensions/searchHistory.js';
 import {
     setupImageDropHandler,
@@ -180,6 +177,24 @@ const messageSender: WebviewMessageSender = new WebviewMessageSender(vscode);
  * Debounced content change sender (300ms default).
  */
 const debouncedSendContentChange = messageSender.createDebouncedSendContentChange();
+
+/**
+ * 大纲内容更新的防抖包装（250ms）。
+ *
+ * 只在「用户打字」这条路上用；打开文档、外部改动那种一次性更新仍然直接调 setContent。
+ */
+const debouncedSetOutlineContent = (() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let latest = '';
+    return (content: string): void => {
+        latest = content;
+        if (timer !== null) return;
+        timer = setTimeout(() => {
+            timer = null;
+            outlinePanel?.setContent(latest);
+        }, 250);
+    };
+})();
 
 /**
  * The CodeMirrorEditor instance.
@@ -584,7 +599,11 @@ async function handleInit(
 
         // Register change callback to send updates to Extension (debounced)
         editor.onChange((newContent: string) => {
-            outlinePanel?.setContent(newContent);
+            // 大纲内容**防抖**更新：setContent 会把整篇重扫一遍标题、再把大纲整棵重建，
+            // 1547 行的文档实测一次 3.4ms —— 每敲一个字都做一次是白花的（打字延迟里
+            // 它占了三分之一）。内容晚 250ms 跟上完全够用；「高亮当前行」走的是另一条
+            // 路（setActiveLine），仍然是实时的。
+            debouncedSetOutlineContent(newContent);
             debouncedSendContentChange(newContent);
         });
 
@@ -755,6 +774,14 @@ function initialize(): void {
             onNavigateToLine: (line: number) => {
                 editor?.scrollToLine(line);
             },
+            isEditable: () => editor?.isEditable() ?? false,
+            getDocument: () => editor?.getContent() ?? '',
+            onApplyHeadingEdits: (edits) => {
+                const view = editor?.getView();
+                if (!view || edits.length === 0) return;
+                // 一批替换一次性 dispatch；编号只动各标题行首，互不重叠
+                view.dispatch({ changes: edits });
+            },
         });
         sendLog('INFO', 'Outline panel initialized');
     } else {
@@ -771,6 +798,30 @@ function initialize(): void {
         onDownloadRemoteImages: () => messageSender.sendEditorAction('downloadRemoteImages'),
         onToggleOutline: () => outlinePanel?.toggleVisible(),
         isOutlineVisible: () => outlinePanel?.isOutlineVisible() ?? true,
+        // 右键落在表格格子上时，先把这一格变成选区再弹菜单 ——
+        // 后面的增删行列都作用在「当前选区覆盖的格子」上，这样点哪儿动哪儿。
+        // 已经框选了一片格子、右键又落在选区里的话就别动它，否则一右键就把框选弄丢了。
+        resolveTableContext: (event: MouseEvent) => {
+            const view = editor?.getView();
+            if (!view || !editor?.isEditable()) return false;
+            const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+            if (pos === null) return false;
+            const cell = cellAt(view.state, pos);
+            if (!cell) return false;
+            const selection = view.state.selection.main;
+            const insideSelection =
+                !selection.empty && selection.from <= cell.to && cell.from <= selection.to;
+            if (!insideSelection) {
+                view.dispatch({ selection: { anchor: cell.from, head: cell.to } });
+            }
+            return true;
+        },
+        onTableCommand: (command) => {
+            const view = editor?.getView();
+            if (!view) return;
+            // 作用对象是当前选区：框选了一片格子就整片动，只点了一格就动那一格
+            runTableCommand(view, command, view.state.selection.main.from);
+        },
     });
 
     // Capture documentBaseUri and handle viewerMode from raw messages
@@ -926,83 +977,6 @@ function initialize(): void {
             }
         });
     }
-
-    // =========================================================================
-    // Global Table Cell Copy Handler (capture phase)
-    // =========================================================================
-    // Registered at document level with capture=true to intercept Ctrl+C
-    // BEFORE CM6's own handlers fire. This is necessary because:
-    // - In Viewer mode (contenteditable=false), CM6's contentDOM can't receive
-    //   focus, so CM6's domEventHandlers keydown never fires.
-    // - In Live Preview mode, table mousedown calls stopPropagation(), which
-    //   can leave CM6 without proper keyboard event routing.
-    document.addEventListener(
-        'keydown',
-        (event: KeyboardEvent) => {
-            if (!((event.ctrlKey || event.metaKey) && event.key === 'c' && !event.shiftKey)) return;
-
-            // Don't intercept if focus is in search panel or other input
-            const active = document.activeElement;
-            if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return;
-
-            if (tableCellSelections.size === 0) return;
-
-            const entry = tableCellSelections.entries().next();
-            if (entry.done) return;
-            const [tableFrom, sel] = entry.value;
-
-            const data = tableDataCache.get(tableFrom);
-            if (!data) return;
-
-            const minRow = Math.min(sel.startRow, sel.endRow);
-            const maxRow = Math.max(sel.startRow, sel.endRow);
-            const minCol = Math.min(sel.startCol, sel.endCol);
-            const maxCol = Math.max(sel.startCol, sel.endCol);
-
-            const rows: string[][] = [];
-            for (let r = minRow; r <= maxRow; r++) {
-                let cells: string[];
-                if (r === 0) {
-                    cells = data.headers;
-                } else {
-                    const dataIdx = r - 1;
-                    if (dataIdx >= data.rows.length) continue;
-                    cells = data.rows[dataIdx];
-                }
-                const selected = cells.slice(minCol, maxCol + 1).map((c) => c.trim());
-                rows.push(selected);
-            }
-            if (rows.length === 0) return;
-
-            // Build Markdown table format (Obsidian-compatible pipe-delimited)
-            const lines: string[] = [];
-            rows.forEach((row, i) => {
-                lines.push('| ' + row.join(' | ') + ' |');
-                // Insert delimiter row after header (row 0)
-                if (minRow === 0 && i === 0) {
-                    const delims = row.map((_, ci) => {
-                        const align = data.alignments[minCol + ci];
-                        if (align === 'center') return ':---:';
-                        if (align === 'right') return '---:';
-                        if (align === 'left') return ':---';
-                        return '---';
-                    });
-                    lines.push('| ' + delims.join(' | ') + ' |');
-                }
-            });
-            const text = lines.join('\n');
-
-            // Write to clipboard via Extension's vscode.env.clipboard API
-            // (most reliable method in VS Code webview — not subject to iframe restrictions)
-            event.preventDefault();
-            event.stopPropagation();
-            vscode.postMessage({ type: 'copyToClipboard', text });
-            console.debug(
-                `[FlowMD] table cell copy: ${rows.length} rows, ${rows[0]?.length ?? 0} cols`
-            );
-        },
-        true
-    ); // capture phase - fires before CM6 handlers
 
     // Notify Extension that Webview is ready to receive messages
     sendReadyWithDiagnostics('initial');

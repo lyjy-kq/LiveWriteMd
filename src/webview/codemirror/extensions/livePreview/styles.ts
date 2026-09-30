@@ -81,26 +81,91 @@ export function createBaseThemeStyles(): Extension {
         // =================================================================
         // Bold & Italic
         // =================================================================
+        // line-height: 1 —— 见上面行内代码那段的说明：渲染态的盒子只要和正文的
+        // 行高不一样（粗体面、等宽体的 ascent/descent 分布都和正文不同），
+        // 行盒就可能被顶高零点几个像素，聚焦展开时又落回正文行高，
+        // 于是「点一下，下面整块跟着上下跳一下」。盒子压到 1em 之后就永远躲在正文行盒里。
         '.cm-md-bold': {
             fontWeight: '700',
+            lineHeight: '1',
             color: '#d9a37a',
         },
+        // 斜体只变色、不倾斜：合成斜体（italic）默认约 14°，斜得过头；
+        // 字体自带真斜体时又不受角度控制，所以干脆只用颜色区分。
         '.cm-md-italic': {
-            fontStyle: 'italic',
+            fontStyle: 'normal',
+            lineHeight: '1',
             color: '#2bbac5',
         },
         '.cm-md-strikethrough': {
             textDecoration: 'line-through',
+            lineHeight: '1',
             opacity: '0.6',
+        },
+
+        // =================================================================
+        // Markdown 标记符（编辑态）
+        // =================================================================
+        // 块级标记（`# `、`> `、围栏）平时压成 0 宽：渲染态本来就是隐藏的，
+        // 编辑态若原样显示，整行连同缩进都会挪。注意不能用 display:none /
+        // visibility:hidden，那样字符无法测量、光标会飘；font-size:0 只是
+        // 让字形不占宽度，布局仍然正常，光标照样能停在上面。
+        '.cm-md-src-mark': {
+            fontSize: '0',
+            letterSpacing: '0',
+            // line-height 必须是 1，**不能继承正文的 23.8px**：
+            // 字号为 0 的盒子如果还顶着 23.8px 的行高，那 23.8px 会以基线为中心
+            // 上下摊开（每边 11.9px），而正文的基线下面只留 7px，于是整行被顶高约 5px。
+            // 代码块围栏 ` ``` ` 平时就是这么压 0 宽的 —— 光标一进代码块、
+            // 上下两行被顶高，整块内容跟着往下挪，屏幕上就是「抖一下」。
+            // 设成 1 之后盒高为 0（字号 0 × 行高 1），安安静静躲在正文撑起的行盒里。
+            lineHeight: '1',
+        },
+        // 光标/选区进入块级标记内部时展开：正常字号 + 弱化颜色
+        '.cm-md-src-mark-active': {
+            color: '#7d8590',
+        },
+        '&light .cm-md-src-mark-active': {
+            color: '#8a8f98',
+        },
+        // 行内元素展开态（`**加粗**`）：外层缩放在行内 style 里给（见 focusMarks.ts），
+        // 这里只负责把标记符压灰，以及把行内代码的样式改成「跟着一起缩」。
+        '.cm-md-src-delim': {
+            color: '#7d8590',
+        },
+        '&light .cm-md-src-delim': {
+            color: '#8a8f98',
+        },
+        // 展开态（`**加粗**`）是纯文本，字号在行内 style 里整体缩放。
+        //
+        // 这里必须把 line-height 设成 1，**不能继承正文的 23.8px**：
+        // 正文的行高是按正文字号算出来的绝对像素值，缩小的字再套这个值，
+        // 上下半行距（half-leading）会把它的盒子往下撑出一截，
+        // 于是「聚焦一个行内元素时，本行和下一行的间距多了一丝」（实测 +1px）。
+        // 设成 1 之后盒高只有自己的字号那么高，永远躲在正文撑起来的行盒里。
+        // font-family / 内边距同理：等宽字体的 ascent/descent 也会顶高行盒。
+        '.cm-md-src-open, .cm-md-src-open *': {
+            lineHeight: '1',
+            fontFamily: 'inherit',
+            paddingTop: '0',
+            paddingBottom: '0',
         },
 
         // =================================================================
         // Inline code
         // =================================================================
+        // 字号只用比正文小一点点（0.95em），而且必须是**相对单位**：
+        // 原来写的是 var(--vscode-editor-font-size)，那是个绝对像素值，
+        // 正文一旦被「字体缩放」（--flowmd-font-scale）放大，代码还是老大小，
+        // 看起来就小了一大截。
+        // line-height 设成 1 和展开态同理：等宽字体的 ascent/descent 分布和正文不同，
+        // 行盒高度取的是「最大 ascent + 最大 descent」，两块盒子的分布一不一样就会多出零点几像素，
+        // 于是「渲染态比文本态高一点」，切来切去整行下面就会跳。
         '.cm-md-code': {
             fontFamily:
                 'var(--vscode-editor-font-family, "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace)',
-            fontSize: 'var(--vscode-editor-font-size, 0.9em)',
+            fontSize: '0.95em',
+            lineHeight: '1',
             fontWeight: 'var(--flowmd-font-weight, 400)',
             backgroundColor: '#f0ece0',
             padding: '2px 6px',
@@ -110,6 +175,15 @@ export function createBaseThemeStyles(): Extension {
         '&light .cm-md-code': {
             backgroundColor: '#eff1f3',
             color: '#f29a9a',
+        },
+
+        // 被 widget 顶替掉的源码（行内公式、单元格复选框）：压 0 宽藏起来，
+        // 内容由 widget 画在旁边（见 decorations.ts 的 hiddenSourceDeco）
+        '.cm-md-src-hidden': {
+            fontSize: '0',
+            letterSpacing: '0',
+            // 同上：行内公式的源码也是压在 0 宽里，行高必须跟着归零，否则整行会被顶高
+            lineHeight: '1',
         },
 
         // =================================================================
@@ -202,25 +276,49 @@ export function createBaseThemeStyles(): Extension {
             lineHeight: 'inherit',
             color: 'inherit',
             backgroundColor: 'var(--vscode-textCodeBlock-background, rgba(128,128,128,0.08))',
-            borderLeft: '1px solid rgba(255, 255, 255, 0.12)',
-            borderRight: '1px solid rgba(255, 255, 255, 0.12)',
+            // 四条边线一律**不用 border**、改用 inset 阴影，原因见下面 first/last 的说明：
+            // 上下边的 1px border 会计入 `.cm-line` 实测盒高（进文本模式后行高跳变）；
+            // 左右边在 border-box 下会把正文内容往里挤 1px，文本模式没有竖边，
+            // 整块代码左右各漂 1px（2026-09-22 反馈：「正文变文本模式时会左右漂移」）。
+            // inset 阴影同色同位置但不占布局：行高、内容宽度两态完全一致，
+            // 长代码的折行位置也不会变（两态内容宽度相同）。
+            // 边线颜色抽成 CSS 变量：浅色只覆盖这一个变量即可，不用重复整段阴影。
+            '--cm-codeblock-edge': 'rgba(255, 255, 255, 0.12)',
+            boxShadow:
+                'inset 1px 0 0 var(--cm-codeblock-edge), inset -1px 0 0 var(--cm-codeblock-edge)',
+            // 这里的 0.9em 横向 padding 实际被 theme.ts 的「`.cm-line` { padding: 0 4px }」
+            // 覆盖（theme 优先于 baseTheme），保留仅作兜底语义
             padding: '0 0.9em',
             boxSizing: 'border-box',
         },
         '&light .cm-md-codeblock': {
             backgroundColor: 'var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.035))',
-            borderLeft: '1px solid rgba(0, 0, 0, 0.1)',
-            borderRight: '1px solid rgba(0, 0, 0, 0.1)',
+            // 浅色边线：只换变量，first/last 那几条 box-shadow 自动跟着变色
+            '--cm-codeblock-edge': 'rgba(0, 0, 0, 0.1)',
         },
+        // （旧的逐行说明已并入上面 `.cm-md-codeblock` 主规则的注释）
+        // 围栏行的上下边**不用 border**：1px border 会计入 `.cm-line` 的实际盒高
+        // （实测两条围栏行 24.8px，比普通行高 1px），而进入文本模式后 FencedCode 的
+        // 行装饰整棵跳过、边框消失，两条围栏行各矮 1px —— 块下面的行号和内容累计
+        // 上移 2px，退出时再下移回来，用户看到的就是「行间距细微变化、行号偏移」。
+        // 改用 inset 阴影：同色同位置的一条 1px 线，但不占布局，
+        // 渲染态/文本态围栏行高都是 23.8px，切换时垂直方向零位移。
+        // 上下边为什么不用 border、左右边为什么也一并换成 inset 阴影，
+        // 都写在上面 `.cm-md-codeblock` 那条注释里了。
         '.cm-md-codeblock-first': {
-            borderTop: '1px solid rgba(255, 255, 255, 0.12)',
             borderTopLeftRadius: '12px',
             borderTopRightRadius: '12px',
+            // 顶部横线 + 左右两条竖线。**box-shadow 不会跨规则叠加**：本规则给出的
+            // box-shadow 会整体顶替 `.cm-md-codeblock` 上那条，所以两条竖线必须照抄
+            boxShadow:
+                'inset 0 1px 0 var(--cm-codeblock-edge), inset 1px 0 0 var(--cm-codeblock-edge), inset -1px 0 0 var(--cm-codeblock-edge)',
         },
         '.cm-md-codeblock-last': {
-            borderBottom: '1px solid rgba(255, 255, 255, 0.12)',
             borderBottomLeftRadius: '12px',
             borderBottomRightRadius: '12px',
+            // 底部横线 + 左右竖线，理由同 first
+            boxShadow:
+                'inset 0 -1px 0 var(--cm-codeblock-edge), inset 1px 0 0 var(--cm-codeblock-edge), inset -1px 0 0 var(--cm-codeblock-edge)',
         },
         // Code block copy button
         '.cm-md-codeblock-copy': {
@@ -263,6 +361,8 @@ export function createBaseThemeStyles(): Extension {
         // =================================================================
         // List bullets
         // =================================================================
+        // 宽度由 BulletWidget 按源码里 `- ` 的实际宽度现算后写成行内样式，
+        // 这里的 1.2em 只是量不到字宽时的兜底值（保证不会挤成一团）。
         '.cm-md-bullet': {
             color: '#aab1bf',
             display: 'inline-block',
@@ -273,8 +373,10 @@ export function createBaseThemeStyles(): Extension {
             lineHeight: '1',
             verticalAlign: 'middle',
         },
+        // 浅色主题下圆点用 #191919：浅底上深色圆点最干净。
+        // 深色主题继续用浅灰——#191919 在深底上对比度只有 1.1:1，等于看不见。
         '&light .cm-md-bullet': {
-            color: '#636c76',
+            color: '#191919',
         },
 
         // =================================================================
@@ -291,14 +393,35 @@ export function createBaseThemeStyles(): Extension {
         // =================================================================
         // Horizontal rules
         // =================================================================
+        // `<hr>` 的浏览器默认样式是**块级** + 上下 0.5em 外边距，放进编辑器的一行里
+        // 会把这一行（连带下一行）整体撑开——「`---` 渲染后行间距变大」就是这么来的。
+        // 这里改成 0 高的行内盒，靠一条 1px 上边框画线：行盒仍然由正文撑，
+        // 渲染态和文本态的行高完全一致。
+        // 线本身用**背景**画（一条 1px 高的色带，压在盒子正中），盒子高度给到 1.2em。
+        //
+        // 以前是「height: 0 + 1px 上边框」：线画出来了，但整个盒子的命中区只有 1px 高，
+        // 鼠标点上去十有八九落在上下两行里 —— 于是「点这条线进不了文本模式」。
+        // 撑到 1.2em（仍然小于正文行高 1.7em，藏在行盒里不会把行顶高）之后，
+        // 整行高度上点哪儿都命中它，光标就落到这一行，`---` 的原文露出来。
         '.cm-md-hr': {
+            '--cm-md-hr-color': 'rgba(128,128,128,0.3)',
+            display: 'inline-block',
+            width: '100%',
+            height: '1.2em',
+            backgroundImage:
+                'linear-gradient(var(--cm-md-hr-color), var(--cm-md-hr-color))',
+            backgroundSize: '100% 1px',
+            backgroundPosition: '0 50%',
+            backgroundRepeat: 'no-repeat',
             border: 'none',
-            height: '1px',
-            background: 'rgba(128,128,128,0.3)',
-            margin: '-6px 0',
+            margin: '0',
+            padding: '0',
+            boxSizing: 'border-box',
+            // 和文字中线对齐，画出来的线落在行的中间
+            verticalAlign: 'middle',
         },
         '&light .cm-md-hr': {
-            background: '#d0d7de',
+            '--cm-md-hr-color': '#d0d7de',
         },
 
         // =================================================================
@@ -318,205 +441,112 @@ export function createBaseThemeStyles(): Extension {
         },
 
         // =================================================================
-        // Tables
+        // Tables（就地渲染的网格）
         // =================================================================
-        // 表格宽度随内容走，整块在正文里居中；fit-content 保证加列按钮条
-        // 仍然紧贴表格右边，而不是被撑到正文宽度。
-        '.cm-md-table-wrapper': {
-            padding: '8px 0',
+        // 表格不再是一个 widget，而是「保留源码 + 装饰」：
+        // 管道线和两侧空白被压成 0 宽，单元格内容包在定宽的盒子里撑出格子。
+        // 每一列的宽度由 tableRender.ts 量出来后写成行内 style，所以同一列的格子左右对齐。
+        //
+        // 整行是 **flex 容器**、格子是它的 flex item：一行里有的格子写三行、有的写一行时，
+        // flex 默认的 align-items:stretch 会把同一行的格子拉到一样高，边框连成整整齐齐的网格
+        // （行内块做不到这一点，矮的那些格子边框会缺一块）。行内块还会在行尾放不下时折行，
+        // 把表格拆成上下两截，flex 的 nowrap 也一并挡掉了。
+        //
+        // 行高跟正文一致（1.7em）：格子里的行内块撑起行盒时，
+        // 正文那一档行高刚好能把复选框这类 16px 的行内元素吸收掉，
+        // 压到 1.5 会让带复选框的那一行比别的行高一倍。
+        // justifyContent: center —— 表格整体在正文列里**居中**：
+        // 行的宽度永远是满宽（它是 .cm-line，块级元素），但里面的格子是定宽的
+        // flex item，居中之后整张表就落在中间，而不是贴着左边。
+        // 选择器写成 .cm-line.cm-md-table-row（双类名）：theme.ts 里
+        // `.cm-line { padding: 0 4px }` 与单类名规则同特异性、注入顺序又不受
+        // 我们控制，单写 `.cm-md-table-row { padding-left:0 }` 会被它顶掉。
+        '.cm-line.cm-md-table-row': {
             display: 'flex',
-            width: 'fit-content',
-            maxWidth: '100%',
-            margin: '0 auto',
-            flexDirection: 'column',
             alignItems: 'stretch',
+            justifyContent: 'center',
+            lineHeight: '1.7',
+            // 横向 padding 必须清零：列宽分配的上限是「正文文字区宽度」（见
+            // tableRender 的 availableWidth，已扣过 cm-content 的 32px padding），
+            // 但行盒自己再留 4px 横 padding，格子铺满上限时就会把行盒撑出 4px、
+            // 连带 cm-content 宽出 scroller（右侧被大纲盖住）。格子自身有 10px
+            // 横向内边距，视觉上不需要行盒再补。
+            paddingLeft: '0',
+            paddingRight: '0',
         },
-        '.cm-md-table-top-row': {
-            display: 'flex',
-            flexDirection: 'row',
-            alignItems: 'stretch',
+        // 单元格：定宽 + 上对齐，宽度和列对得上，全表的格子就排成网格
+        '.cm-md-tcell': {
+            // display 必须**写死**成 inline-block：格子平时是整行的 flex item
+            // （flex 会把 inline-block 块化成 block，一个样），可它一旦被别的
+            // mark 套住就成了普通行内元素 —— 那时 width / padding / border /
+            // min-height 全部不算数，格子会缩成文字宽度、整行跟着串位。
+            // 写成 inline-block 之后，「盒子」这件事不再取决于它在哪一层。
+            display: 'inline-block',
+            flex: '0 0 auto',
+            verticalAlign: 'top',
+            padding: '2px 10px',
+            // 空格子（`|  |`、整行空、整列空）里没有任何内容，盒子会塌成一条线；
+            // 给个下限让它和正常格子一样高（行高 + 上下内边距 4px + 上下边框 2px）
+            minHeight: 'calc(1.7em + 6px)',
+            // 相邻格子各画一条 1px 的右边框会变成 2px，用负边距让它们叠在一起
+            marginLeft: '-1px',
+            border: '1px solid rgba(128,128,128,0.28)',
+            boxSizing: 'border-box',
+            // 内容比钉子列宽还长时在格子内部换行，不要撑破表格。
+            //
+            // overflow-wrap 必须是 break-word 而不是 anywhere：**anywhere 会影响
+            // min-content 的计算**（等于告诉浏览器「这串东西到处都能断」，
+            // min-content 就退化成一个字宽），而列宽分配要拿 min-content 当物理下限
+            // （见 tableRender.ts 的 floorsOf）。两者在**渲染**上是一回事：都是
+            // 「实在放不下才从中间断开」，长 URL、长代码照断不误。
+            whiteSpace: 'normal',
+            overflowWrap: 'break-word',
         },
-        '.cm-md-table': {
-            width: 'auto',
-            borderCollapse: 'collapse',
-            fontSize: 'inherit',
-            fontFamily: 'inherit',
+        // 管道线：压 0 宽但保留在文档里（光标还能停上去，方向键能跨过去）
+        // flex 容器里它也是个 item，靠 font-size:0 把宽度吃掉
+        '.cm-md-tgap': {
+            fontSize: '0',
+            letterSpacing: '0',
+            flex: '0 0 auto',
         },
-        '.cm-md-table-th': {
-            border: '1px solid rgba(128,128,128,0.3)',
-            padding: '6px 12px',
-            minWidth: '3em',
+        // 表头行：加粗 + 淡底
+        '.cm-md-table-header .cm-md-tcell': {
             fontWeight: '600',
-            backgroundColor: 'rgba(128,128,128,0.1)',
-            color: 'inherit',
-            textAlign: 'left',
+            backgroundColor: 'rgba(128,128,128,0.10)',
         },
-        '&light .cm-md-table-th': {
-            border: '1px solid #d0d7de',
-            backgroundColor: '#f6f8fa',
+        // 被框选到的格子：整格上高亮（原生选区只涂文字，看着像没选中）
+        '.cm-md-tcell-selected': {
+            backgroundColor: 'rgba(79,193,255,0.22)',
         },
-        '.cm-md-table-td': {
-            border: '1px solid rgba(128,128,128,0.3)',
-            padding: '6px 12px',
-            minWidth: '3em',
-            color: 'inherit',
+        '.cm-md-table-header .cm-md-tcell-selected': {
+            backgroundColor: 'rgba(79,193,255,0.28)',
         },
-        '&light .cm-md-table-td': {
-            border: '1px solid #d0d7de',
+        '&light .cm-md-tcell-selected': {
+            backgroundColor: 'rgba(9,105,218,0.16)',
         },
-        '.cm-md-table tr:nth-child(even) td': {
-            backgroundColor: 'rgba(128,128,128,0.04)',
+        '&light .cm-md-table-header .cm-md-tcell-selected': {
+            backgroundColor: 'rgba(9,105,218,0.22)',
         },
-
-        // Row add bar (bottom - full table width, flow layout)
-        '.cm-md-table-add-row-bar': {
-            height: '14px',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            opacity: '0',
-            transition: 'opacity 0.15s ease, background-color 0.15s ease',
-            borderRadius: '0 0 3px 3px',
-            position: 'relative',
+        // 分隔行（|---|:--:|）：整行折叠，光标停在上面时由 tableRender 放开
+        '.cm-md-table-delimiter': {
+            fontSize: '0',
+            lineHeight: '0',
+            height: '0',
+            overflow: 'hidden',
+            padding: '0 !important',
         },
-        '.cm-md-table-wrapper:hover .cm-md-table-add-row-bar': {
-            opacity: '1',
+        // =================================================================
+        // 选区高亮层
+        // =================================================================
+        // 选区高亮走 mark 装饰（codeBlockSelection.ts），drawSelection 那一层矩形不要：
+        // 多行选区的中间那些行会被画成通栏色块，和只涂文字的 mark 叠在一起就是「两重选择框」。
+        //
+        // 必须用 !important：CodeMirror 的 LayerView 在 Chrome 下会走 webkit 分支，
+        // 每次重画都把内联的 display 改回 ''（只有没内容时才设成 none），
+        // codeBlockSelection 在构造函数里设的那一次 display:none 会被它抹掉 —— 实测过。
+        '.cm-selectionLayer': {
+            display: 'none !important',
         },
-        '.cm-md-table-add-row-bar::before': {
-            content: '""',
-            position: 'absolute',
-            left: '0',
-            right: '0',
-            top: '50%',
-            height: '2px',
-            backgroundColor: 'rgba(79, 193, 255, 0.35)',
-            transform: 'translateY(-50%)',
-            borderRadius: '1px',
-        },
-        '.cm-md-table-add-row-bar:hover::before': {
-            backgroundColor: 'rgba(79, 193, 255, 0.7)',
-        },
-        '&light .cm-md-table-add-row-bar::before': {
-            backgroundColor: 'rgba(9, 105, 218, 0.3)',
-        },
-        '&light .cm-md-table-add-row-bar:hover::before': {
-            backgroundColor: 'rgba(9, 105, 218, 0.6)',
-        },
-
-        // Column add bar (right - full table height, flow layout)
-        '.cm-md-table-add-col-bar': {
-            width: '14px',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            opacity: '0',
-            transition: 'opacity 0.15s ease, background-color 0.15s ease',
-            borderRadius: '0 3px 3px 0',
-            position: 'relative',
-        },
-        '.cm-md-table-wrapper:hover .cm-md-table-add-col-bar': {
-            opacity: '1',
-        },
-        '.cm-md-table-add-col-bar::before': {
-            content: '""',
-            position: 'absolute',
-            top: '0',
-            bottom: '0',
-            left: '50%',
-            width: '2px',
-            backgroundColor: 'rgba(79, 193, 255, 0.35)',
-            transform: 'translateX(-50%)',
-            borderRadius: '1px',
-        },
-        '.cm-md-table-add-col-bar:hover::before': {
-            backgroundColor: 'rgba(79, 193, 255, 0.7)',
-        },
-        '&light .cm-md-table-add-col-bar::before': {
-            backgroundColor: 'rgba(9, 105, 218, 0.3)',
-        },
-        '&light .cm-md-table-add-col-bar:hover::before': {
-            backgroundColor: 'rgba(9, 105, 218, 0.6)',
-        },
-
-        // Plus icon shared style
-        '.cm-md-table-add-icon': {
-            fontSize: '12px',
-            fontWeight: '700',
-            color: 'rgba(79, 193, 255, 0.7)',
-            lineHeight: '1',
-            zIndex: '1',
-            backgroundColor: '#272b33',
-            padding: '0 3px',
-            borderRadius: '2px',
-            userSelect: 'none',
-        },
-        '&light .cm-md-table-add-icon': {
-            color: 'rgba(9, 105, 218, 0.6)',
-            backgroundColor: '#ffffff',
-        },
-        '.cm-md-table-add-row-bar:hover .cm-md-table-add-icon': {
-            color: '#4fc1ff',
-        },
-        '.cm-md-table-add-col-bar:hover .cm-md-table-add-icon': {
-            color: '#4fc1ff',
-        },
-        '&light .cm-md-table-add-row-bar:hover .cm-md-table-add-icon': {
-            color: '#0969da',
-        },
-        '&light .cm-md-table-add-col-bar:hover .cm-md-table-add-icon': {
-            color: '#0969da',
-        },
-
-        // Hide add-row/add-col bars in viewer mode (not editable)
-        '.cm-content[contenteditable="false"] .cm-md-table-add-row-bar': {
-            display: 'none',
-        },
-        '.cm-content[contenteditable="false"] .cm-md-table-add-col-bar': {
-            display: 'none',
-        },
-
-        // Cell selection highlight (drag select within table)
-        // Higher specificity (0,2,2) overrides even-row rule (0,2,1)
-        '.cm-md-table-cell-selected': {
-            backgroundColor: 'rgba(59,130,246,0.22)',
-        },
-        '.cm-md-table tr td.cm-md-table-cell-selected': {
-            backgroundColor: 'rgba(59,130,246,0.22)',
-        },
-        '.cm-md-table tr th.cm-md-table-cell-selected': {
-            backgroundColor: 'rgba(59,130,246,0.22)',
-        },
-        '&light .cm-md-table-cell-selected': {
-            backgroundColor: 'rgba(9,105,218,0.15)',
-        },
-        '&light .cm-md-table tr td.cm-md-table-cell-selected': {
-            backgroundColor: 'rgba(9,105,218,0.15)',
-        },
-        '&light .cm-md-table tr th.cm-md-table-cell-selected': {
-            backgroundColor: 'rgba(9,105,218,0.15)',
-        },
-        // Rectangular border on selection edges
-        '.cm-md-table-cell-sel-top': { borderTop: '2px solid rgba(59,130,246,0.8)' },
-        '.cm-md-table-cell-sel-bottom': { borderBottom: '2px solid rgba(59,130,246,0.8)' },
-        '.cm-md-table-cell-sel-left': { borderLeft: '2px solid rgba(59,130,246,0.8)' },
-        '.cm-md-table-cell-sel-right': { borderRight: '2px solid rgba(59,130,246,0.8)' },
-        '&light .cm-md-table-cell-sel-top': { borderTop: '2px solid rgba(9,105,218,0.7)' },
-        '&light .cm-md-table-cell-sel-bottom': { borderBottom: '2px solid rgba(9,105,218,0.7)' },
-        '&light .cm-md-table-cell-sel-left': { borderLeft: '2px solid rgba(9,105,218,0.7)' },
-        '&light .cm-md-table-cell-sel-right': { borderRight: '2px solid rgba(9,105,218,0.7)' },
-
-        // Table extent selection: subtle outline when CM6 selection covers the table (no cell drag active)
-        '.cm-md-table-wrapper.cm-md-table-extent-selected': {
-            outline: '1px dashed rgba(59,130,246,0.5)',
-            outlineOffset: '2px',
-        },
-        '&light .cm-md-table-wrapper.cm-md-table-extent-selected': {
-            outline: '1px dashed rgba(9,105,218,0.5)',
-            outlineOffset: '2px',
-        },
-
         // =================================================================
         // Mermaid diagrams
         // =================================================================
@@ -602,10 +632,10 @@ export function createBaseThemeStyles(): Extension {
         '.cm-md-image-content': {
             display: 'block',
         },
-        // 整行只有一张图片时让它居中；行内还有文字时保持内联，不打断原有排版。
-        // 注意 :only-child 不数文本节点，所以“文字+图片”的行也会命中这条，
-        // 那种情况下整行居中，是刻意的取舍。
-        '.cm-line:has(> .cm-md-image-wrapper:only-child)': {
+        // 图片独占一行时让它居中。这个 class 由插件按源码判断后挂上
+        // （见 decorations.ts 的 imageLineDeco）：行里除了图片还有文字时不会命中，
+        // 所以不会像原来那样把「文字 + 图片」的行也整行居中。
+        '.cm-md-image-line': {
             textAlign: 'center',
         },
         '.cm-md-image': {
@@ -820,6 +850,50 @@ export function createBaseThemeStyles(): Extension {
             display: 'inline-block',
             padding: '20px',
         },
+        // Mermaid 浮层的 2:1 分栏：左图右码。
+        // 两栏都用 flex 比例，窗口变大变小自动跟着分，不用算像素。
+        '.cm-md-preview-split': {
+            flex: '1 1 auto',
+            display: 'flex',
+            minHeight: '0',
+            overflow: 'hidden',
+        },
+        '.cm-md-preview-split-main': {
+            // flex-basis 写 0 而不是 auto：basis 为 auto 时"内容有多宽"会参与分配，
+            // 一张宽图就能把左栏顶到 80%，2:1 直接失效
+            flex: '2 1 0',
+            // min-width 也必须写死 0：flex item 默认 min-width:auto，
+            // 长代码行 / 宽图会把栏位撑开，同样破坏 2:1
+            minWidth: '0',
+            display: 'flex',
+            position: 'relative',
+        },
+        '.cm-md-preview-split-side': {
+            flex: '1 1 0',
+            minWidth: '0',
+            display: 'flex',
+            borderLeft: '1px solid rgba(255, 255, 255, 0.08)',
+        },
+        '&light .cm-md-preview-split-side': {
+            borderLeft: '1px solid rgba(15, 23, 42, 0.08)',
+        },
+        '.cm-md-preview-mermaid-editor': {
+            flex: '1 1 auto',
+            width: '100%',
+            margin: '0',
+            padding: '12px',
+            border: 'none',
+            outline: 'none',
+            // 底色跟面板一致：这里是个"代码区"，不是表单输入框，别做出输入框的框子
+            background: 'transparent',
+            color: 'inherit',
+            resize: 'none',
+            fontFamily: 'monospace',
+            fontSize: '13px',
+            lineHeight: '1.6',
+            // Tab 缩进看起来是 4 格，方便对齐 mermaid 的分支写法
+            tabSize: '4',
+        },
         '.cm-md-preview-mermaid-rendered svg': {
             maxWidth: 'none',
             height: 'auto',
@@ -993,38 +1067,44 @@ export function createBaseThemeStyles(): Extension {
         // =================================================================
         // Indent guide lines (for nested list items)
         // =================================================================
+        // 层级引导线：一条 repeating-linear-gradient 竖着铺，铺的范围由
+        // background-size 卡死在「层级 × 缩进单位」里，所以一级缩进看到一条线、
+        // 三级缩进看到三条线。层级和单位由 plugin.ts 现算后写进这两个变量
+        // （见 collectListIndentDecorations），默认值只是拿不到测量结果时的兜底。
+        // 两层背景，一层画「祖先那几条线」，另一层画「自己圆点那一条」：
+        //
+        // - 祖先线（第 0 … level-1 条）是**接上一行**过来的，要铺满整行高度才连得上；
+        // - 自己那条线要从**圆点中心**往下垂（直到最后一级），所以只画下半行：
+        //   起点压在垂直中点（50%）上，高度 50%。`--cm-md-indent-own` 没有子级时给 0%，
+        //   那条线就不画了（光杆条目下面没有东西可指）。
+        //
+        // 横向位置统一加上 `--cm-md-indent-dot`：圆点的圆心在 `- ` 盒子里
+        // 「半个 `-` 宽」的位置（需求：圆点以 `-` 的中点为圆心），竖线不跟着挪
+        // 就会从圆点左边擦过去。这个偏移由 helpers.ts 量出来，见 collectListIndentDecorations。
         '.cm-md-indent': {
-            position: 'relative',
+            '--cm-md-indent-color': 'rgba(128,128,128,0.25)',
+            // 定位原点是**正文内容区**的左边缘（不是行盒边缘）：行内边距由 CSS 自己算，
+            // 竖线的横向坐标就只剩「层级 × 缩进单位 + 半个 `-` 宽」，不用去问 DOM。
+            backgroundOrigin: 'content-box',
+            backgroundImage:
+                'repeating-linear-gradient(to right, var(--cm-md-indent-color) 0 1px, transparent 1px var(--cm-md-indent-unit, 1.6em)), linear-gradient(to right, var(--cm-md-indent-color) 0 1px, transparent 1px)',
+            backgroundSize:
+                'calc(var(--cm-md-indent-level, 0) * var(--cm-md-indent-unit, 1.6em)) 100%, 1px var(--cm-md-indent-own, 0%)',
+            backgroundRepeat: 'no-repeat, no-repeat',
+            backgroundPosition:
+                'var(--cm-md-indent-dot, 0px) top, calc(var(--cm-md-indent-level, 0) * var(--cm-md-indent-unit, 1.6em) + var(--cm-md-indent-dot, 0px)) 50%',
         },
-        '.cm-md-indent-1': {
-            borderLeft: '1px solid rgba(128, 128, 128, 0.2)',
-            marginLeft: '0.5em',
-            paddingLeft: '0.5em !important',
+        '&light .cm-md-indent': {
+            '--cm-md-indent-color': 'rgba(0,0,0,0.14)',
         },
-        '.cm-md-indent-2': {
-            borderLeft: '1px solid rgba(128, 128, 128, 0.2)',
-            marginLeft: '0.5em',
-            paddingLeft: '0.5em !important',
-        },
-        '.cm-md-indent-3': {
-            borderLeft: '1px solid rgba(128, 128, 128, 0.2)',
-            marginLeft: '0.5em',
-            paddingLeft: '0.5em !important',
-        },
-        '.cm-md-indent-4': {
-            borderLeft: '1px solid rgba(128, 128, 128, 0.2)',
-            marginLeft: '0.5em',
-            paddingLeft: '0.5em !important',
-        },
-        '.cm-md-indent-5': {
-            borderLeft: '1px solid rgba(128, 128, 128, 0.2)',
-            marginLeft: '0.5em',
-            paddingLeft: '0.5em !important',
-        },
-        '.cm-md-indent-6': {
-            borderLeft: '1px solid rgba(128, 128, 128, 0.2)',
-            marginLeft: '0.5em',
-            paddingLeft: '0.5em !important',
+        // 行首空白被压成一个定宽空盒：宽高都由样式给，里面的空白不再占宽度，
+        // 于是「空格缩进」和「Tab 缩进」写出来占的位置完全一样。
+        // height:0 是为了不参与行盒高度计算——否则行高会被悄悄垫高一点。
+        '.cm-md-indent-space': {
+            display: 'inline-block',
+            height: '0',
+            overflow: 'hidden',
+            verticalAlign: 'baseline',
         },
 
         // =================================================================
@@ -1106,10 +1186,55 @@ export function createBaseThemeStyles(): Extension {
         '.cm-md-math-inline math': {
             fontSize: '1em',
         },
+        // 块级公式的外框**照着代码块的框来做**（同样的圆角、底色、内边距）：
+        // 公式和代码块在正文里是同一类「整块的东西」，长得一样看着才顺；
+        // 公式本身仍然居中，字号比正文大一点。
+        // 公式比这个框高就整体缩放塞进去（见 widgets.ts），于是「一行的小公式」和
+        // 「六行的长推导」在正文里占的高度是同一个数 —— 打字、滚动时下面的内容不会跳。
+        // 内容居中，超出的一小部分裁掉。
+        //
+        // 高度**就是 2.5 行**，而且这条公式写在这里、不写进行内 style：
+        //   - 行高跟着 `--flowmd-line-height`（webviewContent.ts 注进来的用户设置），
+        //     用 em 现算，所以改字号/滚轮缩放/换行高设置都会自己跟上；
+        //   - 换成 JS 写死的 px 会**钉死**在首次构建那一刻：那时 `.cm-line` 还不存在，
+        //     行高量不到、只能猜，猜错的值会被 CM 连同 DOM 一起缓存住
+        //     （widget.eq 为真时 DOM 复用、toDOM 不再跑），框就一直比正文高一截。
+        //
+        // **上下不许有 margin**：这个框是块级 widget，直接挂在 `.cm-content` 底下，
+        // 而 CM 量块高量的是「元素自己的盒」—— margin 在盒子外面，量不到。
+        // 于是高度表里少掉的正是这两条 margin，下面每一行的行号、点击落点
+        // 统统往上偏同样多（2026-09-21 反馈：3 行源码 → 2.5 行的框，点下面的行
+        // 差了半行）。留白一律用 padding 做在盒子**里面**，或者交给源码里的空行。
         '.cm-md-math-block': {
-            display: 'block',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: 'calc(2.5 * var(--flowmd-line-height, 1.7em))',
+            overflow: 'hidden',
             textAlign: 'center',
-            padding: '20px 0',
+            margin: '0',
+            padding: '0 0.9em',
+            borderRadius: '12px',
+            border: '1px solid rgba(255, 255, 255, 0.12)',
+            backgroundColor: 'var(--vscode-textCodeBlock-background, rgba(128,128,128,0.08))',
+            boxSizing: 'border-box',
+            // 公式整块是替换 widget，光标进不去 —— 鼠标样式明示「可以点进去改源码」
+            cursor: 'text',
+        },
+        // 缩放层：内容比框高时整体缩小（transform 不影响布局，框高始终是 2.5 行）
+        '.cm-md-math-inner': {
+            display: 'block',
+            transformOrigin: 'center center',
+        },
+        '.cm-md-math-block:hover': {
+            borderColor: 'rgba(79, 193, 255, 0.45)',
+        },
+        '&light .cm-md-math-block': {
+            border: '1px solid rgba(0, 0, 0, 0.1)',
+            backgroundColor: 'var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.035))',
+        },
+        '&light .cm-md-math-block:hover': {
+            borderColor: 'rgba(9, 105, 218, 0.45)',
         },
         '.cm-md-math-block math': {
             fontSize: '1.15em',

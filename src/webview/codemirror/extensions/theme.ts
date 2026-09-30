@@ -166,6 +166,22 @@ export const lightTheme: Extension = EditorView.theme(
             color: '#999999',
         },
 
+        // 行号数字在格子里**垂直居中**。
+        //
+        // CM6 给每个行号格子（.cm-gutterElement）写死的高度 = 对应正文行的总高
+        // （GutterElement.update 里 style.height = height + 'px'），但数字是裸文本
+        // 节点，按行号栏自己继承的行高从格子**顶部**开始排 —— 行号栏不在
+        // .cm-content 里，吃不到正文那条 1.7em 行高，于是普通行就差 1.4px，
+        // 标题 / 折行段落 / 高表格行这种「行比默认高很多」的偏得更多
+        // （实测 47.6px 的表格行差 13.3px，数字明显吊在上面）。
+        // 改成 flex 纵向居中后，数字的中心永远 = 格子的中心 = 行的中心；
+        // justify-content: flex-end 接替原来 text-align: right 的右对齐。
+        '.cm-lineNumbers .cm-gutterElement': {
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+        },
+
         // Search match highlighting
         '.cm-searchMatch': {
             backgroundColor: 'rgba(255, 255, 0, 0.4)',
@@ -413,6 +429,13 @@ export const darkTheme: Extension = EditorView.theme(
         // Fold gutter
         '.cm-foldGutter': {
             color: '#858585',
+        },
+
+        // 行号数字在格子里垂直居中 —— 说明见上面 lightTheme 里的同一条规则。
+        '.cm-lineNumbers .cm-gutterElement': {
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
         },
 
         // Search match highlighting

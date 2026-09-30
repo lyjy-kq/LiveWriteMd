@@ -13,8 +13,11 @@
  * within the selection range are highlighted via a CSS class on their DOM node,
  * since mark decorations cannot visually cover replace-decoration widgets.
  *
- * The drawSelection() selection layer (.cm-selectionLayer) is always hidden;
- * the cursor layer (.cm-cursorLayer) is unaffected and remains visible.
+ * The drawSelection() selection layer (.cm-selectionLayer) is hidden by CSS
+ * (see styles.ts 的「选区高亮层」), **不能**靠这里设一次内联 display:none ——
+ * CodeMirror 的 LayerView 每次重画都会把内联 display 改回去，实测会留出
+ * 一条通栏色块和 mark 高亮叠成两重选择框。
+ * The cursor layer (.cm-cursorLayer) is unaffected and remains visible.
  *
  * @module webview/codemirror/extensions/livePreview/codeBlockSelection
  */
@@ -35,7 +38,6 @@ const WIDGET_SELECTORS = [
     '.cm-md-math-inline',
     '.cm-md-math-block',
     '.cm-md-mermaid-wrapper',
-    '.cm-md-table-wrapper',
     '.cm-md-frontmatter',
     '.cm-md-image-wrapper',
     '.cm-md-details',
@@ -48,7 +50,6 @@ class SelectionHighlightValue {
 
     constructor(view: EditorView) {
         this.decorations = this.buildDecorations(view);
-        this.hideSelectionLayer(view);
         this.updateWidgetSelection(view);
     }
 
@@ -58,17 +59,6 @@ class SelectionHighlightValue {
             // Defer widget selection until after CM6 finishes DOM update,
             // since decoration rebuild may create new widget DOM nodes.
             requestAnimationFrame(() => this.updateWidgetSelection(update.view));
-        }
-    }
-
-    /**
-     * Hide drawSelection() selection layer.
-     * Cursor layer (.cm-cursorLayer) is separate and remains visible.
-     */
-    private hideSelectionLayer(view: EditorView): void {
-        const selLayer = view.dom.querySelector('.cm-selectionLayer') as HTMLElement | null;
-        if (selLayer) {
-            selLayer.style.display = 'none';
         }
     }
 

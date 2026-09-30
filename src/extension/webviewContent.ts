@@ -748,7 +748,7 @@ ${styles}
             <div id="outline-tooltip" class="outline-tooltip" role="tooltip" aria-hidden="true"></div>
         </aside>
     </div>
-    <script src="${scriptUriString}"></script>
+    <script type="module" src="${scriptUriString}"></script>
 </body>
 </html>`;
 }

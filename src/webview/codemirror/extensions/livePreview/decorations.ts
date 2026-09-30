@@ -17,6 +17,43 @@ import { tags } from '@lezer/highlight';
 /** Hides content by replacing it with nothing */
 export const hideDeco = Decoration.replace({});
 
+/**
+ * 被 widget 顶替掉的源码：压 0 宽**盖住**，但不从文档里换掉。
+ *
+ * 行内公式、单元格里的复选框都走这个：KaTeX 排版和复选框都是 widget，
+ * 源码本身没用了，可要是不留在文档里、直接 `replace` 掉，会连带两件事一起坏：
+ * 一是表格单元格的「格子」是个 mark 包出来的盒子，格子里整段都是 replace 时
+ * CodeMirror 会把那个 mark 一起丢掉，格子就塌了；二是光标再也走不进这段源码
+ * （点公式要能把光标放进去改，见 widgets.ts 的 placeMathCaret）。
+ */
+export const hiddenSourceDeco = Decoration.mark({ class: 'cm-md-src-hidden' });
+
+/**
+ * **块级**标记符（`# `、`> `、代码块围栏）平时压成 0 宽。
+ *
+ * 行内元素的标记不在这里处理——它们由 focusMarks.ts 做「就地展开 + 整体缩放」，
+ * 标记是正常显示的。会用到这个 0 宽处理的只剩行首这些块级标记：
+ * 它们一旦原样显示，整行（连同缩进）都会跟着挪，而它们平时又不常改，
+ * 所以平时压 0 宽，等光标真的落到标记字符上（见 srcMarkActiveDeco）再露出来。
+ */
+export const srcMarkDeco = Decoration.mark({ class: 'cm-md-src-mark' });
+
+/**
+ * **行内**元素展开时的标记符（`**`、`` ` ``、`[`、`](地址)`）。
+ *
+ * 这些标记要正常占宽度、正常可见可点，只是颜色压灰一点，
+ * 好和正文内容区分开；整体宽度由外层 `cm-md-src-open` 的缩放补回来。
+ */
+export const srcDelimDeco = Decoration.mark({ class: 'cm-md-src-delim' });
+
+/**
+ * 标记符的展开态：光标或选区碰到它时用正常字号显示。
+ *
+ * 标记符平时 0 宽看不见，要改 `**` 这类标记就得先让它露面，
+ * 具体触发规则见 focusMarks.ts 里的说明。
+ */
+export const srcMarkActiveDeco = Decoration.mark({ class: 'cm-md-src-mark-active' });
+
 /** Marks bold content */
 export const boldMarkDeco = Decoration.mark({ class: 'cm-md-bold' });
 
@@ -54,6 +91,16 @@ export const codeBlockLineDeco = Decoration.line({ class: 'cm-md-codeblock' });
 
 /** Hidden line decoration (for block widget multi-line collapse) */
 export const hiddenLineDeco = Decoration.line({ class: 'cm-md-hidden-line' });
+
+/**
+ * 图片独占一行的行级装饰（让图片在正文列里居中）。
+ *
+ * 不能用 CSS 的 `.cm-line:has(> .cm-md-image-wrapper:only-child)` 来判断：
+ * CM6 会在行内 widget 前后插一个 `<img class="cm-widgetBuffer">` 占位元素，
+ * 于是 `:only-child` 永远不成立（实测确认）。改成由插件按源码判断
+ * 「这一行除了图片没有别的文字」，再挂这个 class 走 text-align: center。
+ */
+export const imageLineDeco = Decoration.line({ class: 'cm-md-image-line' });
 
 // =============================================================================
 // Syntax Highlight Styles

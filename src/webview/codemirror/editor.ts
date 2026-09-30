@@ -810,6 +810,21 @@ export class CodeMirrorEditor {
     }
 
     /**
+     * 当前是否可编辑（查看模式下为 false）。
+     *
+     * 给「改文档」的入口用：查看模式下右键菜单里那些增删行列不该出现，
+     * 弹出来点了却没反应最让人困惑。
+     *
+     * @returns 可编辑时返回 true；编辑器还没建好时返回 false
+     */
+    isEditable(): boolean {
+        if (!this.view) {
+            return false;
+        }
+        return this.view.state.facet(EditorView.editable);
+    }
+
+    /**
      * Focuses the editor.
      *
      * Safe to call before create() (no-op).

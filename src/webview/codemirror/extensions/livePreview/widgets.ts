@@ -10,8 +10,8 @@
 import { Transaction } from '@codemirror/state';
 import { EditorView, WidgetType } from '@codemirror/view';
 import {
-    applyAlignment,
     applySafeFontStyles,
+    measureText,
     renderInlineMarkdown,
     resolvePreviewImageUrl,
 } from './helpers.js';
@@ -20,15 +20,14 @@ import {
     foldedListItems,
     foldToggleEffect,
     getMermaidTheme,
+    sourceModeEffect,
     mermaidHeightCache,
     mermaidInitialized,
     mermaidRenderPromises,
     mermaidSvgCache,
     setMermaidInitialized,
-    setTableDragging,
-    tableCellSelections,
-    tableCellSelectEffect,
-    type TableCellRange,
+    rememberMermaidSvg,
+    rememberWidgetHeight,
     widgetHeightCache,
 } from './state.js';
 import {
@@ -39,7 +38,7 @@ import {
     openMermaidPreviewOverlay,
 } from './previewOverlay.js';
 import { DEFAULT_MEDIA_WIDTH_PERCENT, stepMediaWidthPercent } from './mediaWidth.js';
-import type { FrontmatterProperty, TableData } from './types.js';
+import type { FrontmatterProperty } from './types.js';
 
 // =============================================================================
 // 媒体宽度调整（图片 / Mermaid 共用）
@@ -107,24 +106,80 @@ export class HorizontalRuleWidget extends WidgetType {
         return hr;
     }
 
+    ignoreEvent(event: Event): boolean {
+        // 默认实现会忽略 widget 里的所有事件，那样点到分隔线上光标不进这一行，
+        // 也就永远看不到 `---` 的源码。单击放行给编辑器，光标落到这一行即展开。
+        return event.type !== 'mousedown';
+    }
+
     eq(): boolean {
         return true;
     }
 }
 
 /**
- * Widget that renders a bullet point for unordered list items.
+ * \u65e0\u5e8f\u5217\u8868\u7684\u5706\u70b9\u3002
+ *
+ * \u5706\u70b9\u9876\u6389\u7684\u662f\u6e90\u7801\u91cc\u7684 `- `\uff08\u6807\u8bb0\u7b26 + \u4e00\u4e2a\u7a7a\u683c\uff09\uff0c\u5982\u679c\u5bbd\u5ea6\u5199\u6b7b\uff08\u539f\u6765\u5199\u7684\u662f 1.2em\uff09\uff0c
+ * \u6e32\u67d3\u6001\u548c\u6587\u672c\u6001\u7684\u884c\u5185\u8d77\u70b9\u5c31\u4f1a\u5dee\u51e0\u4e2a\u50cf\u7d20\uff0c\u6253\u5b57\u65f6\u540e\u9762\u7684\u6587\u5b57\u4f1a\u6a2a\u7740\u8df3\u3002
+ * \u6240\u4ee5\u8fd9\u91cc\u6309\u5b9e\u9645\u91cf\u51fa\u6765\u7684 `- ` \u5bbd\u5ea6\u7ed9\u5706\u70b9\u5b9a\u5bbd\uff0c\u8ba9\u4e24\u79cd\u72b6\u6001\u5de6\u53f3\u5b8c\u5168\u5bf9\u9f50\u3002
  */
 export class BulletWidget extends WidgetType {
+    /** \u6807\u8bb0\u7b26\u81ea\u8eab\u5bbd\u5ea6\uff08px\uff09\uff0c\u5706\u70b9\u5706\u5fc3\u8981\u7528 */
+    private readonly markerWidth: number;
+    /** \u7a7a\u683c\u5bbd\u5ea6\uff08px\uff09 */
+    private readonly spaceWidth: number;
+    /** \u76d2\u5b50\u603b\u5bbd = \u6807\u8bb0\u7b26 + \u7a7a\u683c\uff08px\uff09 */
+    private readonly width: number;
+
+    /**
+     * @param marker - \u6e90\u7801\u91cc\u7684\u6807\u8bb0\u7b26\uff08`-` / `*` / `+`\uff09\uff0c\u7528\u6765\u91cf\u5b83\u52a0\u4e0a\u7a7a\u683c\u6709\u591a\u5bbd
+     *
+     * \u5bbd\u5ea6\u5728**\u6784\u9020\u65f6**\u5c31\u91cf\u597d\u7f13\u5b58\uff1a\u4e00\u65b9\u9762 toDOM \u76f4\u63a5\u7528\uff0c\u53e6\u4e00\u65b9\u9762 eq \u8981\u9760\u5b83\u3002
+     * \u9996\u6b21\u6784\u5efa\u53d1\u751f\u5728\u89c6\u56fe\u6302\u8f7d\u524d\uff0cgetMeasureContext \u53ea\u80fd\u9000\u56de body \u5b57\u4f53\uff0c
+     * \u91cf\u51fa\u6765\u7684\u662f\u9519\u7684\u7a84\u5bbd\u5ea6\uff1b\u6302\u8f7d\u540e\u8865\u7b97\uff08\u89c1 plugin.ts \u7684 bootstrap\uff09
+     * \u4f1a\u91cd\u5efa\u88c5\u9970\u3001\u65b0\u5efa\u672c\u7c7b\u5b9e\u4f8b\uff0ceq \u5fc5\u987b\u8bc6\u522b\u51fa\u5bbd\u5ea6\u53d8\u4e86\uff0c
+     * \u65e7 DOM \u624d\u4e0d\u4f1a\u88ab\u590d\u7528\u3002
+     */
+    constructor(private marker = '-') {
+        super();
+        // \u91cf\u4e0d\u5230\uff08\u6781\u5c11\u89c1\uff09\u5c31\u4fdd\u6301 0\uff0ctoDOM \u9000\u56de\u6837\u5f0f\u8868\u91cc\u7684 em \u515c\u5e95\u503c
+        this.markerWidth = measureText(this.marker, '400');
+        this.spaceWidth = measureText(' ', '400');
+        this.width = this.markerWidth + this.spaceWidth;
+    }
+
     toDOM(): HTMLElement {
         const span = document.createElement('span');
         span.className = 'cm-md-bullet';
         span.textContent = '\u2022';
+        if (this.width > 0) {
+            span.style.width = `${this.width.toFixed(2)}px`;
+            // \u5706\u70b9\u8981\u4ee5 **`-` \u7684\u4e2d\u70b9** \u4e3a\u5706\u5fc3\uff08\u9700\u6c42 3\uff09\u3002
+            // \u76d2\u5b50\u91cc text-align: center \u628a\u5706\u70b9\u653e\u5728 `- ` \u7684\u6b63\u4e2d\uff0c
+            // \u6bd4 `-` \u7684\u4e2d\u70b9\u504f\u53f3\u4e86\u534a\u4e2a\u7a7a\u683c\uff08\u7a7a\u683c\u4e0d\u53c2\u4e0e\u201c\u4e2d\u70b9\u201d\uff09\uff0c
+            // \u6240\u4ee5\u6574\u4f53\u5de6\u79fb\u534a\u4e2a\u7a7a\u683c\u5bbd\u3002
+            // \u7528 transform \u800c\u4e0d\u6539 width\uff1a\u76d2\u5b50\u5bbd\u5ea6\u4e0d\u80fd\u53d8\uff0c
+            // \u5b83\u8fd8\u8981\u628a\u540e\u9762\u7684\u6b63\u6587\u9876\u5230\u6e90\u7801\u91cc\u90a3\u4e2a\u4f4d\u7f6e\u4e0a\u3002
+            span.style.transform = `translateX(${(-this.spaceWidth / 2).toFixed(2)}px)`;
+        }
         return span;
     }
 
-    eq(): boolean {
-        return true;
+    ignoreEvent(event: Event): boolean {
+        // \u9ed8\u8ba4\u5b9e\u73b0\u4f1a\u5ffd\u7565 widget \u91cc\u7684\u6240\u6709\u4e8b\u4ef6\uff0c\u70b9\u5230\u5706\u70b9\u4e0a\u5149\u6807\u4e0d\u52a8\u3001\u8fd9\u4e00\u884c\u4e5f\u8fdb\u4e0d\u4e86\u7f16\u8f91\u6001\u3002
+        // \u5355\u51fb\u653e\u884c\uff1a\u5149\u6807\u843d\u5230\u8fd9\u4e00\u884c\uff0c\u5c31\u80fd\u770b\u5230 `- ` \u7684\u6e90\u7801\uff08\u4e00\u6b21\u53ea\u6709\u4e00\u884c\u5c55\u5f00\uff09\u3002
+        return event.type !== 'mousedown';
+    }
+
+    eq(other: BulletWidget): boolean {
+        // marker \u76f8\u540c\u8fd8\u4e0d\u591f\uff1a\u5b57\u4f53\u6d4b\u91cf\u4e0a\u4e0b\u6587\u4ece body \u5207\u5230\u6b63\u6587\u540e\u5bbd\u5ea6\u4f1a\u53d8\uff0c
+        // \u5bbd\u5ea6\u4e0d\u540c\u5fc5\u987b\u91cd\u5efa DOM\uff0c\u5426\u5219\u65e7\u7684\u9519\u8bef\u7a84\u5bbd\u5ea6\u4f1a\u4e00\u76f4\u7559\u7740
+        return (
+            this.marker === other.marker &&
+            // \u91cf\u5316\u5230 0.01px \u518d\u6bd4\uff0c\u907f\u5f00\u6d6e\u70b9\u5c3e\u5dee\u5bfc\u81f4\u7684\u65e0\u8c13\u91cd\u5efa
+            Math.round(this.width * 100) === Math.round(other.width * 100)
+        );
     }
 }
 
@@ -254,7 +309,7 @@ export class FrontmatterWidget extends WidgetType {
             const ro = new ResizeObserver((entries) => {
                 for (let entry of entries) {
                     const h = entry.borderBoxSize?.[0]?.blockSize || entry.contentRect.height;
-                    if (h > 0) widgetHeightCache.set(this.cacheKey, h);
+                    if (h > 0) rememberWidgetHeight(this.cacheKey, h);
                 }
                 view.requestMeasure();
             });
@@ -348,7 +403,10 @@ export class ImageWidget extends WidgetType {
 
     ignoreEvent(event: Event): boolean {
         // 宽度调整按钮要走自己的 mousedown 逻辑，不能被 CodeMirror 当成普通点击吞掉。
-        return isMediaResizeEvent(event);
+        if (isMediaResizeEvent(event)) return true;
+        // 双击自己处理（进源码模式），不能被当成选词。
+        // 滚轮不再拦截：图片没有缩放功能，滚轮应该照常滚文档。
+        return event.type === 'dblclick';
     }
 
     /**
@@ -367,6 +425,18 @@ export class ImageWidget extends WidgetType {
         const contentHost = document.createElement('span');
         contentHost.className = 'cm-md-image-content';
         wrapper.appendChild(contentHost);
+        // 单击不改外观：图片始终保持在渲染态，只有双击才摊开成 `![alt](url)` 源码
+        wrapper.addEventListener('dblclick', (event: MouseEvent) => {
+            // 只读模式（Viewer）只看不改，双击不切源码
+            if (!view.state.facet(EditorView.editable)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            view.dispatch({
+                selection: { anchor: this.sourceFrom },
+                effects: sourceModeEffect.of({ from: this.sourceFrom, to: this.sourceTo }),
+            });
+        });
+
         wrapper.addEventListener('click', (event: MouseEvent) => {
             if (!(event.ctrlKey || event.metaKey)) {
                 return;
@@ -442,6 +512,9 @@ export class ImageWidget extends WidgetType {
             img.src = resolvedUrl;
             img.alt = this.alt;
             img.className = 'cm-md-image';
+            // 图片是异步加载的，加载完高度才定下来。这里让 CodeMirror 重新量一次，
+            // 否则它按加载前的高度算总高度，滚动条位置会对不上。
+            img.addEventListener('load', () => view.requestMeasure());
             img.onerror = () => {
                 contentHost.replaceChildren();
                 const fallback = document.createElement('span');
@@ -699,7 +772,7 @@ export class DetailsWidget extends WidgetType {
             const ro = new ResizeObserver((entries) => {
                 for (let entry of entries) {
                     const h = entry.borderBoxSize?.[0]?.blockSize || entry.contentRect.height;
-                    if (h > 0) widgetHeightCache.set(this.cacheKey, h);
+                    if (h > 0) rememberWidgetHeight(this.cacheKey, h);
                 }
                 view.requestMeasure();
             });
@@ -709,536 +782,6 @@ export class DetailsWidget extends WidgetType {
         }
 
         return wrapper;
-    }
-}
-
-// =============================================================================
-// Table Widget
-// =============================================================================
-
-/**
- * Apply cell selection highlight to table cells.
- * Cells within the rectangular [startRow..endRow, startCol..endCol] range
- * receive the `cm-md-table-cell-selected` class; others have it removed.
- */
-function applyCellSelectionHighlight(table: HTMLTableElement, sel: TableCellRange): void {
-    const minRow = Math.min(sel.startRow, sel.endRow);
-    const maxRow = Math.max(sel.startRow, sel.endRow);
-    const minCol = Math.min(sel.startCol, sel.endCol);
-    const maxCol = Math.max(sel.startCol, sel.endCol);
-    table.querySelectorAll('td[data-row], th[data-row]').forEach((cell) => {
-        const el = cell as HTMLElement;
-        const row = parseInt(el.dataset.row ?? '-1');
-        const col = parseInt(el.dataset.col ?? '-1');
-        const selected = row >= minRow && row <= maxRow && col >= minCol && col <= maxCol;
-        el.classList.toggle('cm-md-table-cell-selected', selected);
-        // Border on selection rectangle edges
-        el.classList.toggle('cm-md-table-cell-sel-top', selected && row === minRow);
-        el.classList.toggle('cm-md-table-cell-sel-bottom', selected && row === maxRow);
-        el.classList.toggle('cm-md-table-cell-sel-left', selected && col === minCol);
-        el.classList.toggle('cm-md-table-cell-sel-right', selected && col === maxCol);
-    });
-}
-
-function clearCellSelectionHighlight(table: HTMLTableElement): void {
-    table.querySelectorAll('td[data-row], th[data-row]').forEach((cell) => {
-        const el = cell as HTMLElement;
-        el.classList.remove(
-            'cm-md-table-cell-selected',
-            'cm-md-table-cell-sel-top',
-            'cm-md-table-cell-sel-bottom',
-            'cm-md-table-cell-sel-left',
-            'cm-md-table-cell-sel-right'
-        );
-    });
-}
-
-/**
- * Widget that renders a GFM table with interactive add-row/add-column bars.
- * Supports cell drag-selection (rect highlight) and Delete-key row/col/cell deletion.
- */
-export class TableWidget extends WidgetType {
-    private cacheKey: string;
-    constructor(
-        private data: TableData,
-        private cellSelection: TableCellRange | null = null
-    ) {
-        super();
-        this.cacheKey = 'tb-' + JSON.stringify(data.headers) + '-r' + data.rows.length;
-    }
-    get estimatedHeight(): number {
-        return widgetHeightCache.get(this.cacheKey) || 100 + this.data.rows.length * 30;
-    }
-
-    eq(other: TableWidget): boolean {
-        if (JSON.stringify(this.data) !== JSON.stringify(other.data)) return false;
-        const s1 = this.cellSelection;
-        const s2 = other.cellSelection;
-        if (s1 === null && s2 === null) return true;
-        if (s1 === null || s2 === null) return false;
-        return (
-            s1.startRow === s2.startRow &&
-            s1.startCol === s2.startCol &&
-            s1.endRow === s2.endRow &&
-            s1.endCol === s2.endCol
-        );
-    }
-
-    destroy(dom: HTMLElement): void {
-        // Clean up viewer-mode drag listeners if widget is removed mid-drag
-        const cleanup = (dom as any)._viewerCleanup;
-        if (typeof cleanup === 'function') cleanup();
-    }
-
-    ignoreEvent(event: Event): boolean {
-        // Let CM6 handle wheel/scroll so Alt+wheel fast-scroll works over tables
-        if (event.type === 'wheel' || event.type === 'scroll') return false;
-        if (event.target instanceof HTMLElement) {
-            if (
-                event.target.closest('.cm-md-table-add-row-bar') ||
-                event.target.closest('.cm-md-table-add-col-bar') ||
-                event.target.classList.contains('cm-md-table-checkbox')
-            ) {
-                return true;
-            }
-            // Cell clicks are handled by our own mousedown handler
-            if (event.target.closest('td[data-row], th[data-row]')) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    toDOM(view: EditorView): HTMLElement {
-        const wrapper = document.createElement('div');
-        wrapper.className = 'cm-md-table-wrapper';
-
-        // Store position info on DOM for ViewPlugin (tableExtentSelectionPlugin)
-        const tableFrom = this.data.positions.tableFrom;
-        wrapper.dataset.tableFrom = String(tableFrom);
-        wrapper.dataset.tableTo = String(this.data.positions.tableTo);
-
-        // Top row: table + column add bar (side by side)
-        const topRow = document.createElement('div');
-        topRow.className = 'cm-md-table-top-row';
-
-        const table = document.createElement('table');
-        table.className = 'cm-md-table';
-
-        // Build thead with data-row/col attributes for cell selection
-        const thead = document.createElement('thead');
-        const headerRow = document.createElement('tr');
-        this.data.headers.forEach((text, i) => {
-            const th = document.createElement('th');
-            th.className = 'cm-md-table-th';
-            th.innerHTML = renderInlineMarkdown(text);
-            applyAlignment(th, this.data.alignments[i]);
-            th.dataset.row = '0';
-            th.dataset.col = String(i);
-            headerRow.appendChild(th);
-        });
-        thead.appendChild(headerRow);
-        table.appendChild(thead);
-
-        // Build tbody with data-row/col attributes
-        const tbody = document.createElement('tbody');
-        this.data.rows.forEach((row, rowIdx) => {
-            const tr = document.createElement('tr');
-            row.forEach((text, i) => {
-                const td = document.createElement('td');
-                td.className = 'cm-md-table-td';
-                td.innerHTML = renderInlineMarkdown(text);
-                applyAlignment(td, this.data.alignments[i]);
-                td.dataset.row = String(rowIdx + 1); // 0=header, 1+=data
-                td.dataset.col = String(i);
-                tr.appendChild(td);
-            });
-            tbody.appendChild(tr);
-        });
-        table.appendChild(tbody);
-
-        // Attach checkbox toggle handlers
-        const checkboxes = table.querySelectorAll('.cm-md-table-checkbox');
-        checkboxes.forEach((cb) => {
-            cb.addEventListener('mousedown', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-                const input = cb as HTMLInputElement;
-                const isChecked = input.checked;
-                const newText = isChecked ? '[ ]' : '[x]';
-                const oldText = isChecked ? /\[[xX]\]/ : /\[ \]/;
-                const td = input.closest('td, th');
-                if (!td) return;
-                const tr = td.closest('tr');
-                if (!tr) return;
-                const tbodyEl = tr.closest('tbody');
-                const theadEl = tr.closest('thead');
-                let lineIdx: number;
-                if (theadEl) {
-                    lineIdx = 0;
-                } else if (tbodyEl) {
-                    const rowIdx = Array.from(tbodyEl.children).indexOf(tr);
-                    lineIdx = rowIdx + 2; // skip header + delimiter
-                } else {
-                    return;
-                }
-                const { linePositions } = this.data.positions;
-                if (lineIdx >= linePositions.length) return;
-                const { from: lineFrom, to: lineTo } = linePositions[lineIdx];
-                const lineText = view.state.doc.sliceString(lineFrom, lineTo);
-                const match = lineText.match(oldText);
-                if (match && match.index !== undefined) {
-                    const pos = lineFrom + match.index;
-                    view.dispatch({
-                        changes: { from: pos, to: pos + 3, insert: newText },
-                        annotations: Transaction.userEvent.of('input.checkbox-toggle'),
-                    });
-                }
-            });
-        });
-
-        // Apply initial highlight if a cell selection was passed in
-        if (this.cellSelection) {
-            applyCellSelectionHighlight(table, this.cellSelection);
-        }
-
-        // =========================================================
-        // Cell drag-selection
-        // - mousedown on td/th: start selection, block CM6 bubbling
-        // - mousemove (captured on document): extend selection, update DOM highlight
-        // - mouseup (captured on document): commit selection via StateEffect
-        // =========================================================
-        table.addEventListener(
-            'mousedown',
-            (e) => {
-                const cell = (e.target as HTMLElement).closest(
-                    'td[data-row], th[data-row]'
-                ) as HTMLElement | null;
-                if (!cell) return;
-                // Don't interfere with checkbox handlers
-                if ((e.target as HTMLElement).classList.contains('cm-md-table-checkbox')) return;
-
-                // Prevent CM6 from selecting the whole decoration range
-                e.stopPropagation();
-                // Prevent text selection cursor on drag
-                e.preventDefault();
-
-                // Live Preview mode: click on cell → place cursor in source to show raw Markdown
-                if (view.state.facet(EditorView.editable)) {
-                    tableCellSelections.clear();
-                    const rowAttr = parseInt(cell.dataset.row ?? '0');
-                    // Map data-row to linePositions index (skip delimiter line)
-                    // data-row=0 → linePositions[0] (header), data-row=N → linePositions[N+1]
-                    const lineIdx = rowAttr === 0 ? 0 : rowAttr + 1;
-                    const { linePositions } = this.data.positions;
-                    if (lineIdx < linePositions.length) {
-                        const { from: lineFrom } = linePositions[lineIdx];
-                        const lineText = view.state.doc.sliceString(
-                            lineFrom,
-                            linePositions[lineIdx].to
-                        );
-                        const colIdx = parseInt(cell.dataset.col ?? '0');
-                        // Find cursor position at the target column by counting pipes
-                        let pipeCount = 0;
-                        let cursorPos = lineFrom;
-                        for (let i = 0; i < lineText.length; i++) {
-                            if (lineText[i] === '|') {
-                                pipeCount++;
-                                if (pipeCount === colIdx + 1) {
-                                    // Position after the pipe and any leading whitespace
-                                    let j = i + 1;
-                                    while (j < lineText.length && lineText[j] === ' ') j++;
-                                    cursorPos = lineFrom + j;
-                                    break;
-                                }
-                            }
-                        }
-                        view.dispatch({ selection: { anchor: cursorPos } });
-                        view.focus();
-                    }
-                    return;
-                }
-
-                // === Viewer mode: cell drag selection ===
-
-                // Ensure webview has focus so keyboard events (Ctrl+C etc.) reach our
-                // document-level handler. preventDefault() above blocks the browser's
-                // default focus-on-mousedown, so without this the webview iframe never
-                // receives focus if the user hasn't clicked elsewhere first.
-                // Use view.dom (the outer .cm-editor div) because view.focus() targets
-                // contentDOM which fails when contenteditable=false (Viewer mode).
-                if (!view.dom.hasAttribute('tabindex')) {
-                    view.dom.setAttribute('tabindex', '-1');
-                }
-                view.dom.focus({ preventScroll: true });
-
-                // Clear ALL cell selections and immediately remove visual highlights from
-                // other tables via direct DOM manipulation (no dispatch — dispatching during
-                // mousedown causes a synchronous widget rebuild that detaches this table's DOM).
-                for (const key of tableCellSelections.keys()) {
-                    if (key !== tableFrom) {
-                        const otherWrapper = view.contentDOM.querySelector(
-                            `[data-table-from="${key}"]`
-                        );
-                        if (otherWrapper) {
-                            const otherTable = otherWrapper.querySelector('table');
-                            if (otherTable)
-                                clearCellSelectionHighlight(otherTable as HTMLTableElement);
-                        }
-                    }
-                }
-                tableCellSelections.clear();
-
-                const startRow = parseInt(cell.dataset.row ?? '0');
-                const startCol = parseInt(cell.dataset.col ?? '0');
-                let curSel: TableCellRange = {
-                    tableFrom,
-                    startRow,
-                    startCol,
-                    endRow: startRow,
-                    endCol: startCol,
-                };
-                // Immediately register the initial single-cell selection so that
-                // Ctrl+C works even before mouseup fires.
-                tableCellSelections.set(tableFrom, curSel);
-                applyCellSelectionHighlight(table, curSel);
-                setTableDragging(true);
-                console.debug(`[FlowMD] table cell select start: row=${startRow} col=${startCol}`);
-
-                const finishDrag = () => {
-                    document.removeEventListener('mousemove', onMouseMove);
-                    document.removeEventListener('mouseup', finishDrag);
-                    setTableDragging(false);
-                    tableCellSelections.set(tableFrom, curSel);
-                    view.dispatch({ effects: tableCellSelectEffect.of(null) });
-                    console.debug(
-                        `[FlowMD] table cell select commit: rows=${curSel.startRow}-${curSel.endRow} cols=${curSel.startCol}-${curSel.endCol}`
-                    );
-                };
-
-                const onMouseMove = (ev: MouseEvent) => {
-                    // If mouse button was released outside the webview iframe,
-                    // the mouseup event is lost — detect it via buttons property.
-                    if (ev.buttons === 0) {
-                        finishDrag();
-                        return;
-                    }
-                    const el = document.elementFromPoint(ev.clientX, ev.clientY);
-                    const hovered = el?.closest('td[data-row], th[data-row]') as HTMLElement | null;
-                    // Outside table: keep last selection as-is (Obsidian behavior)
-                    if (!hovered || !table.contains(hovered)) return;
-                    const endRow = parseInt(hovered.dataset.row ?? '0');
-                    const endCol = parseInt(hovered.dataset.col ?? '0');
-                    curSel = {
-                        tableFrom,
-                        startRow: Math.min(startRow, endRow),
-                        startCol: Math.min(startCol, endCol),
-                        endRow: Math.max(startRow, endRow),
-                        endCol: Math.max(startCol, endCol),
-                    };
-                    tableCellSelections.set(tableFrom, curSel);
-                    applyCellSelectionHighlight(table, curSel);
-                };
-
-                document.addEventListener('mousemove', onMouseMove);
-                document.addEventListener('mouseup', finishDrag);
-            },
-            false
-        );
-
-        // =========================================================
-        // Viewer mode: drag-from-outside cell selection
-        // Triggered when mouse enters the wrapper while dragging (buttons=1).
-        // Uses document-level mousemove + elementFromPoint (same as Live Preview drag).
-        // view.state.facet() is used (not isContentEditable) to avoid DOM timing issues.
-        // =========================================================
-        if (!view.state.facet(EditorView.editable)) {
-            let viewerStartRow = -1;
-            let viewerStartCol = -1;
-            let viewerCurSel: TableCellRange | null = null;
-
-            const onViewerMouseMove = (ev: MouseEvent) => {
-                // Detect mouse button released outside webview iframe
-                if (ev.buttons === 0) {
-                    stopViewerDrag();
-                    return;
-                }
-                if (ev.buttons !== 1) return;
-                const el = document.elementFromPoint(ev.clientX, ev.clientY);
-                const cell = el?.closest('td[data-row], th[data-row]') as HTMLElement | null;
-                // Outside table: keep last selection as-is (Obsidian behavior)
-                if (!cell || !table.contains(cell)) return;
-
-                const row = parseInt(cell.dataset.row ?? '0');
-                const col = parseInt(cell.dataset.col ?? '0');
-
-                if (viewerStartRow === -1) {
-                    viewerStartRow = row;
-                    viewerStartCol = col;
-                }
-
-                const newSel: TableCellRange = {
-                    tableFrom,
-                    startRow: Math.min(viewerStartRow, row),
-                    startCol: Math.min(viewerStartCol, col),
-                    endRow: Math.max(viewerStartRow, row),
-                    endCol: Math.max(viewerStartCol, col),
-                };
-                if (
-                    !viewerCurSel ||
-                    viewerCurSel.startRow !== newSel.startRow ||
-                    viewerCurSel.startCol !== newSel.startCol ||
-                    viewerCurSel.endRow !== newSel.endRow ||
-                    viewerCurSel.endCol !== newSel.endCol
-                ) {
-                    viewerCurSel = newSel;
-                    tableCellSelections.set(tableFrom, viewerCurSel);
-                    applyCellSelectionHighlight(table, viewerCurSel);
-                }
-            };
-
-            const stopViewerDrag = () => {
-                document.removeEventListener('mousemove', onViewerMouseMove);
-                document.removeEventListener('mouseup', stopViewerDrag);
-                setTableDragging(false);
-                (wrapper as any)._viewerCleanup = null;
-                if (viewerCurSel) {
-                    tableCellSelections.set(tableFrom, viewerCurSel);
-                    view.dispatch({ effects: tableCellSelectEffect.of(null) });
-                    console.debug(
-                        `[FlowMD] viewer cell select commit: rows=${viewerCurSel.startRow}-${viewerCurSel.endRow} cols=${viewerCurSel.startCol}-${viewerCurSel.endCol}`
-                    );
-                }
-                viewerStartRow = -1;
-                viewerStartCol = -1;
-                viewerCurSel = null;
-            };
-
-            wrapper.addEventListener('mouseenter', (e: Event) => {
-                const me = e as MouseEvent;
-                if (me.buttons !== 1) return; // Not dragging
-                // Ensure webview has focus for keyboard events (Ctrl+C)
-                if (!view.dom.hasAttribute('tabindex')) {
-                    view.dom.setAttribute('tabindex', '-1');
-                }
-                view.dom.focus({ preventScroll: true });
-                setTableDragging(true);
-                document.addEventListener('mousemove', onViewerMouseMove);
-                document.addEventListener('mouseup', stopViewerDrag);
-                (wrapper as any)._viewerCleanup = stopViewerDrag;
-            });
-
-            // Store cleanup ref so destroy() can remove listeners if widget is removed mid-drag
-            (wrapper as any)._viewerCleanup = null;
-        }
-
-        // Clear cell selection when clicking outside table cells (on wrapper)
-        wrapper.addEventListener(
-            'mousedown',
-            (e) => {
-                const target = e.target as HTMLElement;
-                if (
-                    target.closest('.cm-md-table-add-row-bar') ||
-                    target.closest('.cm-md-table-add-col-bar') ||
-                    target.classList.contains('cm-md-table-checkbox') ||
-                    target.closest('td[data-row]') ||
-                    target.closest('th[data-row]')
-                )
-                    return;
-                e.stopPropagation();
-            },
-            false
-        );
-
-        topRow.appendChild(table);
-
-        // Column add bar (right - stretches full table height)
-        const colBar = document.createElement('div');
-        colBar.className = 'cm-md-table-add-col-bar';
-        const colIcon = document.createElement('span');
-        colIcon.className = 'cm-md-table-add-icon';
-        colIcon.textContent = '+';
-        colBar.appendChild(colIcon);
-        colBar.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-            this.addColumn(view);
-        });
-        topRow.appendChild(colBar);
-        wrapper.appendChild(topRow);
-
-        // Row add bar (bottom - full width)
-        const rowBar = document.createElement('div');
-        rowBar.className = 'cm-md-table-add-row-bar';
-        const rowIcon = document.createElement('span');
-        rowIcon.className = 'cm-md-table-add-icon';
-        rowIcon.textContent = '+';
-        rowBar.appendChild(rowIcon);
-        rowBar.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-            this.addRow(view);
-        });
-        wrapper.appendChild(rowBar);
-
-        if (typeof ResizeObserver !== 'undefined') {
-            const ro = new ResizeObserver((entries) => {
-                for (let entry of entries) {
-                    const h = entry.borderBoxSize?.[0]?.blockSize || entry.contentRect.height;
-                    if (h > 0) widgetHeightCache.set(this.cacheKey, h);
-                }
-                view.requestMeasure();
-            });
-            requestAnimationFrame(() => {
-                if (wrapper.isConnected) ro.observe(wrapper);
-            });
-        }
-        return wrapper;
-    }
-
-    private addRow(view: EditorView): void {
-        const { positions, headers } = this.data;
-        const colCount = headers.length;
-        let rowText = '\n|';
-        for (let i = 0; i < colCount; i++) {
-            rowText += '  |';
-        }
-        const insertPos = positions.tableTo;
-        view.dispatch({
-            changes: { from: insertPos, insert: rowText },
-            selection: { anchor: insertPos },
-            annotations: Transaction.userEvent.of('input.table-add-row'),
-        });
-    }
-
-    private addColumn(view: EditorView): void {
-        const { positions } = this.data;
-        const { linePositions } = positions;
-        const changes: Array<{ from: number; insert: string }> = [];
-
-        for (let i = 0; i < linePositions.length; i++) {
-            const { from: lineFrom, to: lineEnd } = linePositions[i];
-            const lineText = view.state.doc.sliceString(lineFrom, lineEnd);
-            const endsWithPipe = lineText.trimEnd().endsWith('|');
-
-            if (i === 1) {
-                // Delimiter line
-                changes.push({ from: lineEnd, insert: endsWithPipe ? ' --- |' : ' | --- |' });
-            } else {
-                // Header or data row
-                changes.push({ from: lineEnd, insert: endsWithPipe ? '  |' : ' |  |' });
-            }
-        }
-
-        const lastChange = changes[changes.length - 1];
-        view.dispatch({
-            changes,
-            selection: { anchor: lastChange ? lastChange.from : positions.linePositions[0].from },
-            annotations: Transaction.userEvent.of('input.table-add-col'),
-        });
     }
 }
 
@@ -1287,7 +830,10 @@ export class MermaidWidget extends WidgetType {
 
     ignoreEvent(event: Event): boolean {
         // 宽度调整按钮要自己处理 mousedown，不能被编辑器吞掉。
-        return isMediaResizeEvent(event);
+        if (isMediaResizeEvent(event)) return true;
+        // 双击自己处理（进源码模式），不能被当成选词。
+        // 滚轮不再拦截：图表没有缩放功能，滚轮应该照常滚文档。
+        return event.type === 'dblclick';
     }
 
     /**
@@ -1306,18 +852,36 @@ export class MermaidWidget extends WidgetType {
         const contentHost = document.createElement('div');
         contentHost.className = 'cm-md-mermaid-content';
         wrapper.appendChild(contentHost);
+
+        // 单击不改外观，双击才摊开成 ```mermaid 源码
+        wrapper.addEventListener('dblclick', (event: MouseEvent) => {
+            // 只读模式（Viewer）只看不改，双击不切源码
+            if (!view.state.facet(EditorView.editable)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            view.dispatch({
+                selection: { anchor: this.sourceFrom },
+                effects: sourceModeEffect.of({ from: this.sourceFrom, to: this.sourceTo }),
+            });
+        });
+
         // 浮层的 onTitleCommit 只回传标题文本，这里把渲染时的 view 补进去。
         const commitTitle = this.onTitleCommit;
         const actionGroup = createPreviewActionGroup(
             '放大查看图表',
             '复制 Mermaid 图',
             () => {
+                // 正文区间在**打开浮层的这一刻**定位：比 toDOM 那一刻更贴近当前文档，
+                // 之后由 commitMermaidSource 每次回写时就地维护终点
+                const range = this.contentRangeOf(view);
                 openMermaidPreviewOverlay({
                     source: this.source,
                     titleText: null,
                     onTitleCommit: commitTitle
                         ? (title: string) => commitTitle(view, title)
                         : undefined,
+                    // 浮层里改完代码，把新源码写回围栏之间（见 commitMermaidSource）
+                    onSourceCommit: (next: string) => this.commitMermaidSource(view, next, range),
                     mountHost: view.dom,
                 });
             },
@@ -1344,6 +908,56 @@ export class MermaidWidget extends WidgetType {
 
         this.renderAsync(contentHost, view);
         return wrapper;
+    }
+
+    /**
+     * 算出文档里「围栏之间的正文」区间。
+     *
+     * 起点 = 首行围栏的换行之后；终点 = 末行围栏行首的换行之前。空代码块时两者相等，
+     * 往这个空区间里插内容正好落在两个围栏中间。
+     *
+     * 返回的是**可变对象**：浮层里每写回一次，正文长度就变一次，终点由
+     * commitMermaidSource 就地改写，不用每次重新扫文档找闭合围栏
+     * （那样还可能被正文里恰好出现的一行 ``` 骗到）。
+     *
+     * @param view - 当前 CodeMirror 视图
+     * @returns 正文区间（`from` 固定、`to` 会被回写逻辑改写）
+     */
+    private contentRangeOf(view: EditorView): { from: number; to: number } {
+        const doc = view.state.doc;
+        const startLine = doc.lineAt(Math.min(this.sourceFrom, doc.length));
+        const endLine = doc.lineAt(Math.min(this.sourceTo, doc.length));
+        const from = Math.min(startLine.to + 1, doc.length);
+        return { from, to: Math.max(from, endLine.from - 1) };
+    }
+
+    /**
+     * 把放大浮层里编辑好的源码写回文档：**只换围栏之间的正文**。
+     *
+     * 围栏本身（```mermaid + 标题 + `{width=50%}`）一个字都不动 ——
+     * 那是 info 行的内容，和图表正文是两回事。
+     *
+     * @param view - 当前 CodeMirror 视图
+     * @param next - 浮层右侧编辑框里的最新源码
+     * @param range - contentRangeOf 给出的正文区间，会被就地更新
+     */
+    private commitMermaidSource(
+        view: EditorView,
+        next: string,
+        range: { from: number; to: number }
+    ): void {
+        const doc = view.state.doc;
+        // widget 记的是创建时的位置，万一文档在别处变短了，越界就静静放弃改写
+        if (range.from > doc.length) return;
+        // 起点前面应该是那个换了行的围栏：对不上号说明位置已经失效，宁可不写
+        const fenceLine = doc.lineAt(range.from).number > 1 ? doc.line(doc.lineAt(range.from).number - 1) : null;
+        if (!fenceLine || !fenceLine.text.trimStart().startsWith('```')) return;
+
+        const to = Math.min(range.to, doc.length);
+        if (doc.sliceString(range.from, to) === next) return; // 内容没变，别白打扰一次编辑器
+        view.dispatch({ changes: { from: range.from, to, insert: next } });
+        // 终点跟着新内容走：起点不会被自己的改写影响（改的永远是起点之后的部分）
+        range.to = range.from + next.length;
     }
 
     private static renderCounter = 0;
@@ -1390,7 +1004,7 @@ export class MermaidWidget extends WidgetType {
             // Use unique ID to prevent Mermaid render collisions
             const uniqueId = `mermaid-${MermaidWidget.renderCounter++}`;
             const promise = mermaid.default.render(uniqueId, this.source).then(({ svg }) => {
-                mermaidSvgCache.set(this.source, svg);
+                rememberMermaidSvg(this.source, svg);
                 return svg;
             });
             mermaidRenderPromises.set(this.source, promise);
@@ -1436,107 +1050,339 @@ export class MermaidWidget extends WidgetType {
 // =============================================================================
 
 import katex from 'katex';
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore - esbuild text loader handles .css imports
-import katexCssRaw from 'katex/dist/katex.min.css';
-
-/** Flag to track whether KaTeX CSS has been injected into the document */
-let katexCssInjected = false;
+// KaTeX 样式注入与字符串渲染统一放在 mathRender.ts，表格单元格那边的公式
+// 走的是同一个入口，样式只注入一次。
+import { ensureKatexCss } from './mathRender.js';
 
 /**
- * Inject KaTeX CSS into the document for HTML+MathML rendering.
- * Strips @font-face rules (fonts unavailable in webview) and uses system font fallback.
+ * 「探针色」：KaTeX 用它去画自己没认下来的部分（未定义命令、解析错误）。
+ *
+ * 反引号里那段内容要不要当公式，是**猜**出来的 —— 猜错了不能把红字摆在正文中间
+ * （见 InlineMathWidget），可这个失败又没有别的信号：`throwOnError: false` 既不抛异常，
+ * 未定义命令连 `.katex-error` 节点都不给，只是一段红字裹在正常输出里。
+ * 于是那一遍渲染特意把 errorColor 换成这个颜色，渲染完在 DOM 里搜它就行。
+ *
+ * 特意**不用** KaTeX 的默认错误色 `#cc0000`：用户完全可能自己在公式里写
+ * `\textcolor{#cc0000}{…}`（那也是红的），换成这个洋红色就不会跟正常公式撞上。
  */
-function ensureKatexCss(): void {
-    if (katexCssInjected) return;
-    katexCssInjected = true;
+const MATH_PROBE_COLOR = '#ff00ff';
 
-    // Strip @font-face rules (KaTeX fonts can't be loaded in webview)
-    let css = (katexCssRaw as string).replace(/@font-face\s*\{[^}]*\}/g, '');
-    // Replace KaTeX font families with system math fonts
-    css = css.replace(/font-family:\s*KaTeX_[A-Za-z_]+/g, 'font-family:Times New Roman,serif');
-    css = css.replace(/font-family:\s*"KaTeX_[A-Za-z_]+"/g, 'font-family:"Times New Roman",serif');
+/**
+ * 点击公式时，把光标放到「点击处对应的源码字符」上，从而切到文本模式。
+ *
+ * 为什么必须自己接管：公式是整段**替换**成 widget 的，而 `WidgetType.ignoreEvent`
+ * 默认对所有事件返回 true（编辑器一律忽略 widget 里面的事件），所以点公式既不会
+ * 移动光标、也不会展开源码——这就是「点公式没反应」的原因。
+ *
+ * 位置**由构造方传进来**（sourceFrom / sourceTo 是公式原文的准确区间），不去猜：
+ * 早先的写法是拿 `posAtDOM(host, 0)` 当起点、再用 `indexOf(tex)` 往后找，
+ * 多行公式一带缩进、或者块级 widget 的位置落在别处，就找不到、光标落到公式外面，
+ * 表现就是「点中间没反应」。
+ *
+ * @param view - 当前编辑器视图
+ * @param host - 公式 widget 的根节点
+ * @param tex - 公式源码（不含定界符）
+ * @param sourceFrom - 公式源码在文档里的起点
+ * @param sourceTo - 公式源码在文档里的终点
+ * @param event - 触发定位的鼠标事件
+ */
+function placeMathCaret(
+    view: EditorView,
+    host: HTMLElement,
+    tex: string,
+    sourceFrom: number,
+    sourceTo: number,
+    event: MouseEvent
+): void {
+    // 只读模式（Viewer）只让 CM6 照常处理，不动光标
+    if (!view.state.facet(EditorView.editable)) return;
 
-    const style = document.createElement('style');
-    style.textContent = css;
-    document.head.appendChild(style);
-    console.debug('[FlowMD] KaTeX CSS injected, length:', css.length);
+    const doc = view.state.doc;
+    if (sourceFrom < 0 || sourceTo > doc.length || sourceFrom >= sourceTo) return;
+
+    const rect = host.getBoundingClientRect();
+    const ratioX = rect.width > 0 ? (event.clientX - rect.left) / rect.width : 0;
+    const ratioY = rect.height > 0 ? (event.clientY - rect.top) / rect.height : 0;
+
+    // 多行公式：先按纵向比例选出第几行，再在那一行里按横向比例选字符
+    const lines = tex.split('\n');
+    const lineIndex = Math.max(0, Math.min(lines.length - 1, Math.round(ratioY * (lines.length - 1))));
+    let offset = 0;
+    for (let i = 0; i < lineIndex; i++) offset += lines[i].length + 1;
+    offset += Math.round(ratioX * lines[lineIndex].length);
+
+    // 落在公式区间内，别越界跑到别的段落上去
+    const pos = Math.max(sourceFrom, Math.min(sourceTo, sourceFrom + offset));
+    view.dispatch({ selection: { anchor: pos } });
+    view.focus();
 }
 
 /**
  * Widget that renders an inline math expression ($...$).
  */
 export class InlineMathWidget extends WidgetType {
-    constructor(private tex: string) {
+    /**
+     * @param tex - 公式源码（不含定界符）
+     * @param sourceFrom - 公式源码在文档里的起点
+     * @param sourceTo - 公式源码在文档里的终点
+     * @param fallbackText - KaTeX 认不出这段内容时改显示的原文；null 表示照旧显示红字报错。
+     *   只有**反引号那一路**会传（那里的内容本来是按代码写的，猜错了该显示得像没开这个功能，
+     *   见 mathCollect.ts 的 collectCodeSpanMathDecorations）。
+     */
+    constructor(
+        private tex: string,
+        private sourceFrom: number,
+        private sourceTo: number,
+        private fallbackText: string | null = null
+    ) {
         super();
     }
 
     eq(other: InlineMathWidget): boolean {
-        return this.tex === other.tex;
+        return (
+            this.tex === other.tex &&
+            this.sourceFrom === other.sourceFrom &&
+            this.sourceTo === other.sourceTo &&
+            this.fallbackText === other.fallbackText
+        );
     }
 
-    toDOM(): HTMLElement {
+    toDOM(view: EditorView): HTMLElement {
         const span = document.createElement('span');
         span.className = 'cm-md-math-inline';
+        // 点击公式 → 光标落在点击处 → 这一行进入文本模式（显示 $...$ 源码）
+        span.addEventListener('mousedown', (event: MouseEvent) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            placeMathCaret(view, span, this.tex, this.sourceFrom, this.sourceTo, event);
+        });
+        let failed = false;
         try {
             ensureKatexCss();
-            console.debug('[FlowMD] InlineMath rendering:', this.tex.substring(0, 50));
             katex.render(this.tex, span, {
                 throwOnError: false,
                 output: 'htmlAndMathml',
+                // 反引号那一路（fallbackText 非空）额外带上探针色，见下面的判定
+                ...(this.fallbackText !== null ? { errorColor: MATH_PROBE_COLOR } : {}),
             });
-            console.debug('[FlowMD] InlineMath rendered OK, children:', span.childNodes.length);
         } catch (e) {
             console.error('[FlowMD] InlineMath KaTeX render error:', e, 'tex:', this.tex);
-            span.textContent = `$${this.tex}$`;
+            failed = true;
+        }
+
+        // 反引号那一路还要挡住 KaTeX「不抛异常地失败」：throwOnError 为 false 时它不报错，
+        // 而是把认不出来的部分用 errorColor 画成红字（解析错误给一个 `.katex-error` 节点，
+        // 未定义命令 —— 比如 `` `C:\Users` `` 里的 `\Users` —— 则只是裹在正常输出里的一段红字），
+        // 上面那个 try 一个都抓不到。所以那一遍特意换了个探针色，渲染完在 DOM 里搜一下：
+        // 搜到就说明这段内容 KaTeX 没真认下来，退回原样的代码文本 ——
+        // 那段内容本来就是按代码写的，猜错了就该看起来跟没开这个功能一样，
+        // 而不是在正文中间摆一段红字。`$…$` 那一路不传 fallbackText，照旧显示红字报错
+        // （那是用户自己写出来的公式，报错有用）。
+        if (this.fallbackText !== null && (failed || span.innerHTML.includes(MATH_PROBE_COLOR))) {
+            span.textContent = this.fallbackText;
         }
         return span;
     }
+}
+
+// =============================================================================
+// 块级公式：固定 2.5 行高 + 超高缩放
+// =============================================================================
+
+/** 块级公式外框占几行正文。 */
+const MATH_BLOCK_LINES = 2.5;
+
+/**
+ * 公式缩放比例缓存：key 是「框高 + 公式源码」。
+ *
+ * 量自然高度必须等元素挂进 DOM（toDOM 里量不到），所以第一次渲染是
+ * 「先按原样挂上、下一帧量完再缩」。存下来之后，同一个公式再渲染就直接套缓存，
+ * 首帧就是缩好的，不会闪。
+ */
+const mathScaleCache = new Map<string, number>();
+
+/**
+ * 正文的字号（px）。
+ *
+ * `.cm-content` 的 font-size 就是 `.cm-content` 那条规则算出来的
+ * `--flowmd-editor-font-size × --flowmd-font-scale`，这里照抄一遍 ——
+ * 只用在「连正文行都还没有」的首次构建里给行高兜底。
+ *
+ * @returns 正文字号（px），两个变量都读不到时按主题默认的 14px
+ */
+function contentFontSizePx(): number {
+    const root = getComputedStyle(document.documentElement);
+    const base = Number.parseFloat(root.getPropertyValue('--flowmd-editor-font-size'));
+    const scale = Number.parseFloat(root.getPropertyValue('--flowmd-font-scale'));
+    return Number.isFinite(base) ? base * (Number.isFinite(scale) ? scale : 1) : 14;
+}
+
+/**
+ * 正文的行高（px）。
+ *
+ * 三级来源，越靠前越准：
+ * 1. 页面上已经有正文行 —— 量它的计算行高（行高是用户可配的，量出来的最准）；
+ * 2. 还没有（视图**首次构建**时一行都没有）—— 按 CSS 里用的同一个变量现算：
+ *    `--flowmd-line-height` 是 `1.7em` 这种带 em 的写法时乘上正文字号，
+ *    写成 `22px` 时直接用；
+ * 3. 变量也读不到 —— 字号 × 1.7，即主题里那个兜底值。
+ *
+ * @returns 行高（px）
+ */
+function mathLineHeightPx(): number {
+    const line = document.querySelector('#editor .cm-line');
+    if (line) {
+        const measured = Number.parseFloat(getComputedStyle(line).lineHeight);
+        if (Number.isFinite(measured) && measured > 0) return measured;
+    }
+    const raw = getComputedStyle(document.documentElement)
+        .getPropertyValue('--flowmd-line-height')
+        .trim();
+    const value = Number.parseFloat(raw);
+    if (Number.isFinite(value) && value > 0) {
+        return raw.endsWith('px') ? value : value * contentFontSizePx();
+    }
+    return contentFontSizePx() * 1.7;
+}
+
+/**
+ * 块级公式外框的高度（px）= 2.5 行正文。
+ *
+ * 只给两件事用：**视口外的高度估算**（`estimatedHeight`）和缩放缓存的 key。
+ * 框的真实高度由 CSS 算（styles.ts 里 `calc(2.5 * var(--flowmd-line-height))`），
+ * 两边是同一条公式，所以这里算出来的和页面上量到的一致。
+ *
+ * **别拿它去写行内 style 的高度**：首次构建时 `.cm-line` 还不存在，
+ * 行高只能猜（而且 `getMeasureContext()` 那时退到 body，字号是界面的 16px 而不是
+ * 正文的 14px），猜出来的 68px 会被 CM 连同 DOM 一起缓存住 ——
+ * widget.eq 为真时 DOM 复用、toDOM 不再跑，框就一直比正文高 8.5px，
+ * 下面所有行的行号、点击落点跟着往上偏（2026-09-21 反馈）。
+ *
+ * @returns 外框高度（px）
+ */
+function mathBoxHeightPx(): number {
+    return MATH_BLOCK_LINES * mathLineHeightPx();
+}
+
+/**
+ * 把公式缩放到外框里。
+ *
+ * 缩放比例 = min(1, 可用高度 / 公式自然高度)：矮的公式原样显示（绝不放大小公式），
+ * 比框高的（多行 aligned 之类）整体缩小后居中。transform 不影响布局，
+ * 所以外面那 2.5 行的高度永远是稳定的。
+ *
+ * @param inner - 包着 KaTeX 输出的缩放层
+ * @param tex - 公式源码（当缓存 key 用）
+ * @returns void
+ */
+function fitMathToBox(inner: HTMLElement, tex: string): void {
+    // 外框上下各 1px 边框要扣掉，公式才不会贴着边（框内上下没有 padding，见 styles.ts）
+    const avail = mathBoxHeightPx() - 2;
+    const key = `${Math.round(avail)}|${tex}`;
+
+    const applyScale = (scale: number): void => {
+        inner.style.transform = `scale(${scale.toFixed(4)})`;
+    };
+
+    const cached = mathScaleCache.get(key);
+    if (cached !== undefined) {
+        applyScale(cached);
+        return;
+    }
+
+    // 第一帧量不到（元素还没进 DOM）：下一帧补量。
+    // 外框高度是固定的，所以这一帧的量与不量都不会让下面的内容移位。
+    requestAnimationFrame(() => {
+        if (!inner.isConnected) return;
+        const natural = inner.getBoundingClientRect().height;
+        if (natural <= 0) return;
+        const scale = Math.min(1, avail / natural);
+        if (mathScaleCache.size > 200) mathScaleCache.clear();
+        mathScaleCache.set(key, scale);
+        applyScale(scale);
+    });
 }
 
 /**
  * Widget that renders a block math expression ($$...$$).
  */
 export class BlockMathWidget extends WidgetType {
-    constructor(private tex: string) {
+    /**
+     * @param tex - 公式源码（不含 `$$` 定界符）
+     * @param sourceFrom - 公式源码在文档里的起点
+     * @param sourceTo - 公式源码在文档里的终点
+     */
+    constructor(
+        private tex: string,
+        private sourceFrom: number,
+        private sourceTo: number
+    ) {
         super();
     }
+    /**
+     * 高度是**固定**的 2.5 行，不用量也知道 —— 视口外的公式靠它估高度，
+     * 估得准，滚动条才不会跳。
+     *
+     * 这只是个估算：视口里的公式 CM 会拿真实盒高盖掉它（见 styles.ts 上的说明）。
+     */
     get estimatedHeight(): number {
-        return widgetHeightCache.get('math-' + this.tex) || 50;
+        return mathBoxHeightPx();
     }
 
     eq(other: BlockMathWidget): boolean {
-        return this.tex === other.tex;
+        return (
+            this.tex === other.tex &&
+            this.sourceFrom === other.sourceFrom &&
+            this.sourceTo === other.sourceTo
+        );
+    }
+
+    /**
+     * 让 CodeMirror 照常处理公式里的事件。
+     *
+     * 默认（返回 true）是「widget 里的事件编辑器一律不管」，那样点公式只会被我们
+     * 自己的 mousedown 兜住；万一那一下没算准位置，用户就完全点不进去了。
+     * 返回 false 之后，就算我们的计算失败，CodeMirror 也会把光标放到公式边界上，
+     * 至少能进文本模式（只是光标没那么准），不会出现「点了没反应」。
+     *
+     * @returns 恒为 false
+     */
+    ignoreEvent(): boolean {
+        return false;
     }
 
     toDOM(view: EditorView): HTMLElement {
         const div = document.createElement('div');
         div.className = 'cm-md-math-block';
+        // 高度**不写行内 style**：由 styles.ts 的 `calc(2.5 * var(--flowmd-line-height))` 算。
+        // 这里写死一段 px 会永久生效（widget.eq 为真时 CM 复用 DOM、toDOM 不再跑），
+        // 而首次构建那一刻量不到行高，写下去的就是个错值 —— 下面每一行都会跟着偏。
+        // 点击公式 → 光标落在点击处 → 整段公式进入文本模式
+        div.addEventListener('mousedown', (event: MouseEvent) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            placeMathCaret(view, div, this.tex, this.sourceFrom, this.sourceTo, event);
+        });
+
+        // KaTeX 的输出包一层：缩放只作用在这一层，外框高度不受影响
+        const inner = document.createElement('div');
+        inner.className = 'cm-md-math-inner';
         try {
             ensureKatexCss();
-            console.debug('[FlowMD] BlockMath rendering:', this.tex.substring(0, 50));
-            katex.render(this.tex, div, {
+            katex.render(this.tex, inner, {
                 throwOnError: false,
                 displayMode: true,
                 output: 'htmlAndMathml',
             });
-            console.debug('[FlowMD] BlockMath rendered OK, children:', div.childNodes.length);
-            if (typeof ResizeObserver !== 'undefined') {
-                const ro = new ResizeObserver((entries) => {
-                    for (let entry of entries) {
-                        const h = entry.borderBoxSize?.[0]?.blockSize || entry.contentRect.height;
-                        if (h > 0) widgetHeightCache.set('math-' + this.tex, h);
-                    }
-                    view.requestMeasure();
-                });
-                requestAnimationFrame(() => {
-                    if (div.isConnected) ro.observe(div);
-                });
-            }
         } catch (e) {
             console.error('[FlowMD] BlockMath KaTeX render error:', e, 'tex:', this.tex);
-            div.textContent = `$$${this.tex}$$`;
+            inner.textContent = `$$${this.tex}$$`;
         }
+        div.appendChild(inner);
+        // 比外框高的公式整体缩小（首帧量不到，会在下一帧补上）
+        fitMathToBox(inner, this.tex);
         return div;
     }
 }

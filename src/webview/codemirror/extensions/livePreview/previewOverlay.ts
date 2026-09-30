@@ -11,13 +11,14 @@ import {
     mermaidInitialized,
     mermaidRenderPromises,
     mermaidSvgCache,
+    rememberMermaidSvg,
     setMermaidInitialized,
 } from './state.js';
 import { canStepMediaWidth } from './mediaWidth.js';
 
 /**
  * 预览浮层中图片查看器所需的信息。
- */
+ */ 
 export interface ImagePreviewOverlayOptions {
     /** 原始图片地址，用于复制。 */
     rawUrl: string;
@@ -43,6 +44,8 @@ export interface MermaidPreviewOverlayOptions {
     titleText?: string | null;
     /** 标题提交后的回写回调。 */
     onTitleCommit?: (title: string) => void;
+    /** 右侧代码区改动后把新源码写回文档的回调（做了防抖，关闭浮层时会补一次）。 */
+    onSourceCommit?: (source: string) => void;
     /** 浮层挂载容器，用于继承 CodeMirror baseTheme 样式作用域。 */
     mountHost: HTMLElement;
 }
@@ -117,6 +120,22 @@ let activeOverlayRoot: HTMLElement | null = null;
  * 这个值用于生成渲染 ID，避免并发渲染时产生冲突。
  */
 let mermaidRenderSequence = 0;
+
+/**
+ * 右侧代码改动后多久重渲染（ms）。
+ *
+ * 太短会在连着敲字时反复启动 mermaid 渲染（它内部有布局计算，不便宜），
+ * 太长又会显得"改完半天不动"。0.3 秒是「看着像即时」和「不卡」的折中。
+ */
+const MERMAID_LIVE_RENDER_DELAY_MS = 300;
+
+/**
+ * 右侧代码改动后多久把源码写回文档（ms）。
+ *
+ * 回写会触发整篇装饰重建，比渲染还贵，所以比渲染再慢一拍；
+ * 反正用户的注意力在左边的图上，晚一点落盘看不出来。
+ */
+const MERMAID_LIVE_COMMIT_DELAY_MS = 800;
 
 /**
  * 关闭当前活动的预览浮层。
@@ -1046,6 +1065,9 @@ export function openImagePreviewOverlay(options: ImagePreviewOverlayOptions): vo
 /**
  * 打开 Mermaid 预览浮层。
  *
+ * 版式是 **2:1 分栏**：左边（2 份宽）是渲染出来的图，右边（1 份宽）是 Mermaid 源码，
+ * 在右边改代码左边即时重渲染，关掉浮层时改动已经写回文档。
+ *
  * @param options - Mermaid 预览参数
  * @returns void
  */
@@ -1075,36 +1097,141 @@ export function openMermaidPreviewOverlay(options: MermaidPreviewOverlayOptions)
     const panZoom = attachPanZoom(viewport, stage);
     cleanupBag.push(panZoom.cleanup);
 
+    // -------------------------------------------------------------------------
+    // 2:1 分栏：viewport 整体搬进左栏，右栏放一个 textarea
+    // -------------------------------------------------------------------------
+    // 搬 viewport 而不是重建：缩放 / 拖动那一整套（attachPanZoom、stage、content）
+    // 一行都不用改，而且变换只作用在左栏里，右栏的 textarea 不受影响。
+    const split = document.createElement('div');
+    split.className = 'cm-md-preview-split';
+    const mainColumn = document.createElement('div');
+    mainColumn.className = 'cm-md-preview-split-main';
+    const sideColumn = document.createElement('div');
+    sideColumn.className = 'cm-md-preview-split-side';
+    const editor = document.createElement('textarea');
+    editor.className = 'cm-md-preview-mermaid-editor';
+    editor.spellcheck = false;
+    editor.setAttribute('aria-label', 'Mermaid 源码');
+    editor.value = options.source;
+    sideColumn.appendChild(editor);
+    // viewport 原本是 panel 的直接子节点：先用 split 把它换下来，再收进左栏
+    viewport.replaceWith(split);
+    mainColumn.appendChild(viewport);
+    split.append(mainColumn, sideColumn);
+
+    // 左栏的三个常驻节点：图、提示条（加载中 / 渲染失败 / 空图表）、右下角按钮组
+    const rendered = document.createElement('div');
+    rendered.className = 'cm-md-preview-mermaid-rendered';
+    const message = createPreviewFallback('正在渲染 Mermaid 图表...');
+    message.classList.add('cm-md-preview-loading');
     const actions = createPreviewActionGroup('放大图表', '复制 Mermaid 图', panZoom.zoomIn, async () => {
         const success = await copyMermaidRenderedImageSafely(contentHost);
         if (!success) {
             throw new Error('copy failed');
         }
     });
-    contentHost.appendChild(actions);
+    contentHost.replaceChildren(rendered, message, actions);
 
-    const loading = createPreviewFallback('正在渲染 Mermaid 图表...');
-    loading.classList.add('cm-md-preview-loading');
-    contentHost.appendChild(loading);
+    /**
+     * 显示 / 隐藏左栏的提示条。
+     *
+     * @param text - 提示文案；空串表示不提示
+     * @param isError - 是否是错误提示（红色）
+     */
+    const showMessage = (text: string, isError: boolean): void => {
+        message.textContent = text;
+        message.classList.toggle('cm-md-preview-error', isError);
+        message.style.display = text ? '' : 'none';
+    };
+
+    // -------------------------------------------------------------------------
+    // 即时渲染
+    // -------------------------------------------------------------------------
+    /** 渲染序号：mermaid 渲染是异步的，连着敲字会有好几次同时在飞，只认最后一次。 */
+    let renderSeq = 0;
+    /** 用户自己滚轮缩放过 / 拖动过之后，实时渲染不再自动回正。 */
+    let userAdjusted = false;
+    const markUserAdjusted = (): void => {
+        userAdjusted = true;
+    };
+    viewport.addEventListener('wheel', markUserAdjusted, { passive: true });
+    viewport.addEventListener('mousedown', markUserAdjusted);
+    cleanupBag.push(() => {
+        viewport.removeEventListener('wheel', markUserAdjusted);
+        viewport.removeEventListener('mousedown', markUserAdjusted);
+    });
+
+    /**
+     * 渲染一份 Mermaid 源码并换掉左栏的图。
+     *
+     * 失败不抛给外面：语法错是编辑过程中的常态，左边红字提示、右边继续编辑即可。
+     *
+     * @param source - 要渲染的源码
+     */
+    const applySource = async (source: string): Promise<void> => {
+        const seq = ++renderSeq;
+        if (!source.trim()) {
+            rendered.innerHTML = '';
+            showMessage('（空图表）', false);
+            return;
+        }
+        try {
+            const svg = await renderMermaidSource(source);
+            // 期间又有更新的输入 → 这一次的结果已经过期，丢掉
+            if (seq !== renderSeq) return;
+            rendered.innerHTML = svg;
+            showMessage('', false);
+            // 只在用户没自己调过视角时回正：不然每敲一个字，画面就弹回默认缩放
+            if (!userAdjusted) queuePreviewFit(() => panZoom.fitToViewport());
+        } catch (error) {
+            if (seq !== renderSeq) return;
+            const detail = error instanceof Error ? error.message : String(error);
+            showMessage(`Mermaid 渲染失败: ${detail}`, true);
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // 输入：重渲染（300ms）与回写文档（800ms）两条防抖链
+    // -------------------------------------------------------------------------
+    let renderTimer = 0;
+    let commitTimer = 0;
+    cleanupBag.push(() => {
+        window.clearTimeout(renderTimer);
+        window.clearTimeout(commitTimer);
+        // 关闭前把还没写回的那一次补上，否则最后不到 0.8 秒里敲的字会丢
+        if (options.onSourceCommit) {
+            options.onSourceCommit(editor.value);
+        }
+    });
+
+    editor.addEventListener('input', () => {
+        window.clearTimeout(renderTimer);
+        renderTimer = window.setTimeout(
+            () => void applySource(editor.value),
+            MERMAID_LIVE_RENDER_DELAY_MS
+        );
+
+        // 回写会重建整篇装饰（比渲染贵），所以更慢一拍
+        if (options.onSourceCommit) {
+            window.clearTimeout(commitTimer);
+            commitTimer = window.setTimeout(() => {
+                options.onSourceCommit?.(editor.value);
+            }, MERMAID_LIVE_COMMIT_DELAY_MS);
+        }
+    });
+    // 代码框自己吃键盘事件，别冒泡到编辑器的快捷键上；**Esc 要放行**，
+    // 那是在外壳上监听的"关闭浮层"
+    editor.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') {
+            event.stopPropagation();
+        }
+    });
 
     options.mountHost.appendChild(root);
     root.tabIndex = -1;
     root.focus({ preventScroll: true });
 
-    void renderMermaidSource(options.source)
-        .then((svg) => {
-            const rendered = document.createElement('div');
-            rendered.className = 'cm-md-preview-mermaid-rendered';
-            rendered.innerHTML = svg;
-            contentHost.replaceChildren(rendered, actions);
-            queuePreviewFit(() => panZoom.fitToViewport());
-        })
-        .catch((error) => {
-            const message = document.createElement('div');
-            message.className = 'cm-md-preview-fallback cm-md-preview-error';
-            message.textContent = `Mermaid 渲染失败: ${error instanceof Error ? error.message : String(error)}`;
-            contentHost.replaceChildren(message, actions);
-        });
+    void applySource(options.source);
 }
 
 /**
@@ -1168,7 +1295,7 @@ async function renderMermaidSource(source: string): Promise<string> {
 
     const renderId = `mermaid-preview-${mermaidRenderSequence++}`;
     const promise = mermaid.default.render(renderId, source).then(({ svg }) => {
-        mermaidSvgCache.set(source, svg);
+        rememberMermaidSvg(source, svg);
         return svg;
     });
     mermaidRenderPromises.set(source, promise);

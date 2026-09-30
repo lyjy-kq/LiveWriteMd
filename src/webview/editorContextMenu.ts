@@ -5,10 +5,32 @@
  * 不处理大纲、标题栏或其它辅助 UI 的菜单逻辑。
  */
 
+import type { TableCommand } from './codemirror/extensions/livePreview/tableCommands.js';
+
 /**
  * 支持的编辑器模式类型。
  */
 export type EditorMode = 'live' | 'viewer' | 'source';
+
+/** 菜单里所有可能的动作名（编辑器模式 + 各种命令 + 表格增删行列）。 */
+type MenuAction =
+    | EditorMode
+    | 'insert-image'
+    | 'export-as-html'
+    | 'export-as-pdf'
+    | 'download-remote-images'
+    | 'toggle-outline'
+    | TableCommand;
+
+/**
+ * 判断一个动作名是不是表格操作。
+ *
+ * @param action - 菜单动作名
+ * @returns 是表格操作时返回 true
+ */
+function isTableCommand(action: MenuAction): action is TableCommand {
+    return TABLE_MENU_ITEMS.some((item) => item.action === action);
+}
 
 /**
  * 正文右键菜单需要调用的外部动作。
@@ -30,7 +52,26 @@ export interface EditorContextMenuActions {
     onToggleOutline: () => void;
     /** 读取当前大纲是否显示。 */
     isOutlineVisible: () => boolean;
+    /**
+     * 右键位置是不是落在表格单元格里。
+     *
+     * 返回 true 时菜单会多出一组「表格增删行列」。实现方顺便把光标（或整格选区）
+     * 放进点了的那一格，后面的命令就作用在它（或框选的那片）上面。
+     */
+    resolveTableContext?: (event: MouseEvent) => boolean;
+    /** 执行一项表格操作（增删行列）。 */
+    onTableCommand?: (command: TableCommand) => void;
 }
+
+/** 表格那一组菜单项：动作名 → 文案。 */
+const TABLE_MENU_ITEMS: Array<{ action: TableCommand; label: string }> = [
+    { action: 'row-above', label: '向上插入行' },
+    { action: 'row-below', label: '向下插入行' },
+    { action: 'col-left', label: '向左插入列' },
+    { action: 'col-right', label: '向右插入列' },
+    { action: 'delete-row', label: '删除所选行' },
+    { action: 'delete-col', label: '删除所选列' },
+];
 
 /**
  * FlowMD 正文右键菜单控制器。
@@ -45,16 +86,11 @@ export class EditorContextMenu {
     /** 当前是否显示菜单。 */
     private isOpen = false;
 
+    /** 表格那一组菜单项（单元格上右键才显示）。 */
+    private readonly tableGroup: HTMLDivElement;
+
     /** 菜单项对应的按钮集合。 */
-    private readonly buttons = new Map<
-        | EditorMode
-        | 'insert-image'
-        | 'export-as-html'
-        | 'export-as-pdf'
-        | 'download-remote-images'
-        | 'toggle-outline',
-        HTMLButtonElement
-    >();
+    private readonly buttons = new Map<MenuAction, HTMLButtonElement>();
 
     /** 菜单样式标识。 */
     private static readonly STYLE_ID = 'flowmd-editor-context-menu-style';
@@ -68,6 +104,9 @@ export class EditorContextMenu {
     constructor(private readonly actions: EditorContextMenuActions) {
         this.installStyles();
         this.menuEl = this.createMenuElement();
+        this.tableGroup = this.createTableGroup();
+        // 表格那组排在最前面：在格子上右键，用户要的就是这几项
+        this.menuEl.insertBefore(this.tableGroup, this.menuEl.firstChild);
         this.installGlobalDismissHandlers();
     }
 
@@ -157,6 +196,30 @@ export class EditorContextMenu {
     }
 
     /**
+     * 创建「表格」那一组菜单项（默认隐藏，在单元格上右键时才显示）。
+     *
+     * 动作名和 TableCommand 一一对应，点击统一走 handleMenuClick。
+     *
+     * @returns 这一组的容器节点
+     */
+    private createTableGroup(): HTMLDivElement {
+        const group = document.createElement('div');
+        group.className = 'flowmd-editor-context-menu-group';
+        group.dataset.group = 'table';
+        group.style.display = 'none';
+
+        for (const item of TABLE_MENU_ITEMS) {
+            const button = this.createMenuButton(item.action, item.label);
+            group.appendChild(button);
+            this.buttons.set(item.action, button);
+        }
+        const separator = document.createElement('div');
+        separator.className = 'flowmd-editor-context-menu-separator';
+        group.appendChild(separator);
+        return group;
+    }
+
+    /**
      * 安装右键菜单样式。
      *
      * @returns void
@@ -234,16 +297,7 @@ export class EditorContextMenu {
      * @param label - 按钮显示文本
      * @returns 菜单按钮节点
      */
-    private createMenuButton(
-        action:
-            | EditorMode
-            | 'insert-image'
-            | 'export-as-html'
-            | 'export-as-pdf'
-            | 'download-remote-images'
-            | 'toggle-outline',
-        label: string
-    ): HTMLButtonElement {
+    private createMenuButton(action: MenuAction, label: string): HTMLButtonElement {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'flowmd-editor-context-menu-item';
@@ -284,6 +338,9 @@ export class EditorContextMenu {
 
         event.preventDefault();
         event.stopPropagation();
+        // 落在表格格子上：多出一组增删行列（回调顺便把光标放进那一格 / 保留框选）
+        const inTable = this.actions.resolveTableContext?.(event) ?? false;
+        this.tableGroup.style.display = inTable ? '' : 'none';
         this.openAt(event.clientX, event.clientY);
     };
 
@@ -340,19 +397,17 @@ export class EditorContextMenu {
             return;
         }
 
-        const action = button.dataset.action as
-            | EditorMode
-            | 'insert-image'
-            | 'export-as-html'
-            | 'export-as-pdf'
-            | 'download-remote-images'
-            | 'toggle-outline'
-            | undefined;
+        const action = button.dataset.action as MenuAction | undefined;
         if (!action || button.disabled) {
             return;
         }
 
         this.hide();
+        // 表格那一组（加/删行列）交给编辑器去改文档
+        if (isTableCommand(action)) {
+            this.actions.onTableCommand?.(action);
+            return;
+        }
         if (action === 'insert-image') {
             this.actions.onInsertImage();
             return;
@@ -415,13 +470,10 @@ export class EditorContextMenu {
     private updateModeState(): void {
         const currentMode = this.actions.getCurrentMode();
         for (const [key, button] of this.buttons) {
-            if (
-                key === 'insert-image' ||
-                key === 'download-remote-images' ||
-                key === 'export-as-html' ||
-                key === 'export-as-pdf' ||
-                key === 'toggle-outline'
-            ) {
+            if (key === 'insert-image' || key === 'toggle-outline' || isTableCommand(key)) {
+                continue;
+            }
+            if (key === 'download-remote-images' || key === 'export-as-html' || key === 'export-as-pdf') {
                 continue;
             }
             button.disabled = key === currentMode;

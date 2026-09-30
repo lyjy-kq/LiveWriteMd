@@ -5,6 +5,12 @@
 
 /**
  * 澶х翰鑺傜偣鏁版嵁缁撴瀯銆? */
+import {
+    buildHeadingNumberingEdits,
+    buildHeadingUnnumberEdits,
+} from './headingNumbering.js';
+import type { HeadingEdit } from './headingNumbering.js';
+
 interface OutlineNode {
     /** 鑺傜偣鍞竴鏍囪瘑锛岀敤浜庣ǔ瀹氫繚瀛樻姌鍙犵姸鎬併€?*/
     id: string;
@@ -27,6 +33,17 @@ export interface OutlinePanelOptions {
     onWidthChange: (width: number) => void;
     /** 鐐瑰嚮鏍囬鍚庣殑璺宠浆鍥炶皟銆?*/
     onNavigateToLine: (lineNumber: number) => void;
+    /** 判断编辑器当前是否可编辑：只读模式下编号/取消编号按钮不可用。 */
+    isEditable: () => boolean;
+    /**
+     * 获取编辑器实时全文。
+     *
+     * 面板自己的内容缓存有 250ms 防抖，用户刚打完字就点按钮时可能是旧的，
+     * 编号前一律以这里取到的实时文档为准。
+     */
+    getDocument: () => string;
+    /** 把一批标题文本修改写回编辑器（具体怎么 dispatch 由 main.ts 决定）。 */
+    onApplyHeadingEdits: (edits: HeadingEdit[]) => void;
 }
 
 /**
@@ -50,6 +67,12 @@ export class OutlinePanel {
     /** 鈥滄姌鍙犲叏閮ㄢ€濇寜閽€?*/
     private readonly collapseAllButtonEl: HTMLButtonElement;
 
+    /** 「标题编号」按钮。 */
+    private readonly addNumberingButtonEl: HTMLButtonElement;
+
+    /** 「取消编号」按钮。 */
+    private readonly removeNumberingButtonEl: HTMLButtonElement;
+
     /** 鎮诞鎻愮ず瀹瑰櫒銆?*/
     private readonly tooltipEl: HTMLDivElement;
 
@@ -58,6 +81,15 @@ export class OutlinePanel {
 
     /** 鏍囬璺宠浆鍥炶皟銆?*/
     private readonly onNavigateToLine: (lineNumber: number) => void;
+
+    /** 编辑器是否可编辑（只读模式下编号按钮禁用）。 */
+    private readonly isEditable: () => boolean;
+
+    /** 取编辑器实时全文（编号前以实时文档为准，不用面板缓存）。 */
+    private readonly getDocument: () => string;
+
+    /** 把标题修改写回编辑器的回调。 */
+    private readonly onApplyHeadingEdits: (edits: HeadingEdit[]) => void;
 
     /** 褰撳墠澶х翰瀹藉害銆?*/
     private width: number;
@@ -147,12 +179,17 @@ export class OutlinePanel {
         this.resizerEl = resizerEl;
         this.onWidthChange = options.onWidthChange;
         this.onNavigateToLine = options.onNavigateToLine;
+        this.isEditable = options.isEditable;
+        this.getDocument = options.getDocument;
+        this.onApplyHeadingEdits = options.onApplyHeadingEdits;
         this.width = this.clampWidth(options.initialWidth);
 
         this.actionBarEl = this.resolveActionBarElement();
         this.expandAllButtonEl = this.resolveActionButton('expand-all', '\u5c55\u5f00\u5168\u90e8');
         this.collapseAllButtonEl = this.resolveActionButton('collapse-all', '\u6536\u8d77\u5168\u90e8');
         // 关闭按钮固定放在操作栏最右侧，用户不用再翻右键菜单才能收起大纲。
+        this.addNumberingButtonEl = this.resolveActionButton('add-numbering', '标题编号');
+        this.removeNumberingButtonEl = this.resolveActionButton('remove-numbering', '取消编号');
         this.resolveActionButton('close-outline', '关闭大纲');
         this.reopenButtonEl = this.resolveReopenButton();
         this.tooltipEl = this.resolveTooltipElement();
@@ -384,6 +421,22 @@ export class OutlinePanel {
         }
 
         const action = actionButton.getAttribute('data-outline-action');
+
+        // 标题编号 / 取消编号：取编辑器实时全文算修改，再交 main.ts 写回。
+        // 必须用实时文档：面板缓存有 250ms 防抖，用户刚打完字就点会错位。
+        if (action === 'add-numbering' || action === 'remove-numbering') {
+            // 按钮 disabled 之外再兜底一次：只读模式直接不处理
+            if (!this.isEditable()) return;
+            const doc = this.getDocument();
+            const edits =
+                action === 'add-numbering'
+                    ? buildHeadingNumberingEdits(doc)
+                    : buildHeadingUnnumberEdits(doc);
+            if (edits.length > 0) {
+                this.onApplyHeadingEdits(edits);
+            }
+            return;
+        }
         if (action === 'expand-all') {
             this.expandAll();
         } else if (action === 'collapse-all') {
@@ -690,7 +743,7 @@ export class OutlinePanel {
         if (this.nodes.length === 0) {
             // 空状态提示：旧文案是被错误转码的乱码，这里换回正常中文。
             this.contentEl.innerHTML =
-                '<div class="outline-empty">未检测到标题，用 # 写一个标题后会显示在这里。</div>';
+                '<div class="outline-empty">标题大纲</div>';
             this.panelEl.classList.add('is-empty');
             this.updateActionBarState();
             this.restoreScrollPosition(previousScrollTop, previousScrollLeft);
@@ -999,6 +1052,28 @@ export class OutlinePanel {
      * @returns 可直接显示的 SVG 图标字符串
      */
     private buildActionGlyph(action: string): string {
+        // 标题编号 / 取消编号：画成「编号列表」的样子（1/2/3 + 三条横线），
+        // 取消编号再压一道斜杠，两个按钮互相对应、也好和加减号区分。
+        if (action === 'add-numbering' || action === 'remove-numbering') {
+            const slash =
+                action === 'remove-numbering'
+                    ? '<path d="M2.2 14L13.8 2" stroke-width="1.5"></path>'
+                    : '';
+            return `
+                <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                    <g fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+                        <path d="M6 4h7.5M6 8h7.5M6 12h7.5"></path>
+                        ${slash}
+                    </g>
+                    <g fill="currentColor" font-family="var(--vscode-editor-font-family, monospace)" font-size="4.6">
+                        <text x="1.1" y="5.7">1</text>
+                        <text x="1.1" y="9.7">2</text>
+                        <text x="1.1" y="13.7">3</text>
+                    </g>
+                </svg>
+            `;
+        }
+
         // 关闭按钮用叉号，展开/收起用加减号，保证三个按钮一眼可区分。
         const glyphPaths: Record<string, string> = {
             'collapse-all': 'M3.5 8h9',
@@ -1150,6 +1225,10 @@ export class OutlinePanel {
         const hasNodes = this.nodes.length > 0;
         this.expandAllButtonEl.disabled = !hasNodes;
         this.collapseAllButtonEl.disabled = !hasNodes;
+        // 编号按钮：没有标题或只读模式都不可用
+        const numberingDisabled = !hasNodes || !this.isEditable();
+        this.addNumberingButtonEl.disabled = numberingDisabled;
+        this.removeNumberingButtonEl.disabled = numberingDisabled;
     }
 
     /**

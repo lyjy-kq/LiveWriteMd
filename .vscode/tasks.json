@@ -2,6 +2,42 @@
     "version": "2.0.0",
     "tasks": [
         {
+            // F5（.vscode/launch.json 的 preLaunchTask）跑的就是这个：
+            // 走 scripts/dev.ps1 的 build 模式 —— 只构建 dist/，
+            // 不起扩展开发宿主窗口、也不打 vsix，正好当启动前的准备动作。
+            // 这里刻意不直接写 npm/esbuild 命令，把构建逻辑收在脚本一处，
+            // 避免以后脚本改了、任务里还留着一份对不上的旧命令。
+            "label": "FlowMD: build (dev.ps1)",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}/scripts/dev.ps1",
+                "-Mode",
+                "build"
+            ],
+            // 和 tasks 同目录的 scripts/dev.ps1 自己会切到仓库根目录（看 $PSScriptRoot），
+            // 但这里还是显式指定，免得 VS Code 用了别的 cwd 让人犯嘀咕。
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            // 空数组 = 不去扫描输出里的报错。不清空的话 VS Code 会反问
+            // 「要扫描任务输出吗」，F5 会卡在一个多余的弹窗上。
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared",
+                "clear": true
+            }
+        },
+        {
             "label": "pnpm: build",
             "type": "shell",
             "command": "pnpm",
@@ -26,4 +62,3 @@
         }
     ]
 }
-
