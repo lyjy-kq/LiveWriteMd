@@ -99,6 +99,12 @@ export const MESSAGE_TYPES = {
      */
     OUTLINE_TOGGLE: 'outlineToggle',
 
+    /**
+     * 打开设置面板消息类型。
+     * 扩展侧执行「FlowMD: 设置」命令后发给当前编辑器。
+     */
+    OPEN_SETTINGS: 'openSettings',
+
     // ========================================================================
     // Webview -> Extension 扩展消息类型
     // ========================================================================
@@ -108,6 +114,12 @@ export const MESSAGE_TYPES = {
      * Webview 点击重载按钮后发送给扩展侧。
      */
     RELOAD_CONTENT: 'reloadContent',
+
+    /**
+     * 更新单项设置消息类型。
+     * 设置面板里改动后发给扩展侧持久化到 VS Code 配置。
+     */
+    UPDATE_SETTING: 'updateSetting',
 
     // ========================================================================
     // 图片保存消息类型

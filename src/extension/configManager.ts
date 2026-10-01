@@ -13,6 +13,10 @@
 
 import * as vscode from 'vscode';
 import type { FlowMdEditorSettings } from '../shared/types.js';
+import {
+    ALL_SETTING_ITEMS,
+    type SettingValue,
+} from '../shared/settingsSchema.js';
 
 // =============================================================================
 // Custom Error Types
@@ -347,5 +351,41 @@ export class ConfigManager {
             readableLineLength: this.getReadableLineLength(),
             fontScale: this.getFontScale(),
         };
+    }
+
+    /**
+     * 读取全部设置（遍历 schema），用于 INIT / settingsChange 下发。
+     *
+     * 每项从 VS Code 配置读取，缺失时回落到 schema 默认值，因此返回对象
+     * 一定包含所有已登记的键。
+     *
+     * @returns key -> 当前值（含默认）
+     */
+    static getAllSettings(): Record<string, SettingValue> {
+        const config = vscode.workspace.getConfiguration(this.CONFIG_SECTION);
+        const result: Record<string, SettingValue> = {};
+        for (const item of ALL_SETTING_ITEMS) {
+            const value = config.get<SettingValue>(item.key, item.default);
+            result[item.key] = value ?? item.default;
+        }
+        return result;
+    }
+
+    /**
+     * 把单项设置写回 VS Code 配置。
+     *
+     * 默认写入全局（用户）设置；显式传入 target 时可写到工作区。
+     *
+     * @param key - 设置键（不含 flowMd.）
+     * @param value - 新值
+     * @param target - 写入目标，默认 Global
+     */
+    static async updateSetting(
+        key: string,
+        value: SettingValue,
+        target: vscode.ConfigurationTarget = vscode.ConfigurationTarget.Global
+    ): Promise<void> {
+        const config = vscode.workspace.getConfiguration(this.CONFIG_SECTION);
+        await config.update(key, value, target);
     }
 }

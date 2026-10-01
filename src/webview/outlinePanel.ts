@@ -10,6 +10,7 @@ import {
     buildHeadingUnnumberEdits,
 } from './headingNumbering.js';
 import type { HeadingEdit } from './headingNumbering.js';
+import { settingsState } from './settingsState.js';
 
 interface OutlineNode {
     /** 鑺傜偣鍞竴鏍囪瘑锛岀敤浜庣ǔ瀹氫繚瀛樻姌鍙犵姸鎬併€?*/
@@ -892,6 +893,8 @@ export class OutlinePanel {
      * @returns HTML 字符串
      */
     private buildIndentGuides(level: number): string {
+        // 设置项 outlineGuides 关闭时不渲染缩进引导线
+        if (!settingsState.getBoolean('outlineGuides')) return '';
         const guideCount = Math.max(0, level - 1);
         if (guideCount === 0) {
             return '';

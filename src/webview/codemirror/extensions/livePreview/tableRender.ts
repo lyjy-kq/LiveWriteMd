@@ -110,6 +110,8 @@ const CELL_SELECTED_CLASS = 'cm-md-tcell-selected';
 const GAP_CLASS = 'cm-md-tgap';
 const ROW_CLASS = 'cm-md-table-row';
 const HEADER_CLASS = 'cm-md-table-header';
+/** 偶数数据行：配合 --flowmd-table-stripe-background 画斑马纹。 */
+const STRIPE_CLASS = 'cm-md-table-stripe';
 const DELIMITER_CLASS = 'cm-md-table-delimiter';
 
 /** 表格里的一行。 */
@@ -1301,13 +1303,22 @@ export function collectTableDecorations(
             available
         );
 
+        // 数据行序号：只统计非表头行，用于决定偶数行是否加斑马纹 class
+        let dataRowOrdinal = 0;
         for (const row of block.rows) {
             const { line, isHeader } = row;
             // 整行就是一个 flex 容器：格子是它的 flex item，一行里所有格子高度自动拉平。
             // 表格总宽由表格自己的行内宽度（列宽之和）决定，这里不用再写样式。
+
+            // 组装行 class：表头 / 普通行，偶数数据行额外加 stripe（斑马纹）
+            let rowClass = isHeader ? `${ROW_CLASS} ${HEADER_CLASS}` : ROW_CLASS;
+            if (!isHeader) {
+                dataRowOrdinal++;
+                if (dataRowOrdinal % 2 === 0) rowClass += ` ${STRIPE_CLASS}`;
+            }
             decos.push(
                 Decoration.line({
-                    class: isHeader ? `${ROW_CLASS} ${HEADER_CLASS}` : ROW_CLASS,
+                    class: rowClass,
                 }).range(line.lineFrom)
             );
 

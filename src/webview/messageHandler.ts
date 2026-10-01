@@ -35,7 +35,9 @@ import type {
     ExtensionToWebviewMessage,
     SearchHistoryChangeMessage,
     SearchHistoryState,
+    SettingsChangeMessage,
 } from '../shared/types.js';
+import type { SettingValue } from '../shared/settingsSchema.js';
 import { MESSAGE_TYPES } from '../shared/messageTypes.js';
 import { debounce } from '../shared/utils.js';
 import { DEFAULT_CONFIG } from '../shared/types.js';
@@ -100,8 +102,21 @@ export interface IWebviewMessageCallbacks {
         searchHistory: SearchHistoryState,
         settings?: FlowMdEditorSettings,
         mode?: 'live' | 'viewer' | 'source',
-        outlineWidth?: number
+        outlineWidth?: number,
+        allSettings?: Record<string, SettingValue>
     ) => void;
+
+    /**
+     * Called when SETTINGS_CHANGE message is received.
+     * Any flowMd configuration change re-sends the full settings.
+     */
+    onSettingsChange: (message: SettingsChangeMessage) => void;
+
+    /**
+     * Called when OPEN_SETTINGS message is received.
+     * The extension asks the webview to show its settings panel.
+     */
+    onOpenSettings: () => void;
 
     /**
      * Called when UPDATE message is received.
@@ -365,6 +380,14 @@ export class WebviewMessageHandler {
                 this.handleThemeChange(message);
                 break;
 
+            case MESSAGE_TYPES.SETTINGS_CHANGE:
+                this.callbacks.onSettingsChange(message);
+                break;
+
+            case MESSAGE_TYPES.OPEN_SETTINGS:
+                this.callbacks.onOpenSettings();
+                break;
+
             default:
                 // Unknown message type - silently ignore
                 // This provides forward compatibility if new message types
@@ -393,6 +416,7 @@ export class WebviewMessageHandler {
         mode?: 'live' | 'viewer' | 'source';
         outlineWidth?: number;
         outlinePanelWidth?: number;
+        allSettings?: Record<string, SettingValue>;
     }): void {
         this.callbacks.onInit(
             message.content,
@@ -401,7 +425,8 @@ export class WebviewMessageHandler {
             message.searchHistory,
             message.settings,
             message.mode,
-            message.outlineWidth ?? message.outlinePanelWidth
+            message.outlineWidth ?? message.outlinePanelWidth,
+            message.allSettings
         );
     }
 

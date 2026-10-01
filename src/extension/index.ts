@@ -193,6 +193,12 @@ export function activate(context: vscode.ExtensionContext): void {
     );
     Logger.debug(`Registered command: ${COMMAND_INSERT_IMAGE}`);
 
+    // Register open-settings command (FlowMD 设置)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('flowMd.openSettings', () => provider.openSettings())
+    );
+    Logger.debug('Registered command: flowMd.openSettings');
+
     // Register insert image from Explorer context menu
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMAND_INSERT_IMAGE_FROM_EXPLORER, (uri: vscode.Uri) => {

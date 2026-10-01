@@ -80,6 +80,7 @@ import {
     tableResizePlugin,
     tableSourceModeHandler,
 } from './tableRender.js';
+import { autoPairBrackets } from './autoPair.js';
 import {
     exitPinnedForceIfOutside,
     exitSourceModeIfOutside,
@@ -2111,6 +2112,8 @@ export function createLivePreviewExtension(): Extension[] {
         tableCellSelection(),
         // 单元格里输入 `|` 自动转义，免得把表格切碎
         tablePipeEscaper(),
+        // 输入左括号自动补全右半（[ { ( 【 《 <）
+        autoPairBrackets(),
         // 双击表格 → 整张表切源码模式（改结构时看源码更直接）
         tableSourceModeHandler(),
         syntaxHighlighting(flowMdDarkHighlight),

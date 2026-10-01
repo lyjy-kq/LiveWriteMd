@@ -6,6 +6,7 @@
  */
 
 import type { SearchHistoryState } from './searchHistory.js';
+import type { SettingValue } from './settingsSchema.js';
 
 // =============================================================================
 // 基础消息
@@ -58,8 +59,10 @@ export interface InitMessage extends BaseMessage {
     theme: ThemeType;
     /** 当前文档 URI。 */
     documentUri: string;
-    /** 编辑器设置。 */
+    /** 编辑器设置（结构化：行号 / 换行 / 行宽 / 字号）。 */
     settings?: FlowMdEditorSettings;
+    /** 全部设置（含颜色、个性化项），供 settingsState 注入 CSS 变量与运行时读取。 */
+    allSettings?: Record<string, SettingValue>;
     /** 初始右侧大纲宽度，单位像素。 */
     outlineWidth?: number;
     /** 兼容旧版本字段名。 */
@@ -99,12 +102,26 @@ export interface FontScaleChangeMessage extends BaseMessage {
 }
 
 /**
+ * 设置变更消息（扩展 -> Webview）。
+ * 任何 flowMd 配置变化都重发完整设置。
+ */
+export interface SettingsChangeMessage extends BaseMessage {
+    /** 消息类型。 */
+    type: 'settingsChange';
+    /** 结构化编辑器设置。 */
+    settings?: FlowMdEditorSettings;
+    /** 全部设置。 */
+    allSettings?: Record<string, SettingValue>;
+}
+
+/**
  * 扩展 -> Webview 的消息联合类型。
  */
 export type ExtensionToWebviewMessage =
     | InitMessage
     | UpdateMessage
     | ThemeChangeMessage
+    | SettingsChangeMessage
     | ImageSavedMessage
     | ImageSaveErrorMessage;
 
@@ -177,6 +194,19 @@ export interface SearchHistoryChangeMessage extends BaseMessage {
 }
 
 /**
+ * 单项设置更新消息（Webview -> 扩展）。
+ * 设置面板改动后发给扩展持久化。
+ */
+export interface UpdateSettingMessage extends BaseMessage {
+    /** 消息类型。 */
+    type: 'updateSetting';
+    /** 设置键（不含 flowMd.）。 */
+    key: string;
+    /** 新值。 */
+    value: SettingValue;
+}
+
+/**
  * Webview -> 扩展 的消息联合类型。
  */
 export type WebviewToExtensionMessage =
@@ -187,6 +217,7 @@ export type WebviewToExtensionMessage =
     | OutlineWidthChangeMessage
     | FontScaleChangeMessage
     | EditorActionMessage
+    | UpdateSettingMessage
     | SaveImageMessage;
 
 // =============================================================================

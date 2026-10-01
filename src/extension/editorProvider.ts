@@ -27,6 +27,7 @@ import type {
     FontScaleChangeMessage,
     EditorActionMessage,
     SearchHistoryChangeMessage,
+    UpdateSettingMessage,
     WebviewToExtensionMessage,
     ThemeType,
 } from '../shared/types.js';
@@ -197,6 +198,21 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
         const { panel, docUri } = this.activePanelInfo;
         panel.webview.postMessage({ type: MESSAGE_TYPES.OUTLINE_TOGGLE });
         Logger.info(`Outline toggled for: ${docUri}`);
+    }
+
+    /**
+     * 打开当前 FlowMD 编辑器内的设置面板。
+     *
+     * 面板 UI 在 Webview 侧，这里只发一个打开信号。
+     */
+    public openSettings(): void {
+        if (!this.activePanelInfo) {
+            vscode.window.showWarningMessage('FlowMD: 请先打开一个 FlowMD 编辑器。');
+            return;
+        }
+        const { panel, docUri } = this.activePanelInfo;
+        panel.webview.postMessage({ type: MESSAGE_TYPES.OPEN_SETTINGS });
+        Logger.info(`Settings panel opened for: ${docUri}`);
     }
 
     /**
@@ -643,21 +659,16 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
             (e: vscode.ConfigurationChangeEvent) => {
                 if (!e.affectsConfiguration('flowMd')) return;
 
-                // Settings change (lineNumbers, wordWrap, readableLineLength)
-                if (
-                    e.affectsConfiguration('flowMd.lineNumbers') ||
-                    e.affectsConfiguration('flowMd.wordWrap') ||
-                    e.affectsConfiguration('flowMd.readableLineLength') ||
-                    e.affectsConfiguration('flowMd.fontScale')
-                ) {
-                    Logger.info('FlowMD editor settings changed');
-                    webviewPanel.webview.postMessage({
-                        type: MESSAGE_TYPES.SETTINGS_CHANGE,
-                        settings: ConfigManager.getEditorSettings(),
-                    });
-                }
+                // 任何 flowMd 设置变化：统一重发完整设置（结构化 + 全量），
+                // Webview 侧据此更新编辑器配置与 CSS 变量。
+                Logger.info('FlowMD settings changed');
+                webviewPanel.webview.postMessage({
+                    type: MESSAGE_TYPES.SETTINGS_CHANGE,
+                    settings: ConfigManager.getEditorSettings(),
+                    allSettings: ConfigManager.getAllSettings(),
+                });
 
-                // Theme override change
+                // theme 还涉及明暗切换（不只 CSS 变量），额外发一次主题消息。
                 if (e.affectsConfiguration('flowMd.theme')) {
                     Logger.info(
                         `FlowMD theme override changed to: ${ConfigManager.getThemeOverride()}`
@@ -758,6 +769,7 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
                     documentBaseUri: docDirWebviewUri,
                     searchHistory,
                     settings: ConfigManager.getEditorSettings(),
+                    allSettings: ConfigManager.getAllSettings(),
                     mode: ConfigManager.getDefaultMode(),
                     outlineWidth,
                 });
@@ -828,6 +840,27 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
                     .getConfiguration('flowMd')
                     .update('fontScale', clampedScale, vscode.ConfigurationTarget.Global);
                 Logger.debug(`Editor font scale saved: ${clampedScale}`);
+                break;
+            }
+
+            // 设置面板改动 → 持久化单项设置
+            case MESSAGE_TYPES.UPDATE_SETTING: {
+                const settingMsg = message as UpdateSettingMessage;
+                if (settingMsg.key) {
+                    try {
+                        await ConfigManager.updateSetting(
+                            settingMsg.key,
+                            settingMsg.value
+                        );
+                        Logger.debug(
+                            `Setting updated: ${settingMsg.key}=${String(settingMsg.value)}`
+                        );
+                    } catch (err) {
+                        Logger.error(
+                            `Failed to persist setting ${settingMsg.key}: ${err instanceof Error ? err.message : String(err)}`
+                        );
+                    }
+                }
                 break;
             }
 

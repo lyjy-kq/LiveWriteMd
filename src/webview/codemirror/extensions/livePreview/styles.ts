@@ -44,36 +44,36 @@ export function createBaseThemeStyles(): Extension {
             lineHeight: '1.6',
         },
         '.cm-md-heading-1': {
-            fontSize: '1.2em',
+            fontSize: 'var(--flowmd-h1-size, 1.2em)',
             fontWeight: '700',
             letterSpacing: '-0.02em',
-            color: '#eb8383',
+            color: 'var(--flowmd-h1-color, #eb8383)',
         },
         '.cm-md-heading-2': {
             fontSize: 'inherit',
             fontWeight: '600',
             letterSpacing: '-0.01em',
-            color: '#ae9acb',
+            color: 'var(--flowmd-h2-color, #ae9acb)',
         },
         '.cm-md-heading-3': {
             fontSize: 'inherit',
             fontWeight: '600',
-            color: '#7db5cd',
+            color: 'var(--flowmd-h3-color, #7db5cd)',
         },
         '.cm-md-heading-4': {
             fontSize: 'inherit',
             fontWeight: '600',
-            color: '#71a796',
+            color: 'var(--flowmd-h4-color, #71a796)',
         },
         '.cm-md-heading-5': {
             fontSize: 'inherit',
             fontWeight: '600',
-            color: '#dcbf61',
+            color: 'var(--flowmd-h5-color, #dcbf61)',
         },
         '.cm-md-heading-6': {
             fontSize: 'inherit',
             fontWeight: '600',
-            color: '#dda36a',
+            color: 'var(--flowmd-h6-color, #dda36a)',
             textTransform: 'uppercase',
             letterSpacing: '0.05em',
         },
@@ -88,19 +88,20 @@ export function createBaseThemeStyles(): Extension {
         '.cm-md-bold': {
             fontWeight: '700',
             lineHeight: '1',
-            color: '#d9a37a',
+            color: 'var(--flowmd-bold-color, #d9a37a)',
         },
-        // 斜体只变色、不倾斜：合成斜体（italic）默认约 14°，斜得过头；
-        // 字体自带真斜体时又不受角度控制，所以干脆只用颜色区分。
+        // 斜体默认只变色、不倾斜：合成斜体（italic）默认约 14°，斜得过头。
+        // fontStyle 走变量，设置里开启「斜体真倾斜」时由应用层改为 italic。
         '.cm-md-italic': {
-            fontStyle: 'normal',
+            fontStyle: 'var(--flowmd-italic-style, normal)',
             lineHeight: '1',
-            color: '#2bbac5',
+            color: 'var(--flowmd-italic-color, #2bbac5)',
         },
         '.cm-md-strikethrough': {
             textDecoration: 'line-through',
             lineHeight: '1',
             opacity: '0.6',
+            color: 'var(--flowmd-strikethrough-color, inherit)',
         },
 
         // =================================================================
@@ -136,6 +137,7 @@ export function createBaseThemeStyles(): Extension {
         '&light .cm-md-src-delim': {
             color: '#8a8f98',
         },
+
         // 展开态（`**加粗**`）是纯文本，字号在行内 style 里整体缩放。
         //
         // 这里必须把 line-height 设成 1，**不能继承正文的 23.8px**：
@@ -164,17 +166,17 @@ export function createBaseThemeStyles(): Extension {
         '.cm-md-code': {
             fontFamily:
                 'var(--vscode-editor-font-family, "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace)',
-            fontSize: '0.95em',
+            fontSize: 'var(--flowmd-inline-code-scale, 0.95em)',
             lineHeight: '1',
             fontWeight: 'var(--flowmd-font-weight, 400)',
-            backgroundColor: '#f0ece0',
+            backgroundColor: 'var(--flowmd-inline-code-background, #f0ece0)',
             padding: '2px 6px',
             borderRadius: '4px',
-            color: '#f29a9a',
+            color: 'var(--flowmd-inline-code-color, #f29a9a)',
         },
         '&light .cm-md-code': {
-            backgroundColor: '#eff1f3',
-            color: '#f29a9a',
+            backgroundColor: 'var(--flowmd-inline-code-background, #eff1f3)',
+            color: 'var(--flowmd-inline-code-color, #f29a9a)',
         },
 
         // 被 widget 顶替掉的源码（行内公式、单元格复选框）：压 0 宽藏起来，
@@ -190,9 +192,9 @@ export function createBaseThemeStyles(): Extension {
         // Links
         // =================================================================
         '.cm-md-link, .cm-md-file-link': {
-            color: '#338122',
+            color: 'var(--flowmd-link-color, #338122)',
             textDecoration: 'underline',
-            textDecorationColor: '#338122',
+            textDecorationColor: 'var(--flowmd-link-color, #338122)',
             textDecorationSkipInk: 'auto',
             textUnderlineOffset: '3px',
             cursor: 'pointer',
@@ -202,65 +204,65 @@ export function createBaseThemeStyles(): Extension {
             opacity: '0.8',
         },
         '&light .cm-md-link, &light .cm-md-file-link': {
-            color: '#338122',
-            textDecorationColor: '#338122',
+            color: 'var(--flowmd-link-color, #338122)',
+            textDecorationColor: 'var(--flowmd-link-color, #338122)',
         },
 
         // =================================================================
         // Blockquotes
         // =================================================================
         '.cm-md-blockquote': {
-            borderLeft: '3px solid #007acc',
+            borderLeft: '3px solid var(--flowmd-quote-border-color, #007acc)',
             paddingLeft: '1.2em !important',
-            color: '#999',
+            color: 'var(--flowmd-quote-text-color, #999)',
         },
         '&light .cm-md-blockquote': {
-            borderLeft: '3px solid #d0d7de',
-            color: '#656d76',
+            borderLeft: '3px solid var(--flowmd-quote-border-color, #d0d7de)',
+            color: 'var(--flowmd-quote-text-color, #656d76)',
         },
         '.cm-md-blockquote-2': {
             paddingLeft: '2.4em !important',
-            backgroundImage: 'linear-gradient(#007acc, #007acc)',
+            backgroundImage: 'linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc))',
             backgroundSize: '3px 100%',
             backgroundRepeat: 'no-repeat',
             backgroundPosition: '1.2em 0',
         },
         '&light .cm-md-blockquote-2': {
-            backgroundImage: 'linear-gradient(#d0d7de, #d0d7de)',
+            backgroundImage: 'linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de))',
         },
         '.cm-md-blockquote-3': {
             paddingLeft: '3.6em !important',
-            backgroundImage: 'linear-gradient(#007acc, #007acc), linear-gradient(#007acc, #007acc)',
+            backgroundImage: 'linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc)), linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc))',
             backgroundSize: '3px 100%, 3px 100%',
             backgroundRepeat: 'no-repeat, no-repeat',
             backgroundPosition: '1.2em 0, 2.4em 0',
         },
         '&light .cm-md-blockquote-3': {
-            backgroundImage: 'linear-gradient(#d0d7de, #d0d7de), linear-gradient(#d0d7de, #d0d7de)',
+            backgroundImage: 'linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de)), linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de))',
         },
         '.cm-md-blockquote-4': {
             paddingLeft: '4.8em !important',
             backgroundImage:
-                'linear-gradient(#007acc, #007acc), linear-gradient(#007acc, #007acc), linear-gradient(#007acc, #007acc)',
+                'linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc)), linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc)), linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc))',
             backgroundSize: '3px 100%, 3px 100%, 3px 100%',
             backgroundRepeat: 'no-repeat, no-repeat, no-repeat',
             backgroundPosition: '1.2em 0, 2.4em 0, 3.6em 0',
         },
         '&light .cm-md-blockquote-4': {
             backgroundImage:
-                'linear-gradient(#d0d7de, #d0d7de), linear-gradient(#d0d7de, #d0d7de), linear-gradient(#d0d7de, #d0d7de)',
+                'linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de)), linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de)), linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de))',
         },
         '.cm-md-blockquote-5': {
             paddingLeft: '6em !important',
             backgroundImage:
-                'linear-gradient(#007acc, #007acc), linear-gradient(#007acc, #007acc), linear-gradient(#007acc, #007acc), linear-gradient(#007acc, #007acc)',
+                'linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc)), linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc)), linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc)), linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc))',
             backgroundSize: '3px 100%, 3px 100%, 3px 100%, 3px 100%',
             backgroundRepeat: 'no-repeat, no-repeat, no-repeat, no-repeat',
             backgroundPosition: '1.2em 0, 2.4em 0, 3.6em 0, 4.8em 0',
         },
         '&light .cm-md-blockquote-5': {
             backgroundImage:
-                'linear-gradient(#d0d7de, #d0d7de), linear-gradient(#d0d7de, #d0d7de), linear-gradient(#d0d7de, #d0d7de), linear-gradient(#d0d7de, #d0d7de)',
+                'linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de)), linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de)), linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de)), linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de))',
         },
 
         // =================================================================
@@ -275,7 +277,8 @@ export function createBaseThemeStyles(): Extension {
             fontWeight: 'inherit',
             lineHeight: 'inherit',
             color: 'inherit',
-            backgroundColor: 'var(--vscode-textCodeBlock-background, rgba(128,128,128,0.08))',
+            backgroundColor:
+                'var(--flowmd-codeblock-background, var(--vscode-textCodeBlock-background, rgba(128,128,128,0.08)))',
             // 四条边线一律**不用 border**、改用 inset 阴影，原因见下面 first/last 的说明：
             // 上下边的 1px border 会计入 `.cm-line` 实测盒高（进文本模式后行高跳变）；
             // 左右边在 border-box 下会把正文内容往里挤 1px，文本模式没有竖边，
@@ -283,7 +286,8 @@ export function createBaseThemeStyles(): Extension {
             // inset 阴影同色同位置但不占布局：行高、内容宽度两态完全一致，
             // 长代码的折行位置也不会变（两态内容宽度相同）。
             // 边线颜色抽成 CSS 变量：浅色只覆盖这一个变量即可，不用重复整段阴影。
-            '--cm-codeblock-edge': 'rgba(255, 255, 255, 0.12)',
+            '--cm-codeblock-edge':
+                'var(--flowmd-codeblock-edge, rgba(255, 255, 255, 0.12))',
             boxShadow:
                 'inset 1px 0 0 var(--cm-codeblock-edge), inset -1px 0 0 var(--cm-codeblock-edge)',
             // 这里的 0.9em 横向 padding 实际被 theme.ts 的「`.cm-line` { padding: 0 4px }」
@@ -292,9 +296,11 @@ export function createBaseThemeStyles(): Extension {
             boxSizing: 'border-box',
         },
         '&light .cm-md-codeblock': {
-            backgroundColor: 'var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.035))',
+            backgroundColor:
+                'var(--flowmd-codeblock-background, var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.035)))',
             // 浅色边线：只换变量，first/last 那几条 box-shadow 自动跟着变色
-            '--cm-codeblock-edge': 'rgba(0, 0, 0, 0.1)',
+            '--cm-codeblock-edge':
+                'var(--flowmd-codeblock-edge, rgba(0, 0, 0, 0.1))',
         },
         // （旧的逐行说明已并入上面 `.cm-md-codeblock` 主规则的注释）
         // 围栏行的上下边**不用 border**：1px border 会计入 `.cm-line` 的实际盒高
@@ -364,7 +370,7 @@ export function createBaseThemeStyles(): Extension {
         // 宽度由 BulletWidget 按源码里 `- ` 的实际宽度现算后写成行内样式，
         // 这里的 1.2em 只是量不到字宽时的兜底值（保证不会挤成一团）。
         '.cm-md-bullet': {
-            color: '#aab1bf',
+            color: 'var(--flowmd-bullet-color, #aab1bf)',
             display: 'inline-block',
             width: '1.2em',
             textAlign: 'center',
@@ -373,10 +379,11 @@ export function createBaseThemeStyles(): Extension {
             lineHeight: '1',
             verticalAlign: 'middle',
         },
-        // 浅色主题下圆点用 #191919：浅底上深色圆点最干净。
-        // 深色主题继续用浅灰——#191919 在深底上对比度只有 1.1:1，等于看不见。
+        // 浅色主题下圆点默认 #191919：浅底上深色圆点最干净。
+        // 深色主题默认浅灰——#191919 在深底上对比度只有 1.1:1，等于看不见。
+        // 显式设置 --flowmd-bullet-color 时两主题统一用用户色。
         '&light .cm-md-bullet': {
-            color: '#191919',
+            color: 'var(--flowmd-bullet-color, #191919)',
         },
 
         // =================================================================
@@ -404,7 +411,7 @@ export function createBaseThemeStyles(): Extension {
         // 撑到 1.2em（仍然小于正文行高 1.7em，藏在行盒里不会把行顶高）之后，
         // 整行高度上点哪儿都命中它，光标就落到这一行，`---` 的原文露出来。
         '.cm-md-hr': {
-            '--cm-md-hr-color': 'rgba(128,128,128,0.3)',
+            '--cm-md-hr-color': 'var(--flowmd-hr-color, rgba(128,128,128,0.3))',
             display: 'inline-block',
             width: '100%',
             height: '1.2em',
@@ -421,7 +428,7 @@ export function createBaseThemeStyles(): Extension {
             verticalAlign: 'middle',
         },
         '&light .cm-md-hr': {
-            '--cm-md-hr-color': '#d0d7de',
+            '--cm-md-hr-color': 'var(--flowmd-hr-color, #d0d7de)',
         },
 
         // =================================================================
@@ -490,7 +497,7 @@ export function createBaseThemeStyles(): Extension {
             minHeight: 'calc(1.7em + 6px)',
             // 相邻格子各画一条 1px 的右边框会变成 2px，用负边距让它们叠在一起
             marginLeft: '-1px',
-            border: '1px solid rgba(128,128,128,0.28)',
+            border: '1px solid var(--flowmd-table-border-color, rgba(128,128,128,0.28))',
             boxSizing: 'border-box',
             // 内容比钉子列宽还长时在格子内部换行，不要撑破表格。
             //
@@ -512,20 +519,28 @@ export function createBaseThemeStyles(): Extension {
         // 表头行：加粗 + 淡底
         '.cm-md-table-header .cm-md-tcell': {
             fontWeight: '600',
-            backgroundColor: 'rgba(128,128,128,0.10)',
+            backgroundColor: 'var(--flowmd-table-header-background, rgba(128,128,128,0.10))',
+        },
+        // 斑马纹（偶数数据行）：变量留空时 fallback transparent、无视觉变化
+        '.cm-md-table-stripe .cm-md-tcell': {
+            backgroundColor: 'var(--flowmd-table-stripe-background, transparent)',
+        },
+        // 表头行即使带 stripe 标记也以表头底色为准（表头不参与斑马纹）
+        '.cm-md-table-header.cm-md-table-stripe .cm-md-tcell': {
+            backgroundColor: 'var(--flowmd-table-header-background, rgba(128,128,128,0.10))',
         },
         // 被框选到的格子：整格上高亮（原生选区只涂文字，看着像没选中）
         '.cm-md-tcell-selected': {
-            backgroundColor: 'rgba(79,193,255,0.22)',
+            backgroundColor: 'var(--flowmd-table-selected-background, rgba(79,193,255,0.22))',
         },
         '.cm-md-table-header .cm-md-tcell-selected': {
-            backgroundColor: 'rgba(79,193,255,0.28)',
+            backgroundColor: 'var(--flowmd-table-selected-background, rgba(79,193,255,0.28))',
         },
         '&light .cm-md-tcell-selected': {
-            backgroundColor: 'rgba(9,105,218,0.16)',
+            backgroundColor: 'var(--flowmd-table-selected-background, rgba(9,105,218,0.16))',
         },
         '&light .cm-md-table-header .cm-md-tcell-selected': {
-            backgroundColor: 'rgba(9,105,218,0.22)',
+            backgroundColor: 'var(--flowmd-table-selected-background, rgba(9,105,218,0.22))',
         },
         // 分隔行（|---|:--:|）：整行折叠，光标停在上面时由 tableRender 放开
         '.cm-md-table-delimiter': {
@@ -611,10 +626,10 @@ export function createBaseThemeStyles(): Extension {
             height: '16px',
             verticalAlign: 'middle',
             marginRight: '4px',
-            accentColor: '#4fc1ff',
+            accentColor: 'var(--flowmd-checkbox-accent, #4fc1ff)',
         },
         '&light .cm-md-checkbox': {
-            accentColor: '#0969da',
+            accentColor: 'var(--flowmd-checkbox-accent, #0969da)',
         },
 
         // =================================================================
@@ -636,7 +651,7 @@ export function createBaseThemeStyles(): Extension {
         // （见 decorations.ts 的 imageLineDeco）：行里除了图片还有文字时不会命中，
         // 所以不会像原来那样把「文字 + 图片」的行也整行居中。
         '.cm-md-image-line': {
-            textAlign: 'center',
+            textAlign: 'var(--flowmd-media-center-align, center)',
         },
         '.cm-md-image': {
             maxWidth: '100%',

@@ -39,6 +39,7 @@ import { EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
 import type { Tree } from '@lezer/common';
 import { isInlineFormatNode } from './openScale.js';
 import { isInCodeBlock } from './ranges.js';
+import { settingsState } from '../../../settingsState.js';
 import {
     getPendingForceRange,
     getPinnedForceRange,
@@ -119,12 +120,12 @@ function lineHasInlineMarkup(state: EditorState, tree: Tree, line: Line): boolea
 }
 
 /**
- * 鼠标移动多少像素才算「真的在拖」。
+ * 默认拖拽判定距离（px），可被设置项 `dragThreshold` 覆盖。
  *
  * 没超过阈值时保持缓冲态（只展开点击的单元素）；一旦超过，立即整行展开。
- * 与 tableRender 的 DRAG_THRESHOLD_PX 取同一档手感。
+ * 与 tableRender 的默认手感取同一档。
  */
-const DRAG_THRESHOLD_PX = 4;
+const DEFAULT_DRAG_THRESHOLD_PX = 4;
 
 /**
  * 一次左键拖拽的起点信息（mousedown 时记录、mouseup 时清除）。
@@ -232,8 +233,10 @@ class LineForceController {
 
         const dx = event.clientX - start.x;
         const dy = event.clientY - start.y;
-        // 还在阈值内：保持缓冲态（只展开点击的单元素）
-        if (Math.max(Math.abs(dx), Math.abs(dy)) < DRAG_THRESHOLD_PX) return;
+        // 还在阈值内：保持缓冲态（只展开点击的单元素）。
+        // 阈值走设置项 dragThreshold。
+        const threshold = settingsState.getNumber('dragThreshold') || DEFAULT_DRAG_THRESHOLD_PX;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < threshold) return;
 
         const view = this.view;
         // CodeMirror 自己的选区已经非空时，getSourceRange 的拖选分支会把整行
@@ -287,6 +290,8 @@ class LineForceController {
      * @param event - 双击事件
      */
     private onDblClick = (event: MouseEvent): void => {
+        // 设置里关闭「双击钉住源码态」：不接管，保持 CodeMirror 默认双击选词。
+        if (!settingsState.getBoolean('doubleClickPin')) return;
         // 带修饰键的双击可能另有用途（如多光标），保持原生行为
         if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
 

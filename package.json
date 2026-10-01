@@ -108,6 +108,12 @@
                 "icon": "$(list-unordered)"
             },
             {
+                "command": "flowMd.openSettings",
+                "title": "设置",
+                "category": "FlowMD",
+                "icon": "$(settings-gear)"
+            },
+            {
                 "command": "flowMd.insertImage",
                 "title": "Insert Image",
                 "category": "FlowMD",
@@ -174,6 +180,11 @@
                     "command": "flowMd.toggleOutline",
                     "when": "activeCustomEditorId == flowMd.editor",
                     "group": "navigation@9"
+                },
+                {
+                    "command": "flowMd.openSettings",
+                    "when": "activeCustomEditorId == flowMd.editor",
+                    "group": "navigation@10"
                 }
             ]
         },
@@ -270,6 +281,204 @@
                         "Cycle - Single button that cycles Live → Viewer → Source",
                         "Buttons - Show direct-jump buttons for the other two modes"
                     ]
+                },
+                "flowMd.rememberLastMode": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Remember the editing mode used per file instead of always using Default mode."
+                },
+                "flowMd.smartUrlPaste": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Automatically wrap a pasted bare URL as a Markdown link."
+                },
+                "flowMd.highlightActiveLine": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Highlight the line that contains the cursor."
+                },
+                "flowMd.highlightWhitespace": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Render spaces and tabs with subtle markers."
+                },
+                "flowMd.h1Color": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Heading 1 color. Empty = auto (follow the theme)."
+                },
+                "flowMd.h2Color": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Heading 2 color. Empty = auto (follow the theme)."
+                },
+                "flowMd.h3Color": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Heading 3 color. Empty = auto (follow the theme)."
+                },
+                "flowMd.h4Color": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Heading 4 color. Empty = auto (follow the theme)."
+                },
+                "flowMd.h5Color": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Heading 5 color. Empty = auto (follow the theme)."
+                },
+                "flowMd.h6Color": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Heading 6 color. Empty = auto (follow the theme)."
+                },
+                "flowMd.h1Size": {
+                    "type": "number",
+                    "default": 1.2,
+                    "minimum": 0.9,
+                    "maximum": 2,
+                    "multipleOf": 0.01,
+                    "description": "Heading 1 font size relative to body text."
+                },
+                "flowMd.boldColor": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Bold text color. Empty = auto (follow the theme)."
+                },
+                "flowMd.italicColor": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Italic text color. Empty = auto (follow the theme)."
+                },
+                "flowMd.italicSlant": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Use a real slanted italic glyph instead of color-only emphasis."
+                },
+                "flowMd.strikethroughColor": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Strikethrough color. Empty = auto (follow the theme)."
+                },
+                "flowMd.inlineCodeColor": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Inline code text color. Empty = auto (follow the theme)."
+                },
+                "flowMd.inlineCodeBackground": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Inline code background color. Empty = auto (follow the theme)."
+                },
+                "flowMd.inlineCodeScale": {
+                    "type": "number",
+                    "default": 0.95,
+                    "minimum": 0.8,
+                    "maximum": 1.05,
+                    "multipleOf": 0.01,
+                    "description": "Inline code font size relative to body text."
+                },
+                "flowMd.codeblockBackground": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Code block background color. Empty = follow VS Code theme."
+                },
+                "flowMd.codeblockEdge": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Code block edge color. Empty = follow VS Code theme."
+                },
+                "flowMd.linkColor": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Link color. Empty = auto (follow the theme)."
+                },
+                "flowMd.quoteBorderColor": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Blockquote left border color. Empty = auto (follow the theme)."
+                },
+                "flowMd.quoteTextColor": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Blockquote text color. Empty = auto (follow the theme)."
+                },
+                "flowMd.hrColor": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Horizontal rule color. Empty = auto (follow the theme)."
+                },
+                "flowMd.tableBorderColor": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Table border color. Empty = auto (follow the theme)."
+                },
+                "flowMd.tableHeaderBackground": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Table header background color. Empty = auto (follow the theme)."
+                },
+                "flowMd.tableStripeBackground": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Background for striped (even) table rows. Empty = no stripes."
+                },
+                "flowMd.tableSelectedBackground": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Selected table cell highlight color. Empty = auto (follow the theme)."
+                },
+                "flowMd.bulletColor": {
+                    "type": "string",
+                    "default": "",
+                    "description": "List bullet color. Empty = auto (follow the theme)."
+                },
+                "flowMd.checkboxAccent": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Checkbox accent color. Empty = auto (follow the theme)."
+                },
+                "flowMd.outlineAutoOpen": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Expand the outline automatically when a file opens."
+                },
+                "flowMd.outlineWidth": {
+                    "type": "number",
+                    "default": 280,
+                    "minimum": 220,
+                    "maximum": 480,
+                    "multipleOf": 4,
+                    "description": "Default outline panel width in pixels."
+                },
+                "flowMd.outlineGuides": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show indentation guides in the outline."
+                },
+                "flowMd.mediaWidth": {
+                    "type": "number",
+                    "default": 75,
+                    "minimum": 20,
+                    "maximum": 100,
+                    "description": "Default media width as a percentage of body width."
+                },
+                "flowMd.mediaCenter": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Center media that occupies its own line."
+                },
+                "flowMd.dragThreshold": {
+                    "type": "number",
+                    "default": 4,
+                    "minimum": 2,
+                    "maximum": 15,
+                    "description": "Mouse movement in pixels required to count as a drag-select."
+                },
+                "flowMd.doubleClickPin": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Double-click to pin the source view of a line."
                 }
             }
         }

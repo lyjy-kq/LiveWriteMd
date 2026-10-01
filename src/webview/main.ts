@@ -41,6 +41,9 @@ import { OutlinePanel } from './outlinePanel.js';
 import { EditorContextMenu, type EditorMode } from './editorContextMenu.js';
 import { cellAt } from './codemirror/extensions/livePreview/tableRender.js';
 import { runTableCommand } from './codemirror/extensions/livePreview/tableCommands.js';
+import type { SettingValue } from '../shared/settingsSchema.js';
+import { settingsState } from './settingsState.js';
+import { settingsPanel } from './settingsPanel.js';
 import { createSearchHistoryController, type SearchHistoryController } from './codemirror/extensions/searchHistory.js';
 import {
     setupImageDropHandler,
@@ -528,7 +531,8 @@ async function handleInit(
     searchHistory: SearchHistoryState,
     settings?: FlowMdEditorSettings,
     mode?: 'live' | 'viewer' | 'source',
-    outlineWidth?: number
+    outlineWidth?: number,
+    allSettings?: Record<string, SettingValue>
 ): Promise<void> {
     hasReceivedInit = true;
     updateBootStatus('已收到 INIT，正在创建 CodeMirror 编辑器。');
@@ -541,6 +545,10 @@ async function handleInit(
 
         // Store document URI for image path resolution
         currentDocumentUri = documentUri;
+
+        // 在创建编辑器前，把全部设置（颜色 / 个性化项）写入 settingsState，
+        // CSS 变量先就位，首屏即按用户设置渲染、不闪。
+        settingsState.replaceAll(allSettings ?? {});
 
         // Make sure the right-side outline starts at the saved width.
         if (Number.isFinite(outlineWidth ?? NaN)) {
@@ -783,6 +791,10 @@ function initialize(): void {
                 view.dispatch({ changes: edits });
             },
         });
+        // 大纲操作按钮组已就绪：把「设置」齿轮挂进去（持久化回调用内联写法）
+        settingsPanel.mountLauncher((key, value) => {
+            vscode.postMessage({ type: MESSAGE_TYPES.UPDATE_SETTING, key, value });
+        });
         sendLog('INFO', 'Outline panel initialized');
     } else {
         sendLog('ERROR', 'Outline panel DOM is missing, right-side outline is unavailable');
@@ -889,7 +901,8 @@ function initialize(): void {
             searchHistory: SearchHistoryState,
             settings?: FlowMdEditorSettings,
             mode?: 'live' | 'viewer' | 'source',
-            outlineWidth?: number
+            outlineWidth?: number,
+            allSettings?: Record<string, SettingValue>
         ): void => {
             void handleInit(
                 content,
@@ -898,11 +911,25 @@ function initialize(): void {
                 searchHistory,
                 settings,
                 mode,
-                outlineWidth
+                outlineWidth,
+                allSettings
             );
         },
         onUpdate: handleUpdate,
         onThemeChange: handleThemeChange,
+        onSettingsChange: (msg) => {
+            // 完整设置 → CSS 变量 / 运行时读取
+            if (msg.allSettings) settingsState.replaceAll(msg.allSettings);
+            // 结构化设置（行号 / 换行等）重配置编辑器
+            if (msg.settings && editor?.isReady()) {
+                editor.applySettings(msg.settings);
+            }
+            sendLog('INFO', 'Settings change applied');
+        },
+        onOpenSettings: () => {
+            // mountLauncher 时已保存持久化回调，直接打开即可
+            settingsPanel.open();
+        },
     });
 
     // Register message listener

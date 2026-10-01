@@ -23,6 +23,7 @@ import {
     keymap,
     highlightActiveLine,
     highlightSpecialChars,
+    highlightWhitespace,
     lineNumbers,
     rectangularSelection,
     crosshairCursor,
@@ -60,6 +61,7 @@ import { createThemeExtension } from './extensions/theme';
 import { markdownKeymap } from './extensions/keymap.js';
 import { codeBlockSelectionPlugin } from './extensions/livePreview/codeBlockSelection.js';
 import { createLivePreviewExtension } from './extensions/livePreview/index.js';
+import { settingsState } from '../settingsState.js';
 import { searchMatchCount } from './extensions/searchMatchCount.js';
 
 import type { ContentChangeCallback } from './types';
@@ -290,6 +292,12 @@ export class CodeMirrorEditor {
     /** Compartment for dynamic line numbers reconfiguration */
     private lineNumbersCompartment = new Compartment();
 
+    /** Compartment for active-line highlight toggle */
+    private activeLineCompartment = new Compartment();
+
+    /** Compartment for whitespace marker toggle */
+    private whitespaceCompartment = new Compartment();
+
     /** External paste handler for image paste support (DES-API-003) */
     private pasteHandler: ((event: ClipboardEvent, view: EditorView) => boolean) | null = null;
     /** 字体缩放变化回调，用于把 Ctrl+滚轮的结果同步回扩展侧配置。 */
@@ -416,9 +424,14 @@ export class CodeMirrorEditor {
             // Line wrapping (dynamically reconfigurable via settings)
             this.lineWrappingCompartment.of(EditorView.lineWrapping),
 
-            // Visual rendering (active line, line numbers)
-            highlightActiveLine(),
-            highlightSpecialChars(),
+            // Visual rendering: active-line / whitespace are settings-driven compartments
+            this.activeLineCompartment.of(
+                settingsState.getBoolean('highlightActiveLine') ? highlightActiveLine() : []
+            ),
+            this.whitespaceCompartment.of([
+                highlightSpecialChars(),
+                settingsState.getBoolean('highlightWhitespace') ? highlightWhitespace() : [],
+            ]),
             this.lineNumbersCompartment.of(lineNumbers()),
 
             // Multiple selections / cursors (required for rectangular selection)
@@ -921,6 +934,23 @@ export class CodeMirrorEditor {
             effects: this.lineWrappingCompartment.reconfigure(
                 settings.wordWrap ? EditorView.lineWrapping : []
             ),
+        });
+
+        // Active-line highlight / whitespace markers
+        this.view.dispatch({
+            effects: [
+                this.activeLineCompartment.reconfigure(
+                    settingsState.getBoolean('highlightActiveLine')
+                        ? highlightActiveLine()
+                        : []
+                ),
+                this.whitespaceCompartment.reconfigure([
+                    highlightSpecialChars(),
+                    settingsState.getBoolean('highlightWhitespace')
+                        ? highlightWhitespace()
+                        : [],
+                ]),
+            ],
         });
 
         // Readable line length via CSS variable
