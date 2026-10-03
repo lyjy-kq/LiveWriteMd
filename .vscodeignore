@@ -1,5 +1,29 @@
-# 发布包中排除开发文档目录。
-docs/**
+# ==========================================================================
+# 发布包忽略规则。
+# 运行时只需要：package.json、README/(市场页)、dist/（编译产物）。
+# 其余开发/测试文件一律排除——尤其 test/ 下的中文文件名文件：非 ASCII 名字
+# 会被上传端归并成同一个 '????' key，导致 "Item has already been added" 报错。
+# ==========================================================================
 
-# 发布包中排除 docx 产物目录。
+# 源码与构建配置
+src/**
+esbuild.config.mjs
+
+# 开发 / 测试 / 脚本 / IDE 配置（绝不发布）
+test/**
+scripts/**
+.vscode/**
+
+# 开发文档与导出产物
+docs/**
 docx/**
+
+# 包管理与仓库杂项
+pnpm-lock.yaml
+pnpm-workspace.yaml
+.gitignore
+.vscodeignore
+
+# 历史打包产物与裸清单
+*.vsix
+extension.vsixmanifest

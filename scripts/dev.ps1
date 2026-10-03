@@ -97,6 +97,48 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 
 <#
 .SYNOPSIS
+    校验刚打出的 VSIX 是否「干净」，可安全上传市场。
+.DESCRIPTION
+    直接读取 VSIX(ZIP) 内的条目名做两道检查：
+      1. 不得混入开发目录：extension/test、extension/scripts、extension/.vscode、src；
+      2. 不得含非 ASCII 文件名——中文名会被上传端归并成同一个 '????' key，
+         触发 "Item has already been added" 报错。
+    任一不通过：删除该坏包并抛错，强制先修 .vscodeignore 再重打，
+    避免把坏包传到市场才发现。
+.PARAMETER VsixPath
+    待校验的 .vsix 绝对路径。
+#>
+function Test-VsixReleaseReady {
+    param([Parameter(Mandatory)][string]$VsixPath)
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($VsixPath)
+    $bad = @()
+    try {
+        foreach ($entry in $zip.Entries) {
+            $name = $entry.FullName
+            # 只看包内 extension/ 下的实际文件
+            if ($name -match '^extension/(test|scripts|\.vscode|src)/') {
+                $bad += "混入开发文件：$name"
+            }
+            # 非 ASCII 字符（中文名等）
+            if ($name -match '[^\x00-\x7F]') {
+                $bad += "含非 ASCII 文件名：$name"
+            }
+        }
+    } finally {
+        $zip.Dispose()
+    }
+
+    if ($bad.Count -gt 0) {
+        Remove-Item -LiteralPath $VsixPath -Force
+        throw ("VSIX 不可发布，已删除坏包。请先在 .vscodeignore 排除对应内容后重打：`n  " +
+            ($bad -join "`n  "))
+    }
+}
+
+<#
+.SYNOPSIS
     执行外部命令并在失败时抛错。
 .DESCRIPTION
     PowerShell 不会因为原生命令返回非 0 就中断（$ErrorActionPreference 管不到），
@@ -223,6 +265,8 @@ switch ($Mode) {
         if (-not (Test-Path $vsix)) {
             throw "打包命令跑完了，但没找到产物：$vsix"
         }
+        # 发布前守卫：包内不得含开发目录 / 非 ASCII 文件名，否则删除坏包并报错
+        Test-VsixReleaseReady -VsixPath $vsix
         $info = Get-Item -LiteralPath $vsix
         Write-Host ""
         Write-Host "打包完成：" -ForegroundColor Green
@@ -246,6 +290,8 @@ switch ($Mode) {
         if (-not (Test-Path $vsix)) {
             throw "打包命令跑完了，但没找到产物：$vsix"
         }
+        # 同样做发布前守卫，保证安装/上传的都是干净包
+        Test-VsixReleaseReady -VsixPath $vsix
 
         # --force：已装同版本时直接覆盖，不用先卸载
         Invoke-Native -Exe $codeCli -Arguments @('--install-extension', $vsix, '--force') -What '安装到本机 VS Code'
