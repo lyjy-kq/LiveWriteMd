@@ -81,6 +81,11 @@ import {
     isInlineFormatNode,
 } from './openScale.js';
 import type { OpenElementInfo } from './openScale.js';
+import {
+    computeOpenScalesWrapped,
+    createOpenWrapContext,
+    openWrapEligible,
+} from './openWrap.js';
 import { isTableLikeBlock, splitRowText } from './tableRender.js';
 import { isSetextBeforeFence } from './ranges.js';
 import { isForcedSourceRange } from './state.js';
@@ -336,19 +341,24 @@ export function collectFocusDecorations(
      * —— 宽是列宽钉死的，折行是内容真的变长了，和往格子里多打几个字一样。
      *
      * @param info - 元素的展开信息
-     * @param scale - computeOpenScales 算出来的缩放倍率
-     * @param letterSpacing - 同一批算出来的补偿字距（px）
+     * @param result - 补偿参数：字号倍率、字距 px（来自 computeOpenScales / openWrap）、
+     *                 结尾 margin px（仅 openWrap 跨行路径给出，把后缀精确推回原位）
      */
     const pushScaleMark = (
         info: OpenElementInfo,
-        scale: number,
-        letterSpacing: number
+        result: { scale: number; letterSpacing: number; marginRight?: number }
     ): void => {
+        const { scale, letterSpacing } = result;
+        // margin-right 只在跨行路径有值；0 / undefined 都不写，保持样式最短
+        const margin = result.marginRight;
+        const marginStyle = margin ? `; margin-right:${margin.toFixed(2)}px` : '';
         decos.push(
             Decoration.mark({
                 class: 'cm-md-src-open',
                 attributes: {
-                    style: `font-size:${scale.toFixed(4)}em; letter-spacing:${letterSpacing.toFixed(3)}px`,
+                    style:
+                        `font-size:${scale.toFixed(4)}em; letter-spacing:${letterSpacing.toFixed(3)}px` +
+                        marginStyle,
                 },
             }).range(info.from, info.to)
         );
@@ -396,25 +406,77 @@ export function collectFocusDecorations(
         entries: Array<{ node: SyntaxNode; caret: number }>
     ): void => {
         // 第一步：解出结构（不含量宽），顺手定下「谁要挂缩放」——
-        // 整格的元素只展开、不缩放（理由见 pushScaleMark）
+        // 整格的元素只展开、不缩放（理由见 pushScaleMark）。
+        // node 一并留着：跨行判定要看语法树上的祖先（见 openWrapEligible）
         const opened = entries
             .map((entry) => {
                 const info = describeOpenElement(state, entry.node, entry.caret);
                 if (!info) return null;
-                return { info, scaled: !isWholeTableCell(state, info.from, info.to) };
+                return {
+                    node: entry.node,
+                    info,
+                    scaled: !isWholeTableCell(state, info.from, info.to),
+                };
             })
-            .filter((item): item is { info: OpenElementInfo; scaled: boolean } => item !== null);
+            .filter(
+                (item): item is { node: SyntaxNode; info: OpenElementInfo; scaled: boolean } =>
+                    item !== null
+            );
         if (opened.length === 0) return;
 
-        // 第二步：整批一起量（一次强制布局），再逐个挂装饰
-        const scaledInfos = opened.filter((item) => item.scaled).map((item) => item.info);
-        const scales = computeOpenScales(state, scaledInfos);
-        let cursor = 0; // 在 scaledInfos / scales 里走的下标
+        // ---------------------------------------------------------------------
+        // 第二步：宽度补偿分两路（详见 openWrap.ts 的文件头说明）
+        // - 跨行（软折行）候选先交给折行模拟：按「行数 + 末行右端」选字号，
+        //   保住元素后面的文字不动、也不让它多占/少占一行；
+        // - 模拟不接管的（渲染态只占一行 / 标题列表表格行 / 前提不满足 / 异常兜底）
+        //   全部回落到单行算法（computeOpenScales），那是逐像素验证过的路径。
+        // 两路结果按 opened 的原顺序合并，挂装饰的方式和以前完全一致。
+        //
+        // 排版环境只在「确实有能接管的候选」时才去量（要量一次折行宽度），
+        // 免得点表格格子这类永远走不到跨行路径的场景白付一次强制布局。
+        // ---------------------------------------------------------------------
+        const scaleResults = new Map<
+            OpenElementInfo,
+            { scale: number; letterSpacing: number; marginRight?: number }
+        >();
+        // openWrap 接管条件：openWrapEligible（纯段落/单逻辑行/无 widget）。
+        // 前缀里的兄弟行内元素由 renderedSegments 按渲染态处理；
+        // 行数风险由各批模拟的「行数守恒」直接验证兜住，不再事先排除
+        const canWrap = (item: { node: SyntaxNode }) => openWrapEligible(state, item.node);
+        const candidates = opened.filter((item) => item.scaled && canWrap(item));
+        const wrapCtx = candidates.length > 0 ? createOpenWrapContext() : null;
+        const fallbackInfos: OpenElementInfo[] = [];
+        const wrappedInfos: OpenElementInfo[] = [];
+        for (const item of opened) {
+            if (!item.scaled) continue;
+            if (wrapCtx && canWrap(item)) {
+                wrappedInfos.push(item.info);
+            } else {
+                fallbackInfos.push(item.info);
+            }
+        }
+        const wrappedScales =
+            wrappedInfos.length > 0
+                ? computeOpenScalesWrapped(state, tree, wrapCtx!, wrappedInfos)
+                : [];
+        wrappedInfos.forEach((info, i) => {
+            const result = wrappedScales[i];
+            if (result) {
+                scaleResults.set(info, result);
+            } else {
+                // openWrap 主动让位（渲染态只占一行等）：回落到单行算法
+                fallbackInfos.push(info);
+            }
+        });
+        const fallbackScales = computeOpenScales(state, fallbackInfos);
+        fallbackInfos.forEach((info, i) => {
+            scaleResults.set(info, fallbackScales[i]);
+        });
+
+        // 第三步：逐个挂装饰（scaled 的元素必有一路结果，见上面的分组）
         for (const item of opened) {
             if (item.scaled) {
-                const { scale, letterSpacing } = scales[cursor];
-                cursor++;
-                pushScaleMark(item.info, scale, letterSpacing);
+                pushScaleMark(item.info, scaleResults.get(item.info)!);
             }
             pushSourceMarks(item.info);
         }

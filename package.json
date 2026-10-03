@@ -2,7 +2,7 @@
     "name": "lyjy-obsidianlike-md",
     "displayName": "Lyjy ObsidianLike MD for VS Code",
     "description": "WYSIWYG Markdown editor for VS Code with Obsidian-style live preview. Tables, Mermaid diagrams, KaTeX math, code block syntax highlighting, and full IME support.",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "publisher": "lyjy",
     "license": "SEE LICENSE IN LICENSE",
     "repository": {

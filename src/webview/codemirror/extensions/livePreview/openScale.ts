@@ -65,8 +65,9 @@ const INLINE_FORMATS: Record<
  *
  * 必须和 styles.ts 的 `.cm-md-code { font-size: 0.95em }` 保持一致：
  * 量「渲染态有多宽」用它，展开时保持同一个字号也用它。
+ * openWrap.ts（跨行补偿）也要用它拼渲染态的目标宽度，所以导出。
  */
-const INLINE_CODE_FONT_EM = 0.95;
+export const INLINE_CODE_FONT_EM = 0.95;
 
 /**
  * 展开态允许的最小缩放比例。
@@ -242,7 +243,7 @@ const openScaleCache = new Map<string, { scale: number; letterSpacing: number }>
  * @param info - 元素的展开信息
  * @returns 展开后会显示的文字
  */
-function openSourceText(state: EditorState, info: OpenElementInfo): string {
+export function openSourceText(state: EditorState, info: OpenElementInfo): string {
     const pieces = [
         { from: info.contentFrom, to: info.contentTo },
         ...info.marks.map((mark) => ({ from: mark.from, to: mark.to })),
@@ -256,11 +257,12 @@ function openSourceText(state: EditorState, info: OpenElementInfo): string {
  * 模块级算一次、所有元素共用：档位只跟 MIN_OPEN_SCALE / STEP 两个常量有关，
  * 跟具体元素无关，放在每次计算里重建属于白造垃圾。
  * 行内代码不缩字号（固定 0.95em），它不用这份表，见 INLINE_CODE_SCALES。
+ * 两张表都导出：openWrap.ts（跨行补偿）的折行模拟要用同一批候选档位。
  */
-const OPEN_SCALES: number[] = buildScales(1);
+export const OPEN_SCALES: number[] = buildScales(1);
 
 /** 行内代码的候选档位：从 0.95em 起（它的渲染态字号），最多再往下缩一点点。 */
-const INLINE_CODE_SCALES: number[] = buildScales(INLINE_CODE_FONT_EM);
+export const INLINE_CODE_SCALES: number[] = buildScales(INLINE_CODE_FONT_EM);
 
 /**
  * 按步进列出候选缩放（从大到小，夹在 [MIN_OPEN_SCALE, startScale] 之间）。
