@@ -233,12 +233,21 @@ function readRow(state: EditorState, node: SyntaxNode): TableLine {
     if (segments.length > 1 && isBlank(segments[0])) segments.shift();
     if (segments.length > 1 && isBlank(segments[segments.length - 1])) segments.pop();
 
-    // 收紧到非空白部分；全是空白的格子就留一个零长区间，照样占一格
+    // 收紧到非空白部分；全是空白的格子也照样占一格
     const cells = segments.map((seg) => {
         const text = state.doc.sliceString(seg.from, seg.to);
         const leading = text.length - text.trimStart().length;
         const trailing = text.length - text.trimEnd().length;
-        return { from: seg.from + leading, to: Math.max(seg.from + leading, seg.to - trailing) };
+        const from = seg.from + leading;
+        const to = Math.max(from, seg.to - trailing);
+        // 空格子（全空白、零长区间）：位置放在 seg 内**最后一个空白字符**处，
+        // 而不是 seg.to（那是后面管道符的位置）。装饰时这个空格会被「借」进
+        // tcell 盒子，光标和输入法组合就有了正常字号的落脚点 ——
+        // 否则空格子光标只能落在 font-size:0 的缝隙里，输入时格子边框还会消失
+        if (from === to && from === seg.to && seg.to > seg.from) {
+            return { from: seg.to - 1, to: seg.to - 1 };
+        }
+        return { from, to };
     });
     return { lineFrom: line.from, lineTo: line.to, cells };
 }
@@ -320,7 +329,13 @@ export function splitRowText(lineText: string): Array<{ from: number; to: number
         const text = lineText.slice(seg.from, seg.to);
         const leading = text.length - text.trimStart().length;
         const trailing = text.length - text.trimEnd().length;
-        return { from: seg.from + leading, to: Math.max(seg.from + leading, seg.to - trailing) };
+        const from = seg.from + leading;
+        const to = Math.max(from, seg.to - trailing);
+        // 同 readRow：空格子位置钉在最后一个空白字符上（借位锚点）
+        if (from === to && from === seg.to && seg.to > seg.from) {
+            return { from: seg.to - 1, to: seg.to - 1 };
+        }
+        return { from, to };
     });
 }
 
@@ -964,6 +979,7 @@ function estimateColumnWidth(block: TableBlock, state: EditorState, col: number)
  * @param block - 表格骨架
  * @param state - 编辑器状态，用来读单元格源码
  * @param caretInside - 光标是否在表格里
+ * @param composing - 是否处于输入法组合（composition）中；组合期间列宽冻结
  * @param caretHead - 光标位置（打字时用它定位「正在编辑的是哪一列」）
  * @param available - 正文可用宽度（px）；<= 0 表示量不到，不做收缩
  * @returns 每列宽度（px），长度等于列数
@@ -972,6 +988,7 @@ function columnWidthsFor(
     block: TableBlock,
     state: EditorState,
     caretInside: boolean,
+    composing: boolean,
     caretHead: number,
     available: number
 ): number[] {
@@ -997,6 +1014,12 @@ function columnWidthsFor(
     //    第一列的涨幅要是没留下，重新分配就会按「没敲过字」的老宽度把第一列压回去，
     //    那一列当场折成好几行（见 tabletype 场景的最后一阶段）。
     if (usable && caretInside) {
+        // 输入法组合中（中文拼音尚未选字）：拼音只是临时内容，列宽**冻结** ——
+        // 直接返回上次的列宽，不估不涨。否则每个拼音字母都涨一次列宽，
+        // 整行会跟着「ceshineirong」的长度反复跳变。最终宽度等 compositionend
+        // 后补一次重估（见 tableCompositionHandler）。
+        if (composing) return usable.cols;
+
         const col = columnUnderCaret(block, caretHead);
         if (col >= 0) {
             const estimate = estimateColumnWidth(block, state, col);
@@ -1268,13 +1291,16 @@ function coversCell(
  * @param state - 编辑器状态
  * @param decos - 待写入的装饰数组
  * @param tree - 语法树
+ * @param range - 本次渲染窗口范围
+ * @param composing - 是否处于输入法组合中（组合期间列宽冻结）
  * @returns void，结果直接 push 进 decos
  */
 export function collectTableDecorations(
     state: EditorState,
     decos: Array<ReturnType<Decoration['range']>>,
     tree: Tree,
-    range: { from: number; to: number }
+    range: { from: number; to: number },
+    composing: boolean
 ): void {
     const caretLine = state.doc.lineAt(state.selection.main.head).number;
     // 可用宽度一次算好传下去：每张表都去 querySelector + getComputedStyle 太浪费
@@ -1299,6 +1325,7 @@ export function collectTableDecorations(
             block,
             state,
             caretInside,
+            composing,
             state.selection.main.head,
             available
         );
@@ -1322,22 +1349,28 @@ export function collectTableDecorations(
                 }).range(line.lineFrom)
             );
 
-            // 管道线和它两侧的空白一起压成 0 宽：格子之间不留缝，间距交给单元格内边距
+            // 单元格装饰 + 缝隙压 0 宽，按 DOM 顺序交错产出。
+            //
+            // ## 「借」一个空格进 tcell 盒子
+            //
+            // cell 内容（trim 后）后面通常紧跟一个空格（标准写法 `| a | b |`）。
+            // tcell 的 mark 把**这个空格也一起包住**（range 多 1 字符），于是：
+            //
+            // - 光标停在内容末尾（cell.to）时，DOM 位置在 mark **内部**
+            //   （mark 一直覆盖到空格之后），正常字号、光标竖线可见；
+            // - 中文 composition 也在 mark 内部发生，拼音节点被盒子包住，
+            //   输入期间格子边框不消失；
+            // - 空格不增加任何布局：tcell 是定宽 flex item，行尾空白在盒子内部
+            //   被换行规则吸收。
+            //
+            // 没有空格可借的紧凑写法（`|a|b|`）退回老行为，不影响其它格子。
             let cursor = line.lineFrom;
-            for (const cell of line.cells) {
+            line.cells.forEach((cell, col) => {
+                // 当前格子之前的部分（管道线与两侧空白）压成 0 宽
                 if (cell.from > cursor) {
                     decos.push(Decoration.mark({ class: GAP_CLASS }).range(cursor, cell.from));
                 }
-                cursor = cell.to;
-            }
-            if (cursor < line.lineTo) {
-                decos.push(Decoration.mark({ class: GAP_CLASS }).range(cursor, line.lineTo));
-            }
 
-            // 单元格：定宽 + 对齐，宽度和列对得上，全表的格子就排成网格。
-            // 空格子（零长区间）没法用 mark 加样式，改用一个空盒子 widget 占位 ——
-            // 空行、空列也要看得见格子，否则整行整列会凭空消失。
-            line.cells.forEach((cell, col) => {
                 const width = widths[col] ?? widths[widths.length - 1] ?? MIN_COL_PX;
                 const align = block.alignments[col] ?? null;
                 const style = align ? `width:${width}px; text-align:${align}` : `width:${width}px`;
@@ -1346,19 +1379,35 @@ export function collectTableDecorations(
                 const cls = selection && coversCell(selection, cell)
                     ? `${CELL_CLASS} ${CELL_SELECTED_CLASS}`
                     : CELL_CLASS;
-                if (cell.from >= cell.to) {
+
+                // cell.to 处是不是可以「借」的空白字符（空格/Tab，且不是行尾）
+                const canBorrow =
+                    cell.to < line.lineTo && /[ \t]/.test(state.doc.sliceString(cell.to, cell.to + 1));
+                const markEnd = canBorrow ? cell.to + 1 : cell.to;
+
+                if (cell.from < cell.to || canBorrow) {
+                    // 非空格子：mark 包住内容（+借来的空格）；
+                    // 空格子：mark 只包住借来的那一个空格，盒子照样成立 ——
+                    // 不再需要空盒子 widget（widget 不可编辑，光标进不去、
+                    // composition 时边框会消失）
+                    decos.push(
+                        Decoration.mark({ class: cls, attributes: { style } }).range(cell.from, markEnd)
+                    );
+                } else {
+                    // 极端兜底：紧凑到连一个空白字符都没有（`||`），
+                    // 只能放一个不可编辑的占位盒子
                     decos.push(
                         Decoration.widget({
                             widget: new EmptyCellWidget(width, style, cls),
                             side: 1,
                         }).range(cell.from)
                     );
-                    return;
                 }
-                decos.push(
-                    Decoration.mark({ class: cls, attributes: { style } }).range(cell.from, cell.to)
-                );
+                cursor = markEnd;
             });
+            if (cursor < line.lineTo) {
+                decos.push(Decoration.mark({ class: GAP_CLASS }).range(cursor, line.lineTo));
+            }
 
             // 行里格子比列数少：在行尾补几个空格子，网格的右边框才不会缺一块
             if (line.cells.length < block.colCount) {
@@ -1410,10 +1459,11 @@ export function collectTableDecorations(
 // =============================================================================
 
 /**
- * 空格子占位。
+ * 空格子占位（**仅极端兜底**）。
  *
- * 两种场合都要它：格子里本来就没写字（`|  |`），或者这一行比别的行少写了几格。
- * 没有它的话空行会变成一条没有格子的空白、空列会整列消失。
+ * 正常的空格子（`|  |`）由 mark 包住「借来的空格」撑出盒子：光标可进、
+ * 输入法 composition 时边框也不消失。只有紧凑到连一个空白字符都没有的写法
+ * （`||`）才退回这个不可编辑的占位盒子；行尾补齐格子同样用它。
  */
 class EmptyCellWidget extends WidgetType {
     /**
@@ -1546,6 +1596,35 @@ export function tablePipeEscaper() {
     });
 }
 
+/**
+ * 输入法组合结束后，给表格列宽**补一次重估**。
+ *
+ * 组合（敲中文拼音）期间列宽是冻结的（见 columnWidthsFor），拼音只是临时内容。
+ * 选字完成后文档里才是最终中文，需要按最终内容重新算一次列宽 —— 窄了就涨回来。
+ *
+ * 用 `setTimeout(0)` 延后派发而不在事件里直接派发：各浏览器「最后一次 input
+ * 事务」与 `compositionend` 的先后不一致，延后可以保证重估发生在**最终内容
+ * 已经落盘**之后。
+ *
+ * @returns CodeMirror 的 domEventHandlers 扩展（接进 createLivePreviewExtension）
+ */
+export function tableCompositionHandler() {
+    return EditorView.domEventHandlers({
+        compositionend(_event: CompositionEvent, view: EditorView) {
+            // 只在组合结束于表格内时补算：正文别处的中文组合不需要动表格。
+            // findTableAt 只查语法树，代价很小
+            if (!findTableAt(view.state, view.state.selection.main.head)) return false;
+            setTimeout(() => {
+                // 等待期间视图可能已销毁，dispatch 前确认还挂在 DOM 上
+                if (view.dom.isConnected) {
+                    view.dispatch({ effects: tableRemeasureEffect.of(null) });
+                }
+            }, 0);
+            return false; // 不拦截事件，其他 compositionend 监听照常工作
+        },
+    });
+}
+
 // =============================================================================
 // 框选单元格
 // =============================================================================
@@ -1621,6 +1700,21 @@ export function tableBlockAt(state: EditorState, pos: number): TableBlock | null
 }
 
 /**
+ * 构造一个「单光标」的 EditorSelection，并带上光标关联方向（assoc）。
+ *
+ * state 6.6+ 起 `EditorSelection.cursor()` 返回的是单个 **SelectionRange**
+ * （没有 `.ranges`），不能直接当 EditorSelection 用（dispatch 的 selection、
+ * MouseSelectionStyle.get 的返回都要 EditorSelection），这里统一包一层。
+ *
+ * @param pos - 光标位置
+ * @param assoc - 关联方向：-1 偏左 / 1 偏右 / 0 不指定
+ * @returns 只含一个光标的 EditorSelection
+ */
+function cursorSelection(pos: number, assoc: number): EditorSelection {
+    return EditorSelection.create([EditorSelection.cursor(pos, assoc)]);
+}
+
+/**
  * 表格里的一次拖拽。
  *
  * 实现要点全在 `get()` 里：它是 CodeMirror 在按下、拖动、松开时都会调的那一个函数，
@@ -1631,16 +1725,27 @@ class CellSelectionStyle implements MouseSelectionStyle {
     private readonly startPos: number;
 
     /**
+     * 光标在边界位置上的**关联方向**（assoc）：1 = 偏向位置右侧。
+     *
+     * 空 cell 的修正位置左边是 0 宽缝隙、右边才是 tcell 盒子内部，
+     * 不显式向右关联，浏览器可能把光标画到缝隙里（竖线消失）。
+     */
+    private readonly startAssoc: number;
+
+    /**
      * @param view - 编辑器视图
      * @param startEvent - 触发这次拖拽的 mousedown 事件
-     * @param pos - 按下位置对应的文档位置
+     * @param pos - 按下位置对应的文档位置（已做格子内修正）
+     * @param assoc - 光标关联方向，见 startAssoc
      */
     constructor(
         private view: EditorView,
         private startEvent: MouseEvent,
-        pos: number
+        pos: number,
+        assoc: number
     ) {
         this.startPos = pos;
+        this.startAssoc = assoc;
     }
 
     /**
@@ -1670,14 +1775,16 @@ class CellSelectionStyle implements MouseSelectionStyle {
         // 必须用 startPos 而不是 pos：posAtCoords 是按字符盒取的，点击落在字符
         // 左半/右半会取到不同的位置，直接用会让光标偏移一个字符。
         if (!this.hasMoved(event) && !extend) {
-            return EditorSelection.single(this.startPos);
+            // 单击：光标落到目标位置。cursor() 只产出单个 SelectionRange，
+            // 必须用 create([...]) 包成 EditorSelection（get 的返回类型要求）
+            return cursorSelection(this.startPos, this.startAssoc);
         }
         // 划出编辑器（posAtCoords 取不到）时保持光标不动，别抛异常
-        if (pos === null) return EditorSelection.single(this.startPos);
+        if (pos === null) return cursorSelection(this.startPos, this.startAssoc);
 
         // Shift 拖：起点沿用已有选区的锚点，才能「接着上次的地方继续选」
         const anchorPos = extend ? this.view.state.selection.main.anchor : this.startPos;
-        // 单参数版本会自动把 anchor / head 归一化成 from <= to，不用自己比大小
+        // single 已返回 EditorSelection（anchor/head，自动归一化）
         return EditorSelection.single(anchorPos, pos);
     }
 
@@ -1695,23 +1802,79 @@ class CellSelectionStyle implements MouseSelectionStyle {
 }
 
 /**
- * 单元格框选扩展（接进 createLivePreviewExtension）。
+ * 单元格点击 / 框选扩展（接进 createLivePreviewExtension）。
  *
- * 只在「按下的位置落在某个格子里」时接管，表格之外一律返回 null，
+ * 只在「按下的位置落在某个格子上」时接管，表格之外一律 null，
  * 让 CodeMirror 用回它自己那套文本选区逻辑。
+ *
+ * ## 单击落点与光标关联修正
+ *
+ * `posAtCoords` 对「格子内容之外、mark 边界、0 宽缝隙」这些位置不可靠，
+ * 会把光标放到旁边 font-size:0 的管道符处 —— 光标竖线消失，拼音 composition
+ * 在缝隙里发生还会让格子边框消失。这里在**未拖动的单击**场景修正落点
+ * （cellAt 已把点击归属到最近一格），并显式指定光标关联方向（assoc）：
+ *
+ * - 空格子：落点修正到借来的空格位置；
+ * - 非空格子点在文字之外：落点修正到内容末尾；
+ * - 点在文字上：落点不变。
+ *
+ * assoc 按末尾边界**右侧字符**决定 —— CM 据此选择从位置哪一侧取光标矩形：
+ * 右侧是正常空格（`| a |`）→ assoc=1；右侧是 0 高管道符（紧凑写法 `| a|`）
+ * → assoc=-1，向左贴最后一个内容字符（向右会落到管道符、竖线消失）。
+ *
+ * 拖拽仍然不吸附（get 里实时 posAtCoords），保留精确文本选区。
  *
  * @returns CodeMirror 的 mouseSelectionStyle 扩展
  */
 export function tableCellSelection() {
     return EditorView.mouseSelectionStyle.of((view, event) => {
-        // 只读模式（Viewer）不接管；Alt 留给矩形选择，右键交给右键菜单
+        // 只读模式（Viewer）不接管
         if (!view.state.facet(EditorView.editable)) return null;
-        if (event.button !== 0 || event.altKey) return null;
-        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
-        if (pos === null) return null;
-        // 用 cellAt 判「是不是在格子上」：不在表格里就整个让给 CodeMirror 原生逻辑
-        const cell = cellAt(view.state, pos);
+        // 只接管左键**普通单击**（detail=1），其余交回 CM 原生：
+        // Alt=矩形选择、Shift=扩展选区、Ctrl/Cmd=加多光标/点链接、
+        // detail≠1=双击选词 / 三击选行
+        if (event.button !== 0 || event.detail !== 1) return null;
+        if (event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) return null;
+        const rawPos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+        if (rawPos === null) return null;
+        // 用 cellAt 把点击位置归属到格子（缝隙位置会归属最近一格）
+        const cell = cellAt(view.state, rawPos);
         if (!cell) return null;
-        return new CellSelectionStyle(view, event, pos);
+
+        // 该格子是不是空的：cell 区间含借位字符时，空格子取到的是单个空格
+        const isEmpty = view.state.sliceDoc(cell.from, cell.to + 1).trim() === '';
+        // 点击落在格子内容区间之外吗（缝隙 / 尾部空白）
+        const outside = rawPos < cell.from || rawPos > cell.to;
+        // 正好点在内容末尾边界（rawPos === cell.to）
+        const atEnd = rawPos === cell.to;
+        // 目标落点：
+        // - 空格子：无论点哪都去借位空格位置（cell.to）；
+        // - 非空格子点在内容之外：去内容末尾；
+        // - 点在文字上：用 posAtCoords 的精确字符位置。
+        const targetPos = isEmpty || outside ? cell.to : rawPos;
+        // 末尾边界右侧紧邻的字符是不是「正常字号的空白」（可借位的 trailing
+        // space）。边界位置（空格子 / 内容之外 / 正好末尾）必须显式关联：
+        // - 右侧是正常空格（`| a |`）：assoc=1，光标贴空格、在 mark 内；
+        // - 右侧是 font-size:0 的管道符（紧凑写法 `| a|`，无空格可借）：
+        //   assoc=-1，光标向左贴最后一个内容字符 —— 向右会落到 0 高管道符、
+        //   竖线消失。
+        // 点在文字中间用默认 assoc=0。
+        const onBoundary = isEmpty || outside || atEnd;
+        const rightIsSpace = /[ \t]/.test(view.state.sliceDoc(cell.to, cell.to + 1));
+        const targetAssoc = onBoundary ? (rightIsSpace ? 1 : -1) : 0;
+
+        // **所有点击都在 mousedown 同步栈里直接放置光标**：CM 默认的点击
+        // dispatch 对「0 宽缝隙、mark 边界」位置不可靠（实测单击事务不产生、
+        // 光标不动）。这与 inputHandler 中 dispatch 同模式；CM 随后的
+        // MouseSelection.select 发现选区已一致会自动跳过，不会重复 dispatch。
+        // **阻止浏览器的 mousedown 默认动作**：否则浏览器会在事件处理后把原生
+        // caret 放到它自己 hit-test 的点击位置 —— 那常常是 cell 之后 font-size:0
+        // 的管道符处（rawPos=管道符位置，0 高、无竖线），并反过来覆盖我们下面
+        // 这次 dispatch、被 CM 同步成错误光标。preventDefault 后 caret 完全由我们
+        // 放置。focus 不受影响（CM 在 handler 里自行 focus contentDOM）。
+        event.preventDefault();
+
+        view.dispatch({ selection: cursorSelection(targetPos, targetAssoc) });
+        return new CellSelectionStyle(view, event, targetPos, targetAssoc);
     });
 }

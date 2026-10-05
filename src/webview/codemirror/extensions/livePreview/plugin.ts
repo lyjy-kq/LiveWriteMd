@@ -76,6 +76,7 @@ import {
     isInTableCell,
     isTableLikeBlock,
     tableCellSelection,
+    tableCompositionHandler,
     tablePipeEscaper,
     tableResizePlugin,
     tableSourceModeHandler,
@@ -1620,9 +1621,14 @@ function buildBlockDecorations(state: EditorState): DecorationSet {
  *
  * @param state - 编辑器状态
  * @param range - 渲染窗口
+ * @param composing - 是否处于输入法组合中（组合期间表格列宽冻结）
  * @returns 这部分的装饰集
  */
-function buildWindowDecorations(state: EditorState, range: ILineRange): DecorationSet {
+function buildWindowDecorations(
+    state: EditorState,
+    range: ILineRange,
+    composing: boolean
+): DecorationSet {
     const decos: Array<ReturnType<Decoration['range']>> = [];
     const tree = ensureSyntaxTree(state, state.doc.length, 100) ?? syntaxTree(state);
     // 和 block 那一遍用同一套规则算源码区间，两边的判断才不会打架
@@ -1660,7 +1666,7 @@ function buildWindowDecorations(state: EditorState, range: ILineRange): Decorati
     collectCodeSpanMathDecorations(state, decos, range, tree);
     // 表格骨架：管道线压 0 宽、单元格定宽、分隔行折叠、被框选的格子高亮。
     // mark/line/行内 widget 都不影响块结构，所以可以只算窗口。
-    collectTableDecorations(state, decos, tree, range);
+    collectTableDecorations(state, decos, tree, range, composing);
     // 列表缩进：层级引导线 + 行首空白对齐（两种状态下长得一样）
     collectListIndentDecorations(state, decos, range);
     // 聚焦块处理：块级标记压 0 宽、行级样式补齐、光标所在的行内元素就地展开
@@ -1810,7 +1816,8 @@ export const livePreviewPlugin = ViewPlugin.fromClass(
 
         constructor(view: EditorView) {
             this.window = renderRange(view);
-            this.decorations = buildWindowDecorations(view.state, this.window);
+            // 构建时不可能在输入法组合中，composing 传 false
+            this.decorations = buildWindowDecorations(view.state, this.window, false);
         }
 
         update(update: ViewUpdate): void {
@@ -1827,7 +1834,12 @@ export const livePreviewPlugin = ViewPlugin.fromClass(
                 return;
             }
             this.window = next;
-            this.decorations = buildWindowDecorations(update.view.state, next);
+            // 把「是否在输入法组合中」透传下去：组合期间表格列宽必须冻结
+            this.decorations = buildWindowDecorations(
+                update.view.state,
+                next,
+                update.view.composing
+            );
         }
     },
     { decorations: (value) => value.decorations }
@@ -2112,6 +2124,8 @@ export function createLivePreviewExtension(): Extension[] {
         tableCellSelection(),
         // 单元格里输入 `|` 自动转义，免得把表格切碎
         tablePipeEscaper(),
+        // 中文输入法组合结束后补一次表格列宽重估（组合期间列宽是冻结的）
+        tableCompositionHandler(),
         // 输入左括号自动补全右半（[ { ( 【 《 <）
         autoPairBrackets(),
         // 双击表格 → 整张表切源码模式（改结构时看源码更直接）
