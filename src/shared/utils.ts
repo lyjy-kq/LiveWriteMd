@@ -1,5 +1,5 @@
 /**
- * FlowMD Shared Utility Functions
+ * LiveWriteMD Shared Utility Functions
  *
  * This module provides common utility functions shared between
  * the Extension and Webview.

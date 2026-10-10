@@ -1,5 +1,5 @@
 /**
- * FlowMD HTML Export - Light Theme CSS
+ * LiveWriteMD HTML Export - Light Theme CSS
  *
  * GitHub-inspired light theme for standalone HTML output.
  * Color palette derived from livePreview/styles.ts light theme.
@@ -172,9 +172,9 @@ hr {
 
 /* Images
    默认占正文宽度的 75% 并居中；编辑器里调整过的图片会带一个内联的
-   --flowmd-media-width，导出时由 htmlExporter 转成相同的百分比。 */
+   --livewritemd-media-width，导出时由 htmlExporter 转成相同的百分比。 */
 img {
-  max-width: var(--flowmd-media-width, 75%);
+  max-width: var(--livewritemd-media-width, 75%);
   height: auto;
   border-radius: 4px;
   display: block;
@@ -210,7 +210,7 @@ pre.mermaid {
   text-align: center;
   border: none;
   padding: 16px 0;
-  max-width: var(--flowmd-media-width, 75%);
+  max-width: var(--livewritemd-media-width, 75%);
   margin-left: auto;
   margin-right: auto;
 }

@@ -1,5 +1,5 @@
 /**
- * FlowMD 搜索/替换历史的扩展侧存储封装。
+ * LiveWriteMD 搜索/替换历史的扩展侧存储封装。
  *
  * 这个模块只负责从 VS Code 的 workspaceState 读取和写入历史状态，
  * 不包含任何 Webview DOM 逻辑。
@@ -17,7 +17,7 @@ import {
 /**
  * 搜索/替换历史在 workspaceState 中使用的存储键。
  */
-const SEARCH_HISTORY_STORAGE_KEY = 'flowMd.searchHistory';
+const SEARCH_HISTORY_STORAGE_KEY = 'liveWriteMd.searchHistory';
 
 /**
  * 从 workspaceState 读取当前工作区的搜索/替换历史。

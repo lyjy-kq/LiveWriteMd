@@ -32,7 +32,7 @@
  *    （Canvas 粗估），否则内容长了列却不涨，打着打着就折行了。
  *
  *    「可用宽」= **正文文字的左右边界之间**（见 availableWidth）：行号栏、正文内边距、
- *    行宽上限（`flowMd.readableLineLength`）全都要扣掉。表格最宽也就是这么宽，
+ *    行宽上限（`liveWriteMd.readableLineLength`）全都要扣掉。表格最宽也就是这么宽，
  *    两边和正文的文字对齐（不是和整个编辑区对齐 —— 那里还含着行号栏和两侧留白）。
  * 3. **框选**：在格子上拖鼠标就是**普通的文本选区**（见 tableCellSelection），
  *    不再往格子边界上吸附 —— 稍微滑一下只选到划过的几个字。
@@ -110,7 +110,7 @@ const CELL_SELECTED_CLASS = 'cm-md-tcell-selected';
 const GAP_CLASS = 'cm-md-tgap';
 const ROW_CLASS = 'cm-md-table-row';
 const HEADER_CLASS = 'cm-md-table-header';
-/** 偶数数据行：配合 --flowmd-table-stripe-background 画斑马纹。 */
+/** 偶数数据行：配合 --livewritemd-table-stripe-background 画斑马纹。 */
 const STRIPE_CLASS = 'cm-md-table-stripe';
 const DELIMITER_CLASS = 'cm-md-table-delimiter';
 
@@ -519,7 +519,7 @@ function ensureRulerHost(): HTMLElement {
         const host = document.createElement('div');
         host.setAttribute('aria-hidden', 'true');
         // 给复现页留个抓手：量尺是不是真的「脱离排版」了，从外面才看得出来
-        host.dataset.flowmdRuler = '1';
+        host.dataset.livewritemdRuler = '1';
         // 容器本身不参与页面排版：绝对定位 + 移出可视区 + 不可见，
         // `contain: layout style` 再把它和外界隔开（不然字体、行高都可能被继承污染）
         // 注意 `!important`：下面抄过来的主题类名里带着 baseTheme 的 `&` 规则，
@@ -577,7 +577,7 @@ function ensureRulers(): { pre: HTMLElement; min: HTMLElement } {
     const font = [
         `font-size:${ctx?.size ?? 14}px`,
         `font-family:${ctx?.family ?? 'monospace'}`,
-        // 正文那一档字重（可能是用户调过的 --flowmd-font-weight）；
+        // 正文那一档字重（可能是用户调过的 --livewritemd-font-weight）；
         // 表头行的 600 在条目上单独加，见 measureCells
         `font-weight:${ctx?.weight ?? '400'}`,
         'line-height:1',
@@ -956,7 +956,7 @@ function estimateColumnWidth(block: TableBlock, state: EditorState, col: number)
         const text = state.doc.sliceString(cell.from, cell.to);
         if (!text) continue;
         // 表头那档字重是 600（见 .cm-md-table-header .cm-md-tcell），正文那档
-        // 可能是用户调过的（--flowmd-font-weight），都要照实量
+        // 可能是用户调过的（--livewritemd-font-weight），都要照实量
         const weight = row.isHeader ? '600' : (ctx?.weight ?? '400');
         const estimate = measureText(text, weight) + CELL_OVERHEAD;
         if (estimate > width) width = estimate;
@@ -1210,7 +1210,7 @@ export const tableResizePlugin = ViewPlugin.fromClass(
  *    实测过：编辑器明明只有 900px，表格算出来 1288px，而且再也收不回来。
  * 2. 扣掉**行号栏**。它在 scroller 里占的是实打实的位置，正文是从它右边才开始的。
  * 3. 扣掉正文自己的左右内边距，再受 `.cm-content` 的 max-width 约束
- *    （`flowMd.readableLineLength`，见 webviewContent.ts）—— 正文自己就被它封顶，
+ *    （`liveWriteMd.readableLineLength`，见 webviewContent.ts）—— 正文自己就被它封顶，
  *    表格当然也不能比正文宽。
  *
  * 拿不到就返回 0，调用方跳过收缩。

@@ -31,7 +31,7 @@ import { fontSpec, MeasureBatch } from './layoutMetrics.js';
  *
  * `weight` / `extraWidth` 只用来算「渲染态有多宽」（也就是宽度补偿的目标值）：
  * 加粗要按 700 量、行内代码要加上左右各 6px 的内边距。
- * `weight` 留空表示「跟正文一个粗细」（正文的字重是用户可调的，见 --flowmd-font-weight）。
+ * `weight` 留空表示「跟正文一个粗细」（正文的字重是用户可调的，见 --livewritemd-font-weight）。
  *
  * 这里的映射必须和 plugin.ts / styles.ts 里渲染态的处理保持一致，改一边要记得改另一边。
  */

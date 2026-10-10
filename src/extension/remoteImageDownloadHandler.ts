@@ -1,5 +1,5 @@
 /**
- * FlowMD 网络图片下载处理器。
+ * LiveWriteMD 网络图片下载处理器。
  *
  * 这个模块负责扫描 Markdown 正文中的网络图片链接，将图片下载到
  * 文档同级的 `assets` 目录，并把正文中的链接改写为本地相对路径。
@@ -260,7 +260,7 @@ export async function downloadRemoteImagesToAssets(
             downloadedPathByUrl.set(imageUrl, relativePath);
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
-            console.error(`[FlowMD] Failed to download image: ${imageUrl} (${errorMessage})`);
+            console.error(`[LiveWriteMD] Failed to download image: ${imageUrl} (${errorMessage})`);
             failedUrls.push(imageUrl);
         }
     }

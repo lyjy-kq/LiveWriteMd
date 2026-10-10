@@ -1,7 +1,7 @@
 /**
- * FlowMD Webview Entry Point
+ * LiveWriteMD Webview Entry Point
  *
- * This module serves as the entry point for the Webview side of the FlowMD editor.
+ * This module serves as the entry point for the Webview side of the LiveWriteMD editor.
  * It handles:
  * - VS Code API acquisition
  * - DOMContentLoaded initialization
@@ -51,7 +51,7 @@ import {
     handleImageSaved,
     handleImageSaveError,
 } from './imageDropHandler.js';
-import type { ThemeType, FlowMdEditorSettings } from '../shared/types.js';
+import type { ThemeType, LiveWriteMdEditorSettings } from '../shared/types.js';
 import type { SearchHistoryState } from '../shared/searchHistory.js';
 import { MESSAGE_TYPES } from '../shared/messageTypes.js';
 
@@ -113,7 +113,7 @@ setPostMessage((message: unknown) => vscode.postMessage(message));
 /**
  * Webview 控制台镜像开关。
  *
- * 当前为黑屏问题排查阶段，保持开启以便把启动链路写入 FlowMD 输出。
+ * 当前为黑屏问题排查阶段，保持开启以便把启动链路写入 LiveWriteMD 输出。
  * 待启动问题完全稳定后，可再按发布策略评估是否恢复关闭。
  */
 const SHOULD_MIRROR_WEBVIEW_CONSOLE = false;
@@ -136,7 +136,7 @@ function forwardLog(level: 'DEBUG' | 'ERROR' | 'WARN' | 'INFO', args: unknown[])
     const msg = args
         .map((a) => (typeof a === 'object' ? JSON.stringify(a, null, 0) : String(a)))
         .join(' ');
-    if (msg.includes('[FlowMD]')) {
+    if (msg.includes('[LiveWriteMD]')) {
         vscode.postMessage({ type: 'webviewLog', level, msg });
     }
 }
@@ -320,7 +320,7 @@ function getOrCreateEditorHost(): HTMLElement {
  */
 function getInitialOutlineWidth(): number {
     const rawWidth = getComputedStyle(document.documentElement).getPropertyValue(
-        '--flowmd-outline-width'
+        '--livewritemd-outline-width'
     );
     const parsedWidth = Number.parseFloat(rawWidth);
     if (!Number.isFinite(parsedWidth) || parsedWidth <= 0) {
@@ -386,11 +386,11 @@ function sendLog(level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR', msg: string): void 
 
     // 正式包默认不把普通信息回写到 Webview 控制台，只保留错误和必要告警。
     if (level === 'ERROR') {
-        console.error(`[FlowMD Webview] ${msg}`);
+        console.error(`[LiveWriteMD Webview] ${msg}`);
     } else if (level === 'WARN' && SHOULD_MIRROR_WEBVIEW_CONSOLE) {
-        console.warn(`[FlowMD Webview] ${msg}`);
+        console.warn(`[LiveWriteMD Webview] ${msg}`);
     } else if (SHOULD_MIRROR_WEBVIEW_CONSOLE) {
-        console.log(`[FlowMD Webview] ${msg}`);
+        console.log(`[LiveWriteMD Webview] ${msg}`);
     }
 }
 
@@ -504,7 +504,7 @@ registerGlobalErrorDiagnostics();
 sendLog('INFO', 'Webview script loaded and diagnostics registered');
 
 // Expose log function globally for plugins
-(window as unknown as { flowmdLog: typeof sendLog }).flowmdLog = sendLog;
+(window as unknown as { livewritemdLog: typeof sendLog }).livewritemdLog = sendLog;
 
 // Expose vscode API globally for livePreview link handling
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -529,7 +529,7 @@ async function handleInit(
     theme: ThemeType,
     documentUri: string,
     searchHistory: SearchHistoryState,
-    settings?: FlowMdEditorSettings,
+    settings?: LiveWriteMdEditorSettings,
     mode?: 'live' | 'viewer' | 'source',
     outlineWidth?: number,
     allSettings?: Record<string, SettingValue>
@@ -684,7 +684,7 @@ async function handleInit(
 function handleUpdate(content: string): void {
     sendLog('DEBUG', `UPDATE received: contentLength=${content.length}`);
     console.debug(
-        `[FlowMD] handleUpdate: contentLen=${content.length} editorReady=${editor?.isReady()}`
+        `[LiveWriteMD] handleUpdate: contentLen=${content.length} editorReady=${editor?.isReady()}`
     );
 
     if (!editor || !editor.isReady()) {
@@ -693,13 +693,13 @@ function handleUpdate(content: string): void {
     }
 
     try {
-        console.debug(`[FlowMD] handleUpdate: calling setContent...`);
+        console.debug(`[LiveWriteMD] handleUpdate: calling setContent...`);
         // setContent() does NOT trigger onChange (feedback loop prevention)
         editor.setContent(content);
         outlinePanel?.setContent(content);
         syncOutlineActiveLine();
         sendLog('DEBUG', 'UPDATE applied successfully');
-        console.debug(`[FlowMD] handleUpdate: setContent completed`);
+        console.debug(`[LiveWriteMD] handleUpdate: setContent completed`);
         // Stop reload spinner if it was active
         document.getElementById('reload-content')?.classList.remove('spinning');
     } catch (error) {
@@ -899,7 +899,7 @@ function initialize(): void {
             theme: ThemeType,
             documentUri: string,
             searchHistory: SearchHistoryState,
-            settings?: FlowMdEditorSettings,
+            settings?: LiveWriteMdEditorSettings,
             mode?: 'live' | 'viewer' | 'source',
             outlineWidth?: number,
             allSettings?: Record<string, SettingValue>

@@ -1,5 +1,5 @@
 /**
- * FlowMD 预览媒体宽度（图片 / Mermaid 图）的共享定义。
+ * LiveWriteMD 预览媒体宽度（图片 / Mermaid 图）的共享定义。
  *
  * 编辑器里的图片和 Mermaid 图默认占正文宽度的 75%，用户可以通过预览上的
  * −/+ 按钮调整。宽度以属性形式写回 Markdown 源码，写法沿用 Pandoc 风格的

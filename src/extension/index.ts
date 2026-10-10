@@ -1,7 +1,7 @@
 /**
- * FlowMD Extension Entry Point
+ * LiveWriteMD Extension Entry Point
  *
- * This module is the main entry point for the FlowMD VS Code extension.
+ * This module is the main entry point for the LiveWriteMD VS Code extension.
  * It handles extension activation, registration of the CustomTextEditorProvider,
  * and command registration.
  *
@@ -19,7 +19,7 @@
 
 import * as vscode from 'vscode';
 
-import { FlowMdEditorProvider, VIEW_TYPE } from './editorProvider.js';
+import { LiveWriteMdEditorProvider, VIEW_TYPE } from './editorProvider.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './configManager.js';
 import { exportMarkdownAsHtml } from './htmlExporter.js';
@@ -30,31 +30,31 @@ import { exportMarkdownAsPdf } from './pdfExporter.js';
 // =============================================================================
 
 /**
- * Command identifier for opening files with FlowMD.
+ * Command identifier for opening files with LiveWriteMD.
  * Must match the command in package.json contributes.commands.
  */
-const COMMAND_OPEN_WITH = 'flowMd.openWith';
-const COMMAND_ENTER_VIEWER = 'flowMd.enterViewerMode';
-const COMMAND_EXIT_VIEWER = 'flowMd.exitViewerMode';
-const COMMAND_ENTER_SOURCE = 'flowMd.enterSourceMode';
-const COMMAND_ENTER_LIVE = 'flowMd.enterLiveMode';
-const COMMAND_EXPORT_HTML = 'flowMd.exportAsHtml';
-const COMMAND_EXPORT_PDF = 'flowMd.exportAsPdf';
-const COMMAND_TOGGLE_OUTLINE = 'flowMd.toggleOutline';
-const COMMAND_INSERT_IMAGE = 'flowMd.insertImage';
-const COMMAND_INSERT_IMAGE_FROM_EXPLORER = 'flowMd.insertImageFromExplorer';
+const COMMAND_OPEN_WITH = 'liveWriteMd.openWith';
+const COMMAND_ENTER_VIEWER = 'liveWriteMd.enterViewerMode';
+const COMMAND_EXIT_VIEWER = 'liveWriteMd.exitViewerMode';
+const COMMAND_ENTER_SOURCE = 'liveWriteMd.enterSourceMode';
+const COMMAND_ENTER_LIVE = 'liveWriteMd.enterLiveMode';
+const COMMAND_EXPORT_HTML = 'liveWriteMd.exportAsHtml';
+const COMMAND_EXPORT_PDF = 'liveWriteMd.exportAsPdf';
+const COMMAND_TOGGLE_OUTLINE = 'liveWriteMd.toggleOutline';
+const COMMAND_INSERT_IMAGE = 'liveWriteMd.insertImage';
+const COMMAND_INSERT_IMAGE_FROM_EXPLORER = 'liveWriteMd.insertImageFromExplorer';
 
 // =============================================================================
 // Command Handlers
 // =============================================================================
 
 /**
- * Handler for the flowMd.openWith command.
- * Opens a Markdown file with the FlowMD editor.
+ * Handler for the liveWriteMd.openWith command.
+ * Opens a Markdown file with the LiveWriteMD editor.
  *
  * @param uri - Optional URI of the file to open
  */
-async function openWithFlowMd(uri?: vscode.Uri): Promise<void> {
+async function openWithLiveWriteMd(uri?: vscode.Uri): Promise<void> {
     try {
         // If no URI provided, prompt user to select a file
         if (!uri) {
@@ -74,17 +74,17 @@ async function openWithFlowMd(uri?: vscode.Uri): Promise<void> {
             uri = fileUris[0];
         }
 
-        Logger.info(`Opening with FlowMD: ${uri.fsPath}`);
+        Logger.info(`Opening with LiveWriteMD: ${uri.fsPath}`);
 
-        // Open the file with FlowMD custom editor
+        // Open the file with LiveWriteMD custom editor
         await vscode.commands.executeCommand('vscode.openWith', uri, VIEW_TYPE);
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         Logger.error(
-            `Failed to open file with FlowMD: ${errorMessage}`,
+            `Failed to open file with LiveWriteMD: ${errorMessage}`,
             error instanceof Error ? error : undefined
         );
-        await vscode.window.showErrorMessage(`FlowMD: Failed to open file: ${errorMessage}`);
+        await vscode.window.showErrorMessage(`LiveWriteMD: Failed to open file: ${errorMessage}`);
     }
 }
 
@@ -93,8 +93,8 @@ async function openWithFlowMd(uri?: vscode.Uri): Promise<void> {
 // =============================================================================
 
 /**
- * Activates the FlowMD extension.
- * Called when the extension is activated (e.g., when a .md file is opened with FlowMD).
+ * Activates the LiveWriteMD extension.
+ * Called when the extension is activated (e.g., when a .md file is opened with LiveWriteMD).
  *
  * @param context - The extension context provided by VS Code
  *
@@ -109,7 +109,7 @@ async function openWithFlowMd(uri?: vscode.Uri): Promise<void> {
  * - REQ-F-007: Register commands for editor startup
  */
 export function activate(context: vscode.ExtensionContext): void {
-    // Initialize Logger (creates VS Code Output Channel "FlowMD")
+    // Initialize Logger (creates VS Code Output Channel "LiveWriteMD")
     Logger.initialize();
 
     // Check debug log configuration from ConfigManager
@@ -120,10 +120,10 @@ export function activate(context: vscode.ExtensionContext): void {
         Logger.info(`Debug log file: ${logFilePath}`);
     }
 
-    Logger.info('FlowMD Extension activating...');
+    Logger.info('LiveWriteMD Extension activating...');
 
     // Register the CustomTextEditorProvider
-    const provider = new FlowMdEditorProvider(context);
+    const provider = new LiveWriteMdEditorProvider(context);
     const providerRegistration = vscode.window.registerCustomEditorProvider(VIEW_TYPE, provider, {
         // WebviewPanelOptions
         webviewOptions: {
@@ -136,7 +136,7 @@ export function activate(context: vscode.ExtensionContext): void {
     Logger.info(`Registered CustomTextEditorProvider for viewType: ${VIEW_TYPE}`);
 
     // Register the openWith command
-    const openWithCommand = vscode.commands.registerCommand(COMMAND_OPEN_WITH, openWithFlowMd);
+    const openWithCommand = vscode.commands.registerCommand(COMMAND_OPEN_WITH, openWithLiveWriteMd);
     context.subscriptions.push(openWithCommand);
     Logger.debug(`Registered command: ${COMMAND_OPEN_WITH}`);
 
@@ -164,7 +164,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // Register noop command to prevent VS Code's undo/redo from conflicting with CM6's history
     context.subscriptions.push(
-        vscode.commands.registerCommand('flowMd.noop', () => {
+        vscode.commands.registerCommand('liveWriteMd.noop', () => {
             /* intentionally empty */
         })
     );
@@ -193,11 +193,11 @@ export function activate(context: vscode.ExtensionContext): void {
     );
     Logger.debug(`Registered command: ${COMMAND_INSERT_IMAGE}`);
 
-    // Register open-settings command (FlowMD 设置)
+    // Register open-settings command (LiveWriteMD 设置)
     context.subscriptions.push(
-        vscode.commands.registerCommand('flowMd.openSettings', () => provider.openSettings())
+        vscode.commands.registerCommand('liveWriteMd.openSettings', () => provider.openSettings())
     );
-    Logger.debug('Registered command: flowMd.openSettings');
+    Logger.debug('Registered command: liveWriteMd.openSettings');
 
     // Register insert image from Explorer context menu
     context.subscriptions.push(
@@ -209,11 +209,11 @@ export function activate(context: vscode.ExtensionContext): void {
     );
     Logger.debug(`Registered command: ${COMMAND_INSERT_IMAGE_FROM_EXPLORER}`);
 
-    Logger.info('FlowMD Extension activated successfully');
+    Logger.info('LiveWriteMD Extension activated successfully');
 }
 
 /**
- * Deactivates the FlowMD extension.
+ * Deactivates the LiveWriteMD extension.
  * Called when the extension is deactivated (e.g., when VS Code is closed).
  * Cleanup is handled automatically via context.subscriptions.
  *
@@ -221,7 +221,7 @@ export function activate(context: vscode.ExtensionContext): void {
  * - DES-A-008: Log output design (Logger cleanup)
  */
 export function deactivate(): void {
-    Logger.info('FlowMD Extension deactivating...');
+    Logger.info('LiveWriteMD Extension deactivating...');
 
     // Cleanup Logger resources
     Logger.dispose();

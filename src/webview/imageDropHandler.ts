@@ -1,5 +1,5 @@
 /**
- * FlowMD Image Drop Handler
+ * LiveWriteMD Image Drop Handler
  *
  * Handles image drag & drop and clipboard paste in the Webview.
  * Communicates with Extension via postMessage for file saving.
@@ -195,7 +195,7 @@ function handleDrop(
         postMessage({ type: 'saveImage', data, fileName: file.name });
     };
     reader.onerror = () => {
-        console.debug('[FlowMD] FileReader error during D&D');
+        console.debug('[LiveWriteMD] FileReader error during D&D');
     };
     reader.readAsDataURL(file);
 }
@@ -233,7 +233,7 @@ function handlePaste(
     // 2. Get File object
     const file = imageItem.getAsFile();
     if (!file) {
-        console.debug('[FlowMD] getAsFile() returned null, falling back to default paste');
+        console.debug('[LiveWriteMD] getAsFile() returned null, falling back to default paste');
         return false;
     }
 
@@ -259,7 +259,7 @@ function handlePaste(
         postMessage({ type: 'saveImage', data, fileName });
     };
     reader.onerror = () => {
-        console.debug('[FlowMD] FileReader error during paste');
+        console.debug('[LiveWriteMD] FileReader error during paste');
     };
     reader.readAsDataURL(file);
 
@@ -309,7 +309,7 @@ export function setupImageDropHandler(
         },
         { capture: true }
     );
-    console.debug('[FlowMD] Image drop handler registered on document.body (capture phase)');
+    console.debug('[LiveWriteMD] Image drop handler registered on document.body (capture phase)');
 }
 
 /**
@@ -364,7 +364,7 @@ export function handleImageSaved(
         changes: { from: pos, insert: insertText },
     });
 
-    console.debug(`[FlowMD] Image inserted: ${message.relativePath} at pos ${pos}`);
+    console.debug(`[LiveWriteMD] Image inserted: ${message.relativePath} at pos ${pos}`);
 }
 
 /**

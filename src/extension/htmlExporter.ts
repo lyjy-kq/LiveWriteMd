@@ -1,5 +1,5 @@
 /**
- * FlowMD HTML Exporter
+ * LiveWriteMD HTML Exporter
  *
  * Converts Markdown files to standalone HTML documents.
  * Handles math (KaTeX→MathML), Mermaid (CDN), footnotes,
@@ -262,14 +262,14 @@ function parseMediaWidthPercent(text: string): number | null {
 /**
  * 生成媒体宽度的内联变量声明。
  *
- * 样式表里统一用 `var(--flowmd-media-width, 75%)` 消费，所以调整过宽度的
+ * 样式表里统一用 `var(--livewritemd-media-width, 75%)` 消费，所以调整过宽度的
  * 图片和 Mermaid 图只要挂上这个变量就能覆盖默认值。
  *
  * @param percent - 宽度百分比
  * @returns 可直接拼进 style 属性的声明
  */
 function buildMediaWidthStyle(percent: number): string {
-    return `--flowmd-media-width:${percent}%`;
+    return `--livewritemd-media-width:${percent}%`;
 }
 
 /**
@@ -448,7 +448,7 @@ export function resolveMarkdownTargetUri(uri?: vscode.Uri): vscode.Uri | undefin
         return activeEditor.document.uri;
     }
 
-    // 自定义编辑器（FlowMD 自己）下没有 activeTextEditor，只能从活动标签页取 URI。
+    // 自定义编辑器（LiveWriteMD 自己）下没有 activeTextEditor，只能从活动标签页取 URI。
     const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
     if (activeTab?.input && typeof activeTab.input === 'object' && 'uri' in activeTab.input) {
         return (activeTab.input as { uri: vscode.Uri }).uri;
@@ -508,7 +508,7 @@ export async function exportMarkdownAsHtml(uri?: vscode.Uri): Promise<void> {
     try {
         const targetUri = resolveMarkdownTargetUri(uri);
         if (!targetUri) {
-            vscode.window.showWarningMessage('FlowMD: No Markdown file selected.');
+            vscode.window.showWarningMessage('LiveWriteMD: No Markdown file selected.');
             return;
         }
 
@@ -523,13 +523,13 @@ export async function exportMarkdownAsHtml(uri?: vscode.Uri): Promise<void> {
         );
 
         Logger.info(`HTML exported: ${htmlPath}`);
-        vscode.window.showInformationMessage(`FlowMD: Exported to ${path.basename(htmlPath)}`);
+        vscode.window.showInformationMessage(`LiveWriteMD: Exported to ${path.basename(htmlPath)}`);
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         Logger.error(
             `HTML export failed: ${errorMessage}`,
             error instanceof Error ? error : undefined
         );
-        vscode.window.showErrorMessage(`FlowMD: Export failed: ${errorMessage}`);
+        vscode.window.showErrorMessage(`LiveWriteMD: Export failed: ${errorMessage}`);
     }
 }

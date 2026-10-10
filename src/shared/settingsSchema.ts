@@ -1,5 +1,5 @@
 /**
- * FlowMD 设置 Schema —— 设置功能的单一数据源。
+ * LiveWriteMD 设置 Schema —— 设置功能的单一数据源。
  *
  * 这个文件以**声明式**描述所有可配置项：分在哪个组、用什么控件、
  * 默认值、取值范围、可选项。三处都依赖它：
@@ -39,7 +39,7 @@ export interface SettingOption {
 
 /** 单个设置项的声明。 */
 export interface SettingItem {
-    /** 配置键（不含 `flowMd.` 前缀）。 */
+    /** 配置键（不含 `liveWriteMd.` 前缀）。 */
     key: string;
     /** 界面显示名。 */
     label: string;
@@ -516,7 +516,7 @@ export const SETTINGS_SCHEMA: SettingSection[] = [
             {
                 key: 'enableDebugLog',
                 label: '启用调试日志',
-                description: '详细日志输出到「输出」面板的 FlowMD 通道。',
+                description: '详细日志输出到「输出」面板的 LiveWriteMD 通道。',
                 control: 'toggle',
                 default: false,
             },
@@ -541,7 +541,7 @@ const ITEM_BY_KEY: Map<string, SettingItem> = new Map(
 /**
  * 按配置键查设置项声明。
  *
- * @param key - 配置键（不含 flowMd.）
+ * @param key - 配置键（不含 liveWriteMd.）
  * @returns 设置项；未登记时 undefined
  */
 export function getSettingItem(key: string): SettingItem | undefined {

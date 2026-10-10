@@ -1,5 +1,5 @@
 /**
- * FlowMD Esbuild Watch Configuration
+ * LiveWriteMD Esbuild Watch Configuration
  *
  * This script drives the extension and webview rebuild loop used by
  * `pnpm run watch`. It supports both one-off builds and long-running watch

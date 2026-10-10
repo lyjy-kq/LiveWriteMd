@@ -1,7 +1,7 @@
 /**
  * CodeMirror Keymap Extension
  *
- * This module provides the keymap configuration for the FlowMD editor,
+ * This module provides the keymap configuration for the LiveWriteMD editor,
  * including default keybindings, history (undo/redo), and Markdown-specific
  * shortcuts like Bold (Ctrl/Cmd+B) and Italic (Ctrl/Cmd+I).
  *
@@ -126,7 +126,7 @@ export const markdownKeymap: readonly KeyBinding[] = [
 ];
 
 /**
- * Creates the complete keymap extension bundle for the FlowMD editor.
+ * Creates the complete keymap extension bundle for the LiveWriteMD editor.
  *
  * This function returns an array of CodeMirror extensions that provide:
  * 1. History support (undo/redo functionality)
@@ -140,11 +140,11 @@ export const markdownKeymap: readonly KeyBinding[] = [
  * ```typescript
  * import { EditorState } from '@codemirror/state';
  * import { EditorView } from '@codemirror/view';
- * import { createFlowMdKeymap } from './keymap';
+ * import { createLiveWriteMdKeymap } from './keymap';
  *
  * const state = EditorState.create({
  *     doc: '# Hello World',
- *     extensions: createFlowMdKeymap(),
+ *     extensions: createLiveWriteMdKeymap(),
  * });
  *
  * const view = new EditorView({
@@ -157,7 +157,7 @@ export const markdownKeymap: readonly KeyBinding[] = [
  * @see {@link https://codemirror.net/docs/ref/#commands.defaultKeymap} for default keybindings
  * @see {@link https://codemirror.net/docs/ref/#commands.historyKeymap} for history keybindings
  */
-export function createFlowMdKeymap(): Extension[] {
+export function createLiveWriteMdKeymap(): Extension[] {
     return [
         // History support (undo/redo)
         history(),

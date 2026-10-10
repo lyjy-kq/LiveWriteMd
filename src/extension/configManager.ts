@@ -1,7 +1,7 @@
 /**
  * ConfigManager - VS Code Extension Configuration Management
  *
- * Provides centralized access to FlowMD extension configuration values
+ * Provides centralized access to LiveWriteMD extension configuration values
  * from VS Code workspace settings. All configuration keys are defined
  * in package.json under contributes.configuration.
  *
@@ -12,7 +12,7 @@
  */
 
 import * as vscode from 'vscode';
-import type { FlowMdEditorSettings } from '../shared/types.js';
+import type { LiveWriteMdEditorSettings } from '../shared/types.js';
 import {
     ALL_SETTING_ITEMS,
     type SettingValue,
@@ -51,17 +51,17 @@ export class ConfigurationError extends Error {
 // =============================================================================
 
 /**
- * Manages access to FlowMD extension configuration values.
+ * Manages access to LiveWriteMD extension configuration values.
  *
  * This class provides static methods to retrieve configuration values
  * from VS Code's workspace configuration system. All values are defined
  * in package.json with appropriate defaults, types, and constraints.
  *
  * Configuration Keys (defined in package.json):
- * - flowMd.largeFileWarningThreshold: Large file size threshold in bytes
- * - flowMd.syncDebounceMs: Debounce delay for sync operations in milliseconds
- * - flowMd.enableDebugLog: Enable/disable debug logging
- * - flowMd.fontScale: Editor body font scale multiplier
+ * - liveWriteMd.largeFileWarningThreshold: Large file size threshold in bytes
+ * - liveWriteMd.syncDebounceMs: Debounce delay for sync operations in milliseconds
+ * - liveWriteMd.enableDebugLog: Enable/disable debug logging
+ * - liveWriteMd.fontScale: Editor body font scale multiplier
  *
  * @example
  * ```typescript
@@ -79,10 +79,10 @@ export class ConfigurationError extends Error {
  */
 export class ConfigManager {
     /**
-     * The configuration section name for FlowMD settings.
-     * All FlowMD configuration keys are prefixed with this section.
+     * The configuration section name for LiveWriteMD settings.
+     * All LiveWriteMD configuration keys are prefixed with this section.
      */
-    private static readonly CONFIG_SECTION = 'flowMd';
+    private static readonly CONFIG_SECTION = 'liveWriteMd';
 
     /**
      * Default value for large file warning threshold (1MB).
@@ -133,9 +133,9 @@ export class ConfigManager {
      * Retrieves the large file warning threshold in bytes.
      *
      * Files larger than this threshold will trigger a warning dialog
-     * when opened in the FlowMD editor. A value of 0 disables the warning.
+     * when opened in the LiveWriteMD editor. A value of 0 disables the warning.
      *
-     * Configuration Key: flowMd.largeFileWarningThreshold
+     * Configuration Key: liveWriteMd.largeFileWarningThreshold
      * Default: 1048576 (1MB)
      * Minimum: 0
      *
@@ -157,7 +157,7 @@ export class ConfigManager {
 
         if (value === undefined) {
             throw new ConfigurationError(
-                'Configuration value missing for key: flowMd.largeFileWarningThreshold. ' +
+                'Configuration value missing for key: liveWriteMd.largeFileWarningThreshold. ' +
                     'Please ensure package.json defines the default value.'
             );
         }
@@ -172,7 +172,7 @@ export class ConfigManager {
      * VS Code TextDocument and the Webview editor to prevent
      * excessive updates during rapid editing.
      *
-     * Configuration Key: flowMd.syncDebounceMs
+     * Configuration Key: liveWriteMd.syncDebounceMs
      * Default: 300ms
      * Minimum: 50ms
      * Maximum: 2000ms
@@ -193,7 +193,7 @@ export class ConfigManager {
 
         if (value === undefined) {
             throw new ConfigurationError(
-                'Configuration value missing for key: flowMd.syncDebounceMs. ' +
+                'Configuration value missing for key: liveWriteMd.syncDebounceMs. ' +
                     'Please ensure package.json defines the default value.'
             );
         }
@@ -205,10 +205,10 @@ export class ConfigManager {
      * Checks if debug logging is enabled.
      *
      * When enabled, the Logger will output debug-level messages
-     * to the FlowMD Output Channel. This is useful for development
+     * to the LiveWriteMD Output Channel. This is useful for development
      * and troubleshooting.
      *
-     * Configuration Key: flowMd.enableDebugLog
+     * Configuration Key: liveWriteMd.enableDebugLog
      * Default: false
      *
      * @returns true if debug logging is enabled, false otherwise
@@ -228,7 +228,7 @@ export class ConfigManager {
 
         if (value === undefined) {
             throw new ConfigurationError(
-                'Configuration value missing for key: flowMd.enableDebugLog. ' +
+                'Configuration value missing for key: liveWriteMd.enableDebugLog. ' +
                     'Please ensure package.json defines the default value.'
             );
         }
@@ -239,7 +239,7 @@ export class ConfigManager {
     /**
      * Retrieves the word wrap setting.
      *
-     * Configuration Key: flowMd.wordWrap
+     * Configuration Key: liveWriteMd.wordWrap
      * Default: true
      *
      * @returns true if word wrap is enabled
@@ -259,7 +259,7 @@ export class ConfigManager {
     /**
      * Retrieves the readable line length setting.
      *
-     * Configuration Key: flowMd.readableLineLength
+     * Configuration Key: liveWriteMd.readableLineLength
      * Default: 900
      *
      * @returns Max content width in px (0 = unlimited)
@@ -273,7 +273,7 @@ export class ConfigManager {
     /**
      * Retrieves the editor body font scale multiplier.
      *
-     * Configuration Key: flowMd.fontScale
+     * Configuration Key: liveWriteMd.fontScale
      * Default: 1
      *
      * @returns Font scale multiplier for the editor body
@@ -287,7 +287,7 @@ export class ConfigManager {
     /**
      * Retrieves the theme override setting.
      *
-     * Configuration Key: flowMd.theme
+     * Configuration Key: liveWriteMd.theme
      * Default: 'auto'
      *
      * @returns 'auto', 'dark', or 'light'
@@ -301,12 +301,12 @@ export class ConfigManager {
     /**
      * Returns editor settings as a single object for INIT message.
      *
-     * @returns FlowMdEditorSettings with lineNumbers, wordWrap, readableLineLength, and fontScale
+     * @returns LiveWriteMdEditorSettings with lineNumbers, wordWrap, readableLineLength, and fontScale
      */
     /**
      * Retrieves the default editor mode setting.
      *
-     * Configuration Key: flowMd.defaultMode
+     * Configuration Key: liveWriteMd.defaultMode
      * Default: 'live'
      *
      * @returns 'live', 'source', or 'viewer'
@@ -323,7 +323,7 @@ export class ConfigManager {
      * Specifies the folder name where dropped/pasted images are saved,
      * relative to the directory of the current .md file.
      *
-     * Configuration Key: flowMd.imageSaveFolder
+     * Configuration Key: liveWriteMd.imageSaveFolder
      * Default: 'assets'
      *
      * Design Reference: DES-D-002
@@ -344,7 +344,7 @@ export class ConfigManager {
             .get<string>('imageSaveFolder', this.DEFAULT_IMAGE_SAVE_FOLDER);
     }
 
-    static getEditorSettings(): FlowMdEditorSettings {
+    static getEditorSettings(): LiveWriteMdEditorSettings {
         return {
             lineNumbers: this.getLineNumbers(),
             wordWrap: this.getWordWrap(),
@@ -376,7 +376,7 @@ export class ConfigManager {
      *
      * 默认写入全局（用户）设置；显式传入 target 时可写到工作区。
      *
-     * @param key - 设置键（不含 flowMd.）
+     * @param key - 设置键（不含 liveWriteMd.）
      * @param value - 新值
      * @param target - 写入目标，默认 Global
      */

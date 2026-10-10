@@ -2,7 +2,7 @@
  * Webview HTML Generation and Content Security Policy Configuration
  *
  * This module provides functions for generating secure HTML content for the
- * FlowMD Webview editor, including Content Security Policy (CSP) configuration.
+ * LiveWriteMD Webview editor, including Content Security Policy (CSP) configuration.
  *
  * @module extension/webviewContent
  *
@@ -156,11 +156,11 @@ body {
     height: 100%;
 }
 
-/* 正文宽度上限由 flowMd.readableLineLength 决定（默认 900px，设 0 则不限制）。
+/* 正文宽度上限由 liveWriteMd.readableLineLength 决定（默认 900px，设 0 则不限制）。
    宽度封顶后，多出来的空间用 auto margin 平分到两侧，让「行号 + 正文」作为一组
    整体居中，而不是正文贴着左边、右边空一大片。 */
 #editor .cm-content {
-    max-width: var(--flowmd-max-width, 900px);
+    max-width: var(--livewritemd-max-width, 900px);
     padding: 24px 32px !important;
     /* 右侧剩余空间由正文吃掉，把正文推到中间。 */
     margin-right: auto;
@@ -215,8 +215,8 @@ body {
 }
 
 #outline-pane {
-    width: var(--flowmd-outline-width, 280px);
-    flex: 0 0 var(--flowmd-outline-width, 280px);
+    width: var(--livewritemd-outline-width, 280px);
+    flex: 0 0 var(--livewritemd-outline-width, 280px);
     flex-shrink: 0;
     min-width: 220px;
     max-width: 480px;
@@ -243,10 +243,10 @@ body {
     scrollbar-gutter: stable;
     padding: 0;
     font-size: inherit;
-    line-height: var(--flowmd-line-height, 1.7em);
+    line-height: var(--livewritemd-line-height, 1.7em);
 }
 
-.flowmd-outline-content {
+.livewritemd-outline-content {
     position: relative;
     display: flex;
     flex-direction: column;
@@ -321,7 +321,7 @@ body {
     display: flex;
     align-items: center;
     gap: 3px;
-    min-height: var(--flowmd-line-height, 1.7em);
+    min-height: var(--livewritemd-line-height, 1.7em);
     padding: 0 6px 0 2px;
     border: 1px solid transparent;
     border-bottom-color: rgba(128, 128, 128, 0.1);
@@ -331,7 +331,7 @@ body {
     cursor: pointer;
     text-align: left;
     font: inherit;
-    line-height: var(--flowmd-line-height, 1.7em);
+    line-height: var(--livewritemd-line-height, 1.7em);
     box-sizing: border-box;
     transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
@@ -546,7 +546,7 @@ body {
 /* Scroll jump buttons */
 .scroll-jump-container {
     position: fixed;
-    right: calc(var(--flowmd-outline-width, 280px) + 24px);
+    right: calc(var(--livewritemd-outline-width, 280px) + 24px);
     bottom: 24px;
     display: flex;
     flex-direction: column;
@@ -595,7 +595,7 @@ body {
 
 /**
  * Read VS Code's `editor.fontWeight` and return a CSS-safe value string for
- * injection as the `--flowmd-font-weight` custom property.
+ * injection as the `--livewritemd-font-weight` custom property.
  *
  * VS Code does not expose `editor.fontWeight` as a CSS variable in webviews
  * (unlike `--vscode-editor-font-family` and `--vscode-editor-font-size`), so
@@ -607,7 +607,7 @@ body {
  * - Anything else falls back to `'400'`
  *
  * Validation prevents unexpected values from breaking the inline `<style>`
- * block that sets `:root { --flowmd-font-weight: <value>; }`.
+ * block that sets `:root { --livewritemd-font-weight: <value>; }`.
  */
 function getEditorFontWeightCss(): string {
     const raw = vscode.workspace.getConfiguration('editor').get<string | number>('fontWeight');
@@ -627,7 +627,7 @@ function getEditorFontWeightCss(): string {
 
 /**
  * Read VS Code's `editor.lineHeight` and return a CSS-safe value string for
- * injection as the `--flowmd-line-height` custom property.
+ * injection as the `--livewritemd-line-height` custom property.
  *
  * VS Code does not expose `editor.lineHeight` as a CSS variable in webviews
  * (unlike `--vscode-editor-font-family` and `--vscode-editor-font-size`), so
@@ -665,7 +665,7 @@ function getEditorLineHeightCss(): string {
 // =============================================================================
 
 /**
- * Generate the complete HTML content for the FlowMD Webview.
+ * Generate the complete HTML content for the LiveWriteMD Webview.
  *
  * Creates a secure HTML document with:
  * - Proper DOCTYPE and charset declarations
@@ -704,7 +704,7 @@ export function getHtmlForWebview(
     // CSS variables in webviews (unlike --vscode-editor-font-family /
     // --vscode-editor-font-size), so we read the settings on the extension
     // side and inject them as CSS custom properties. CodeMirror styles read
-    // them via var(--flowmd-font-weight, 400) and var(--flowmd-line-height,
+    // them via var(--livewritemd-font-weight, 400) and var(--livewritemd-line-height,
     // 1.7em).
     const fontWeight = getEditorFontWeightCss();
     const lineHeight = getEditorLineHeightCss();
@@ -718,13 +718,13 @@ export function getHtmlForWebview(
     <meta charset="UTF-8">
     <meta http-equiv="Content-Security-Policy" content="${csp}">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FlowMD Editor</title>
+    <title>LiveWriteMD Editor</title>
     <style>:root {
-        --flowmd-font-weight: ${fontWeight};
-        --flowmd-line-height: ${lineHeight};
-        --flowmd-font-scale: 1;
-        --flowmd-editor-font-size: var(--vscode-editor-font-size, 14px);
-        --flowmd-outline-width: ${safeOutlineWidth}px;
+        --livewritemd-font-weight: ${fontWeight};
+        --livewritemd-line-height: ${lineHeight};
+        --livewritemd-font-scale: 1;
+        --livewritemd-editor-font-size: var(--vscode-editor-font-size, 14px);
+        --livewritemd-outline-width: ${safeOutlineWidth}px;
     }</style>
     <style>
 ${styles}
@@ -734,8 +734,8 @@ ${styles}
     <div id="app-shell">
         <div id="editor-pane">
             <div id="boot-status">
-                <span class="boot-status-title">FlowMD 正在启动 Webview...</span>
-                <span class="boot-status-detail">如果这里长时间不消失，说明 webview.js 可能没有加载或没有收到 INIT，请查看 FlowMD 输出。</span>
+                <span class="boot-status-title">LiveWriteMD 正在启动 Webview...</span>
+                <span class="boot-status-detail">如果这里长时间不消失，说明 webview.js 可能没有加载或没有收到 INIT，请查看 LiveWriteMD 输出。</span>
             </div>
             <div id="editor"></div>
         </div>

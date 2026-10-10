@@ -2,12 +2,50 @@
     "version": "2.0.0",
     "tasks": [
         {
+            // F5 浏览器调试（.vscode/launch.json 的 chrome 配置）的前置任务：
+            // 跑 scripts/dev-browser.mjs —— esbuild watch 打包 test/repro/browser.ts
+            // + 本地静态服务器，是个常驻后台任务。
+            // 任务输出 "dev-server ready" 时视为就绪，之后 Chrome 才会被拉起。
+            "label": "LiveWriteMD: browser dev server",
+            "type": "shell",
+            "command": "node",
+            "args": [
+                "${workspaceFolder}/scripts/dev-browser.mjs"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "isBackground": true,
+            "problemMatcher": {
+                // 不扫描构建报错（esbuild 的错误直接在终端看），
+                // 正则写成永不匹配；这个 matcher 只为提供 background 就绪信号
+                "pattern": {
+                    "regexp": "^(?!x)x$",
+                    "file": 1,
+                    "location": 2,
+                    "message": 3
+                },
+                "background": {
+                    "activeOnStart": true,
+                    // 必须同时给开始/结束模式，缺 beginsPattern VS Code
+                    // 会直接报「问题匹配程序必须定义监视的开始模式和结束模式」
+                    "beginsPattern": "dev-server starting",
+                    "endsPattern": "dev-server ready"
+                }
+            },
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated",
+                "clear": true
+            }
+        },
+        {
             // F5（.vscode/launch.json 的 preLaunchTask）跑的就是这个：
             // 走 scripts/dev.ps1 的 build 模式 —— 只构建 dist/，
             // 不起扩展开发宿主窗口、也不打 vsix，正好当启动前的准备动作。
             // 这里刻意不直接写 npm/esbuild 命令，把构建逻辑收在脚本一处，
             // 避免以后脚本改了、任务里还留着一份对不上的旧命令。
-            "label": "FlowMD: build (dev.ps1)",
+            "label": "LiveWriteMD: build (dev.ps1)",
             "type": "shell",
             "command": "powershell",
             "args": [

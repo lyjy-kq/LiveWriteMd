@@ -95,7 +95,7 @@ function toProperty(item) {
     return property;
 }
 
-// 生成全部 properties（key 带 flowMd 前缀由 configuration section 提供，这里用裸 key）
+// 生成全部 properties（key 带 liveWriteMd 前缀由 configuration section 提供，这里用裸 key）
 const generated = {};
 for (const item of schema.ALL_SETTING_ITEMS) {
     generated[item.key] = toProperty(item);
@@ -116,4 +116,4 @@ configuration.properties = { ...existingProps, ...generated };
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
 
 const count = Object.keys(generated).length;
-console.log(`FlowMD configuration 已同步：${count} 项设置写入 package.json`);
+console.log(`LiveWriteMD configuration 已同步：${count} 项设置写入 package.json`);

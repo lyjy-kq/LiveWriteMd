@@ -18,8 +18,8 @@ import {
     blockquoteLevelDecos,
     boldMarkDeco,
     codeMarkDeco,
-    flowMdDarkHighlight,
-    flowMdLightHighlight,
+    liveWriteMdDarkHighlight,
+    liveWriteMdLightHighlight,
     footnoteDefLineDeco,
     headingLineDecos,
     hideDeco,
@@ -32,13 +32,14 @@ import {
     extractFencedCodeContent,
     extractFencedCodeLanguage,
     extractSafeFontStyles,
-    createCodeBlockIndentStyle,
     createListIndentStyle,
+    type IndentGuide,
     detectIndentUnit,
-    getCodeBlockIndentInfo,
     getListIndent,
-    measureBulletDotOffsetPx,
+    LINE_PADDING_PX,
+    measureBaselineInset,
     measureIndentUnitPx,
+    measureLineHeightPx,
     measureText,
     parseFrontmatter,
     splitMarkdownImageDestination,
@@ -86,7 +87,7 @@ import {
     exitPinnedForceIfOutside,
     exitSourceModeIfOutside,
     foldToggleEffect,
-    foldedListItems,
+    foldedLines,
     isForcedSourceRange,
     isInSourceMode,
     lineForceEffect,
@@ -104,7 +105,6 @@ import {
     CheckboxWidget,
     CodeBlockCopyWidget,
     DetailsWidget,
-    FoldArrowWidget,
     FootnoteDefWidget,
     FootnoteRefWidget,
     FrontmatterWidget,
@@ -866,9 +866,43 @@ function treeLikeIterateTextBlocks(
  * @param activeInlineNode - 光标所在的行内元素
  * @param taskMarkerPositions - 列表任务标记的位置集合（遍历时顺带填）
  */
-/** 某个列表项是不是折叠着（key 是它所在行的行首位置）。 */
+/** 某个列表项/标题是不是折叠着（key 是它所在行的行首位置）。 */
 function isFoldedOf(lineFrom: number): boolean {
-    return foldedListItems.has(lineFrom);
+    return foldedLines.has(lineFrom);
+}
+
+/**
+ * 标题章节折叠：返回该标题**章节内容结束**的文档位置。
+ *
+ * 章节从标题之后开始，到下一个「同级或更高级标题」（level ≤ 本标题）
+ * 之前结束；找不到则到父节点（Document / Blockquote / ListItem…）末尾。
+ *
+ * @param heading - ATX 标题节点
+ * @returns 章节结束位置（= 折叠块右端）
+ */
+function headingSectionEnd(heading: SyntaxNode): number {
+    const headingLevel = Number(
+        heading.name.slice('ATXHeading'.length)
+    );
+    const parent = heading.parent;
+    if (!parent) return heading.to;
+    let cur = heading.nextSibling;
+    while (cur) {
+        const nm = cur.name ?? '';
+        let boundaryLevel = 0;
+        if (nm.startsWith('ATXHeading')) {
+            boundaryLevel = Number(nm.slice('ATXHeading'.length));
+        } else if (nm === 'SetextHeading1') {
+            boundaryLevel = 1;
+        } else if (nm === 'SetextHeading2') {
+            boundaryLevel = 2;
+        }
+        if (boundaryLevel !== 0 && boundaryLevel <= headingLevel) {
+            return cur.from;
+        }
+        cur = cur.nextSibling;
+    }
+    return parent.to;
 }
 
 /**
@@ -930,15 +964,27 @@ function applyTreeDecorations(
                 return false;
             }
 
-            // block 那一遍只处理「会产出 block 装饰」的两种情况，其余一律下探不处理 ——
-            // 否则两遍会把同一批装饰各产一份（等于白干一遍，还多出一堆重复装饰）。
+            // block 那一遍只处理「会产出 block 装饰」的情况，其余一律下探不处理。
             if (mode === 'block') {
                 const isMermaidFence =
                     name === 'FencedCode' &&
                     extractFencedCodeLanguage(nodeRef.node, state) === 'mermaid';
                 const isFoldedItem =
-                    name === 'ListItem' && foldedListItems.has(state.doc.lineAt(from).from);
-                if (!isMermaidFence && !isFoldedItem) return;
+                    name === 'ListItem' &&
+                    foldedLines.has(state.doc.lineAt(from).from);
+                // 折叠的标题章节：需要在 ATXHeading 节点产出块隐藏
+                const isFoldedHeading =
+                    name.startsWith('ATXHeading') &&
+                    foldedLines.has(state.doc.lineAt(from).from);
+                // 缩进式代码块：要在 CodeBlock 节点铺 rainbow indent
+                const isIndentedCodeBlock = name === 'CodeBlock';
+                if (
+                    !isMermaidFence &&
+                    !isFoldedItem &&
+                    !isFoldedHeading &&
+                    !isIndentedCodeBlock
+                )
+                    return;
             }
 
             // 与聚焦块重叠的节点：默认按「显示源码」处理，直接跳过。
@@ -975,7 +1021,24 @@ function applyTreeDecorations(
                 // 表格 / 图片 / Mermaid：单击保持渲染态，只有双击进源码模式才显示原文
                 const keepWidgetRendered = isWidgetBackedNode(nodeRef.node, state);
                 if (!canRenderInFocus && !keepWidgetRendered) {
-                    return;
+                    // 例外：折叠态的 ListItem / ATXHeading 需要在
+                    // block 遍产出章节隐藏，不能被焦点跳过；CodeBlock
+                    // 要铺 rainbow indent，同样不能因聚焦在块上而被跳过。
+                    const isFoldedItemNode =
+                        name === 'ListItem' &&
+                        isFoldedOf(state.doc.lineAt(from).from);
+                    const isFoldedHeadingNode =
+                        name.startsWith('ATXHeading') &&
+                        isFoldedOf(state.doc.lineAt(from).from);
+                    // ListMark 要被 BulletWidget 替换成圆点（即使 caret 在本行），
+                    // 否则聚焦一级项时圆点退回原始 "-"。
+                    const isListMarkNode = name === 'ListMark';
+                    if (
+                        !isFoldedItemNode &&
+                        !isFoldedHeadingNode &&
+                        !isListMarkNode
+                    )
+                        return;
                 }
             }
 
@@ -1004,7 +1067,7 @@ function applyTreeDecorations(
                             break;
                         }
                     }
-                    // Hide # marks and trailing space
+                    // Hide # marks and trailing space（折叠交互在 lineNumber 位置）
                     const after = state.doc.sliceString(to, to + 1);
                     const hideEnd = after === ' ' ? to + 1 : to;
                     decos.push(hideDeco.range(from, hideEnd));
@@ -1034,13 +1097,28 @@ function applyTreeDecorations(
 
                     // Unordered list markers → bullet widget
                     if (text === '-' || text === '*' || text === '+') {
+                        // TaskMarker 包在 Task 节点里（非 ListItem 直接子节点）
+                        const itemNode = nodeRef.node.parent;
+                        const isTask = !!itemNode?.getChild('Task');
+                        if (isTask) {
+                            // 任务项：圆点冗余，把 "- " 整段隐藏，复选框顶到该列
+                            decos.push(hideDeco.range(from, hideEnd));
+                        } else {
+                            decos.push(
+                                Decoration.replace({
+                                    widget: new BulletWidget(text),
+                                }).range(from, hideEnd)
+                            );
+                        }
+                    }
+                    // 有序 marker：序号可见，但统一染成深灰（与 # / - 一致）
+                    else {
                         decos.push(
-                            Decoration.replace({
-                                widget: new BulletWidget(text),
-                            }).range(from, hideEnd)
+                            Decoration.mark({
+                                class: 'cm-md-ordmark',
+                            }).range(from, to)
                         );
                     }
-                    // Ordered list markers stay visible (numbers are meaningful)
                     break;
                 }
 
@@ -1067,8 +1145,20 @@ function applyTreeDecorations(
                 case 'ATXHeading5':
                 case 'ATXHeading6': {
                     const level = parseInt(name.replace('ATXHeading', ''));
-                    const line = state.doc.lineAt(from);
-                    decos.push(headingLineDecos[level].range(line.from));
+                    const headingLine = state.doc.lineAt(from);
+                    decos.push(headingLineDecos[level].range(headingLine.from));
+                    // 折叠态：章节内容整块藏掉（block 遍到达这里时产出）
+                    if (mode === 'block') {
+                        const sectionEnd = headingSectionEnd(nodeRef.node);
+                        if (sectionEnd > headingLine.to) {
+                            decos.push(
+                                Decoration.replace({ block: true }).range(
+                                    headingLine.to,
+                                    sectionEnd
+                                )
+                            );
+                        }
+                    }
                     break;
                 }
 
@@ -1122,17 +1212,10 @@ function applyTreeDecorations(
 
                     // Check if this list item has child list (sub-items)
                     const syntaxNode = nodeRef.node;
-                    const hasChildList =
-                        syntaxNode.getChild('BulletList') || syntaxNode.getChild('OrderedList');
-                    if (hasChildList && mode === 'inline') {
-                        // 折角箭头属于渲染态，由 inline 那一遍画
-                        decos.push(
-                            Decoration.widget({
-                                widget: new FoldArrowWidget(itemLine.from, isFoldedOf(itemLine.from)),
-                                side: -1,
-                            }).range(itemLine.from)
-                        );
-                    }
+                    const hasChildList = !!(
+                        syntaxNode.getChild('BulletList') ||
+                        syntaxNode.getChild('OrderedList')
+                    );
                     if (hasChildList) {
                         const isFolded = isFoldedOf(itemLine.from);
                         if (isFolded) {
@@ -1143,42 +1226,17 @@ function applyTreeDecorations(
                                     )
                                 );
                             }
-                            // Process ListMark → BulletWidget
+                            // 折叠态：行首 ListMark（"- " / "1. "）整段隐藏。
+                            // 折叠箭头只在行号位（gutter）显示，正文不再画 chevron。
                             const listMark = syntaxNode.getChild('ListMark');
                             if (listMark) {
-                                const markText = state.doc.sliceString(listMark.from, listMark.to);
                                 const afterChar = state.doc.sliceString(
                                     listMark.to,
                                     listMark.to + 1
                                 );
-                                const hideEnd = afterChar === ' ' ? listMark.to + 1 : listMark.to;
-                                if (markText === '-' || markText === '*' || markText === '+') {
-                                    decos.push(
-                                        Decoration.replace({
-                                            widget: new BulletWidget(markText),
-                                        }).range(listMark.from, hideEnd)
-                                    );
-                                }
-                            }
-                            // Process TaskMarker → CheckboxWidget
-                            const taskMarker = syntaxNode.getChild('TaskMarker');
-                            if (taskMarker) {
-                                const markerText = state.doc.sliceString(
-                                    taskMarker.from,
-                                    taskMarker.to
-                                );
-                                const checked = markerText === '[x]' || markerText === '[X]';
-                                const afterChar = state.doc.sliceString(
-                                    taskMarker.to,
-                                    taskMarker.to + 1
-                                );
-                                const replaceEnd =
-                                    afterChar === ' ' ? taskMarker.to + 1 : taskMarker.to;
-                                decos.push(
-                                    Decoration.replace({
-                                        widget: new CheckboxWidget(checked, taskMarker.from),
-                                    }).range(taskMarker.from, replaceEnd)
-                                );
+                                const hideEnd =
+                                    afterChar === ' ' ? listMark.to + 1 : listMark.to;
+                                decos.push(hideDeco.range(listMark.from, hideEnd));
                             }
                             // Hide child lines：块级替换，只由 block 那一遍产出
                             if (mode === 'block') {
@@ -1269,27 +1327,6 @@ function applyTreeDecorations(
                             }
                             if (ln === endLine.number) {
                                 classes.push('cm-md-codeblock-last');
-                            }
-                            if (ln > startLine.number && ln < endLine.number) {
-                                // 行首空白的视觉列数（Tab 按 state.tabSize 的
-                                // tab-stop 算），样式函数据此把色带精确停在文字前。
-                                const indentColumns = getCodeBlockIndentInfo(
-                                    line.text,
-                                    state.tabSize
-                                ).columns;
-                                // 一个缩进单位占几列：默认 indentUnit = 2 空格，
-                                // 色带按它轮换（每按一次 Tab 换一种颜色）。
-                                // indentUnit 允许配成 Tab，那时一个单位宽 = tabSize。
-                                const unitText = state.facet(indentUnit);
-                                const indentUnitColumns =
-                                    unitText.charCodeAt(0) === 9
-                                        ? state.tabSize * unitText.length
-                                        : unitText.length;
-                                classes.push('cm-md-codeblock-indent');
-                                attributes.style = createCodeBlockIndentStyle(
-                                    indentColumns,
-                                    indentUnitColumns
-                                );
                             }
                             decos.push(
                                 Decoration.line({
@@ -1685,17 +1722,23 @@ function buildWindowDecorations(
 }
 
 /**
- * 收集列表缩进的装饰：层级引导线 + 行首空白对齐。
+ * 收集列表缩进的装饰：悬挂缩进 + 层级引导线。
  *
  * 两件事一起做：
  *
- * 1. **行首空白对齐**——把行首空白包成一个定宽的占位块，宽度 = 层级 × 缩进单位。
- *    于是「两个空格」「四个空格」「一个 Tab」写出来的缩进都会落到同一档上，
- *    不会再出现「空格缩进和 Tab 缩进看起来不一样」。
- * 2. **层级引导线**——行级样式里画竖线（两层背景，见 styles.ts 的 `.cm-md-indent`）：
- *    - 祖先那几条（第 0 … 自己层级-1 条）铺满整行，把上一行的线接过来；
- *    - **自己那条从圆点中心往下垂**（只画下半行），一直垂到最后一级 ——
- *      所以这里要先往后看「自己还有没有更深的子级」，没有就不画那半截。
+ * 1. **悬挂缩进**——行装饰给 `padding-left: 4px + 层级×缩进单位`、
+ *    `text-indent: -层级×缩进单位`。首行被 text-indent 拉回原位、外观不变；
+ *    一旦内容跨行，续行全部从 marker（`-`）所在列开始，与该层级 marker
+ *    本身那一列对齐（需求一），不会退到行头，也不会压到更左边的竖线。
+ * 2. **层级引导线**——行内背景画竖线（见 styles.ts 的 `.cm-md-indent`）：
+ *    - 祖先那条后面还有更深的行（`full`）：铺满整行，把上一行的线接过来；
+ *    - 祖先那条在本行已是最后后代（`tail`）：只画到圆点高度，末端渐隐收尾；
+ *    - 自己那条（`own`）：从圆点中心往下垂，只在还有子级时出现；
+ *      光杆条目没有自己的线。
+ *
+ * 各级线的横向位置按**该 marker 在它自己那一行的列**算（祖先 marker 在
+ * 更早的行上！），三级及更深嵌套也能精确对齐；背景统一用 border-box 定位，
+ * 不受本行悬挂 padding 影响。
  *
  * 之所以不在主遍历里跟 ListItem 一起处理：主遍历会把**聚焦块整块跳过**，
  * 那样点进某一行时缩进会突然变样。这里按行扫全文，两种状态下结果完全一致。
@@ -1704,17 +1747,24 @@ function buildWindowDecorations(
  * @param decos - 待写入的装饰数组
  * @returns void，结果直接 push 进 decos
  */
+/**
+ * 任务项 marker 区宽度（px）：复选框 16 + 右侧 gap 4。
+ * 必须与 styles.ts 里 `.cm-md-checkbox` 的 width / marginRight 同源，
+ * 改一处要同步另一处。
+ */
+const TASK_MARK_PX = 20;
+/** 复选框中心到其左缘的距离（px）：框宽 16 的一半，与 styles 同源。 */
+const TASK_CHECK_CENTER = 8;
+
 function collectListIndentDecorations(
     state: EditorState,
     decos: Array<ReturnType<Decoration['range']>>,
     range: ILineRange
 ): void {
     const win = windowLines(state, range);
-    const lineCount = win.last;
 
-    // 先探缩进单位：2 空格文档出 2、4 空格文档出 4、Tab 文档出 4。
-    // 取样用「窗口里的行 + 开头 200 行」——整篇扫一遍在长文档上白花时间，
-    // 而缩进单位这种东西同一份文档里基本是统一的。
+    // 缩进单位：取样「窗口行 + 前 200 行」，整篇扫在长文档上浪费，
+    // 而缩进单位在同一份文档里基本统一
     const sampleTexts: string[] = [];
     for (let ln = win.first; ln <= win.last; ln++) sampleTexts.push(state.doc.line(ln).text);
     for (let ln = 1; ln <= Math.min(200, state.doc.lines); ln++) {
@@ -1722,56 +1772,29 @@ function collectListIndentDecorations(
     }
     const unit = detectIndentUnit(sampleTexts);
     const unitPx = measureIndentUnitPx(unit);
+    // marker 自身一格的字宽：bullet 中心落半格、ordered 中心落一格
+    const charW = measureText('-', '400');
+    // 首个视觉行的半高：tail / own 线都以圆点中心(半行)为纵向分界
+    const halfPx = measureLineHeightPx() / 2;
 
-    // 每行的缩进层级与行首空白长度；层级 -1 表示这一行根本不是列表行。
-    // 数组下标按「行号 - 窗口起始行号」算，所以下面一律用 ln - win.first 取。
+    // 每行列表信息（非列表行 level=-1）
     const levels: number[] = [];
     const indentChars: number[] = [];
-    const lineTexts: string[] = [];
     for (let ln = win.first; ln <= win.last; ln++) {
         const text = state.doc.line(ln).text;
-        lineTexts.push(text);
         const info = getListIndent(text, unit);
         levels.push(info.isList ? info.level : -1);
         indentChars.push(info.chars);
     }
 
-    // 圆点圆心离行左边缘多远：竖线要长在圆点正下方（需求 3），横向位置由它定
-    const dotPx = measureBulletDotOffsetPx();
+    const tree = syntaxTree(state);
 
     for (let ln = win.first; ln <= win.last; ln++) {
         const line = state.doc.line(ln);
         const ownLevel = levels[ln - win.first];
         if (ownLevel < 0) continue;
 
-        // 往后看「自己这一段子级最深到第几层」。子级段落 = 后面那些缩进更深的列表行，
-        // 中途的空行不算断（松散列表也要连起来），碰到同级或更外层的列表行就结束。
-        let deepest = ownLevel;
-        for (let n = ln + 1; n <= lineCount; n++) {
-            const next = levels[n - win.first];
-            if (next < 0) {
-                if (lineTexts[n - win.first].trim() === '') continue; // 空行：继续往后看
-                break; // 普通正文行：这一段子级到此为止
-            }
-            if (next <= ownLevel) break;
-            if (next > deepest) deepest = next;
-        }
-        // 自己那条竖线只在「下面还有更深的子级」时才画：它要从圆点中心往下垂，
-        // 垂下去却什么都没连，那就是光杆条目
-        const ownLine = deepest > ownLevel;
-        // 光杆的根条目（没缩进、也没子级）什么都不用画
-        if (ownLevel <= 0 && !ownLine) continue;
-
-        // 层级引导线（行级）：祖先线铺满整行，自己的那条画下半行
-        decos.push(
-            Decoration.line({
-                class: 'cm-md-indent',
-                attributes: { style: createListIndentStyle(ownLevel, unitPx, ownLine, dotPx) },
-            }).range(line.from)
-        );
-
-        // 行首空白压成定宽占位块。用 mark 而不是 replace：
-        // 光标仍然能停在缩进里（方向键可以走过去改缩进），不会变成一块跳不过去的原子。
+        // 行首空白 → 定宽占位盒（用 mark：光标仍能走进缩进、改缩进）
         const chars = indentChars[ln - win.first];
         if (chars > 0 && unitPx > 0) {
             decos.push(
@@ -1781,8 +1804,105 @@ function collectListIndentDecorations(
                 }).range(line.from, line.from + chars)
             );
         }
+
+        // 语法树：本行所属 ListItem 由外→内的各级 ListMark。
+        // 祖先 ListMark 位于**更早的行**，其横向列必须按它自己那行算。
+        let resolveNode = tree.resolveInner(line.to, -1);
+        const treeMarks: SyntaxNode[] = [];
+        for (let n = resolveNode; n; n = n.parent) {
+            if (n.name === 'ListItem') {
+                const lm = n.getChild('ListMark');
+                if (lm) treeMarks.push(lm);
+            }
+            if (n.name === 'Document') break;
+        }
+        // 外→内。为空（异常树）也照样加悬挂缩进，只是没有引导线
+        treeMarks.reverse();
+
+        // 行首 marker 区宽度（缩进之后、正文之前）：
+        // 续行对齐到「marker 区之后的内容列」——若对齐到 `-` 左缘，
+        // 圆点中心的竖线会穿过续行文字（实测的重叠缺陷）。
+        // - 任务项：复选框 16 + 右 gap 4（与 styles 同源）；
+        // - 圆点项：widget 盒宽 = marker+空格；
+        // - 有序项：可见 marker+空格 的实测宽。
+        const ownMark = treeMarks[treeMarks.length - 1];
+        let markSpace = 0;
+        if (ownMark) {
+            const listItemNode = ownMark.parent;
+            // TaskMarker 包在 Task 节点里，检测 Task 包装层
+            const isTask = !!listItemNode?.getChild('Task');
+            const markText = state.doc.sliceString(ownMark.from, ownMark.to);
+            const hasTrailingSpace =
+                state.doc.sliceString(ownMark.to, ownMark.to + 1) === ' ';
+            if (isTask) {
+                markSpace = TASK_MARK_PX;
+            } else {
+                markSpace =
+                    measureText(markText, '400') +
+                    (hasTrailingSpace ? measureText(' ', '400') : 0);
+            }
+        }
+        // hang = 缩进 + marker 区；padding 边沿即内容列
+        const hangPx = (unitPx > 0 ? ownLevel * unitPx : 0) + markSpace;
+
+        const guides: IndentGuide[] = [];
+        for (let i = 0; i < treeMarks.length; i++) {
+            const lm = treeMarks[i];
+            const isOwn = i === treeMarks.length - 1;
+            // ListMark 的父级 ListItem、再上一层即「本级 List 节点」
+            const lmItem = lm.parent;
+            const lmList = lmItem?.parent;
+            // marker 在**它自己那一行**的缩进档：祖先 marker 不在本行，
+            // 用 lm.from - line.from 会得到负数（三级嵌套会错位）
+            const markLineFrom = state.doc.lineAt(lm.from).from;
+            const indentL = Math.max(
+                0,
+                Math.round((lm.from - markLineFrom) / unit)
+            );
+            const isBullet = /[-+*]/.test(state.sliceDoc(lm.from, lm.to));
+            // 任务项的可见标记是复选框（'-' 已隐藏），线心取复选框中心；
+            // 其余：4px 行内边距 + 缩进档宽 + marker 中心偏移
+            const isTaskItem = !!lmItem?.getChild('Task');
+            const x = isTaskItem
+                ? LINE_PADDING_PX + indentL * unitPx + TASK_CHECK_CENTER
+                : LINE_PADDING_PX +
+                  indentL * unitPx +
+                  (isBullet ? charW / 2 : charW);
+            if (isOwn) {
+                // own 线只在**本项含子列表**时从圆点垂下；
+                // 兄弟项存在与否与此无关（旧文本扫描在此误判）
+                const ownHasChildren = !!(
+                    lmItem?.getChild('BulletList') ||
+                    lmItem?.getChild('OrderedList')
+                );
+                if (!ownHasChildren) continue;
+                guides.push({ x, kind: 'own' });
+            } else {
+                // 祖先线：本级 List 节点延伸过本行 → 满高连接；
+                // 恰在本行收尾 → tail（顶部起、末端渐隐）。
+                // 这样即使中间隔着更深的行，线也会连向后面的同级兄弟项。
+                const listContinues = !!lmList && lmList.to > line.to;
+                guides.push({ x, kind: listContinues ? 'full' : 'tail' });
+            }
+        }
+
+        const lineStyle = createListIndentStyle(
+            guides,
+            hangPx,
+            halfPx
+        );
+        // 根级光杆条目不挂任何行样式（无引导线、无悬挂缩进），跳过
+        if (lineStyle) {
+            decos.push(
+                Decoration.line({
+                    class: 'cm-md-indent',
+                    attributes: { style: lineStyle },
+                }).range(line.from)
+            );
+        }
     }
 }
+
 
 // =============================================================================
 // Exported Plugin & Extension Factory
@@ -1915,20 +2035,28 @@ export const tableWidthBootstrap = ViewPlugin.fromClass(
          * @param view - 编辑器视图
          */
         constructor(view: EditorView) {
-            // 只排一次任务，判据留到**那时候**再算 —— 三个坑都在这儿：
-            // 1. 这个构造函数跑在「算窗口装饰」之前，此刻列宽缓存还是空的，
-            //    在这里判会永远判成「不用补」；
-            // 2. 判据是「刚算的那批表格是不是在量不到宽度的时候算的」，不是「现在量得到吗」
-            //    —— 视图建好之后宽度早就有了；
-            // 3. 视图要是已经销毁（或压根没挂上去），dispatch 会炸，也不该补。
-            setTimeout(() => {
-                if (!view.dom.isConnected) return;
+            // 判据留到回调时再算（构造函数跑在首屏装饰之前）：
+            // 1. 构造时列宽缓存还是空的，判了永远是「不用补」；
+            // 2. 判据是「首屏那批装饰是否量错」，不是「现在量得到吗」；
+            // 3. 视图没挂上去时 dispatch 会炸。
+            /** 纠正是否已经做过（rAF 与 setTimeout 两个回调只做一次） */
+            let done = false;
+            const correct = (): void => {
+                if (done || !view.dom.isConnected) return;
                 // 两类首屏补算共用这一个 effect：
                 // ① 表格列宽（见 hasUnmeasuredTables）；
-                // ② bullet 首次用 body 错字体量的窄宽度（见 hasMismeasuredBullets）
+                // ② bullet / 缩进首次用 body 错字体量的宽度（见 hasMismeasuredBullets）
                 if (!hasUnmeasuredTables() && !hasMismeasuredBullets(view)) return;
+                done = true;
                 view.dispatch({ effects: tableRemeasureEffect.of(null) });
-            }, 0);
+            };
+            // **绘制前**纠正：rAF 回调在浏览器本次绘制**之前**同步运行，
+            // dispatch 同步更新 DOM —— 首帧就是正确版本，不会先看到一帧
+            // 用 body 字体（UI 字体）量出来的错位圆点再跳一下。
+            requestAnimationFrame(correct);
+            // 兜底：标签页在后台时 rAF 被节流、无头 --dump-dom 也不保证出帧
+            // （历史教训，见 createOpenWrapContext 的注释），setTimeout 兜一道
+            setTimeout(correct, 0);
         }
     }
 );
@@ -2130,8 +2258,8 @@ export function createLivePreviewExtension(): Extension[] {
         autoPairBrackets(),
         // 双击表格 → 整张表切源码模式（改结构时看源码更直接）
         tableSourceModeHandler(),
-        syntaxHighlighting(flowMdDarkHighlight),
-        syntaxHighlighting(flowMdLightHighlight),
+        syntaxHighlighting(liveWriteMdDarkHighlight),
+        syntaxHighlighting(liveWriteMdLightHighlight),
         // Click handler for links
         EditorView.domEventHandlers({
             mousedown(event: MouseEvent, view: EditorView) {

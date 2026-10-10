@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    FlowMD 扩展的「构建 / 打包 / 安装 / 调试」一条龙脚本。
+    LiveWriteMD 扩展的「构建 / 打包 / 安装 / 调试」一条龙脚本。
 
 .DESCRIPTION
     把平时手动敲的几条命令收在一个脚本里，五种模式：
@@ -198,13 +198,13 @@ function Find-CodeCli {
 .SYNOPSIS
     读取 package.json 里的版本号，拼出 vsix 文件名。
 .DESCRIPTION
-    必须和 scripts/package-vsix.mjs 的命名规则保持一致（lyjy-obsidianlike-md<版本>.vsix），
+    必须和 scripts/package-vsix.mjs 的命名规则保持一致（livewrite-md<版本>.vsix），
     否则脚本会找不到刚打出来的包。
 #>
 function Get-VsixPath {
     $pkgPath = Join-Path $repoRoot 'package.json'
     $pkg = Get-Content -LiteralPath $pkgPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    return (Join-Path $repoRoot ("lyjy-obsidianlike-md{0}.vsix" -f $pkg.version))
+    return (Join-Path $repoRoot ("livewrite-md{0}.vsix" -f $pkg.version))
 }
 
 # =============================================================================
@@ -226,7 +226,7 @@ if ($UsePnpm -and -not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
 $pm = if ($UsePnpm) { 'pnpm' } else { 'npm' }
 
 Write-Host ""
-Write-Host "FlowMD 开发脚本" -ForegroundColor Green
+Write-Host "LiveWriteMD 开发脚本" -ForegroundColor Green
 Write-Host "  仓库：$repoRoot"
 Write-Host "  模式：$Mode"
 Write-Host "  包管理器：$pm"
@@ -314,8 +314,8 @@ switch ($Mode) {
 
         # 用和 .vscode/launch.json 完全相同的独立 user-data / extensions 目录，
         # 这样命令行起的调试宿主和按 F5 起的宿主是同一套环境，互不污染正式环境。
-        $userDataDir = Join-Path $repoRoot '.vscode\.flowmd-dev-userdata'
-        $extensionsDir = Join-Path $repoRoot '.vscode\.flowmd-dev-extensions'
+        $userDataDir = Join-Path $repoRoot '.vscode\.livewritemd-dev-userdata'
+        $extensionsDir = Join-Path $repoRoot '.vscode\.livewritemd-dev-extensions'
 
         $devArgs = @(
             "--extensionDevelopmentPath=$repoRoot",

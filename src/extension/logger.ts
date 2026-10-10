@@ -1,13 +1,13 @@
 /**
  * Logger - VS Code Extension Logging Utility
  *
- * Provides structured logging to the VS Code Output Channel "FlowMD"
+ * Provides structured logging to the VS Code Output Channel "LiveWriteMD"
  * with configurable debug output control via ConfigManager.
  *
  * Design Reference: DES-A-008, DES-F-002
  * Requirement: REQ-NF-006
  *
- * Log Format: [FlowMD] [{LEVEL}] {YYYY-MM-DD HH:mm:ss.SSS} {message}
+ * Log Format: [LiveWriteMD] [{LEVEL}] {YYYY-MM-DD HH:mm:ss.SSS} {message}
  *
  * @module extension/logger
  */
@@ -46,10 +46,10 @@ export enum LogLevel {
 // =============================================================================
 
 /**
- * Singleton Logger class for FlowMD extension.
+ * Singleton Logger class for LiveWriteMD extension.
  *
  * Provides structured logging to VS Code's Output Channel with:
- * - Consistent log formatting: [FlowMD] [{LEVEL}] {timestamp} {message}
+ * - Consistent log formatting: [LiveWriteMD] [{LEVEL}] {timestamp} {message}
  * - Debug log control via ConfigManager.isDebugLogEnabled()
  * - Error object handling with stack trace output
  * - Automatic output channel management
@@ -76,7 +76,7 @@ export class Logger {
     /**
      * The name of the Output Channel displayed in VS Code
      */
-    private static readonly CHANNEL_NAME = 'FlowMD';
+    private static readonly CHANNEL_NAME = 'LiveWriteMD';
 
     /**
      * Singleton instance of the VS Code Output Channel
@@ -113,10 +113,10 @@ export class Logger {
      */
     static enableFileLogging(): string {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        this.logFilePath = path.join(os.tmpdir(), `flowmd-debug-${timestamp}.log`);
+        this.logFilePath = path.join(os.tmpdir(), `livewritemd-debug-${timestamp}.log`);
         fs.writeFileSync(
             this.logFilePath,
-            `FlowMD Debug Log - Started at ${new Date().toISOString()}\n`,
+            `LiveWriteMD Debug Log - Started at ${new Date().toISOString()}\n`,
             'utf-8'
         );
         return this.logFilePath;
@@ -143,7 +143,7 @@ export class Logger {
     }
 
     /**
-     * Shows the FlowMD Output Channel in VS Code.
+     * Shows the LiveWriteMD Output Channel in VS Code.
      *
      * Useful for directing user attention to log output when
      * displaying important messages or errors.
@@ -220,7 +220,7 @@ export class Logger {
      * Logs a debug message.
      *
      * Debug messages are only output when debug logging is enabled
-     * via the `flowMd.enableDebugLog` configuration setting.
+     * via the `liveWriteMd.enableDebugLog` configuration setting.
      * Use for detailed diagnostic information during development.
      *
      * @param message - The debug message
@@ -260,7 +260,7 @@ export class Logger {
     /**
      * Formats and outputs a log message.
      *
-     * Log format: [FlowMD] [{LEVEL}] {YYYY-MM-DD HH:mm:ss.SSS} {message}
+     * Log format: [LiveWriteMD] [{LEVEL}] {YYYY-MM-DD HH:mm:ss.SSS} {message}
      *
      * @param level - The log level
      * @param message - The message to log
@@ -284,7 +284,7 @@ export class Logger {
     /**
      * Formats a log message according to the standard format.
      *
-     * Format: [FlowMD] [{LEVEL}] {YYYY-MM-DD HH:mm:ss.SSS} {message}
+     * Format: [LiveWriteMD] [{LEVEL}] {YYYY-MM-DD HH:mm:ss.SSS} {message}
      *
      * @param level - The log level
      * @param message - The message to format
@@ -293,7 +293,7 @@ export class Logger {
      */
     private static formatMessage(level: LogLevel, message: string): string {
         const timestamp = this.formatTimestamp(new Date());
-        return `[FlowMD] [${level}] ${timestamp} ${message}`;
+        return `[LiveWriteMD] [${level}] ${timestamp} ${message}`;
     }
 
     /**

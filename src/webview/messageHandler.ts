@@ -1,5 +1,5 @@
 /**
- * FlowMD Webview Message Handler
+ * LiveWriteMD Webview Message Handler
  *
  * This module implements the message sending and receiving functionality
  * for Webview-Extension communication via postMessage.
@@ -27,7 +27,7 @@
 
 import type {
     ThemeType,
-    FlowMdEditorSettings,
+    LiveWriteMdEditorSettings,
     ContentChangeMessage,
     FontScaleChangeMessage,
     ReadyMessage,
@@ -100,7 +100,7 @@ export interface IWebviewMessageCallbacks {
         theme: ThemeType,
         documentUri: string,
         searchHistory: SearchHistoryState,
-        settings?: FlowMdEditorSettings,
+        settings?: LiveWriteMdEditorSettings,
         mode?: 'live' | 'viewer' | 'source',
         outlineWidth?: number,
         allSettings?: Record<string, SettingValue>
@@ -108,7 +108,7 @@ export interface IWebviewMessageCallbacks {
 
     /**
      * Called when SETTINGS_CHANGE message is received.
-     * Any flowMd configuration change re-sends the full settings.
+     * Any liveWriteMd configuration change re-sends the full settings.
      */
     onSettingsChange: (message: SettingsChangeMessage) => void;
 
@@ -412,7 +412,7 @@ export class WebviewMessageHandler {
         theme: ThemeType;
         documentUri: string;
         searchHistory: SearchHistoryState;
-        settings?: FlowMdEditorSettings;
+        settings?: LiveWriteMdEditorSettings;
         mode?: 'live' | 'viewer' | 'source';
         outlineWidth?: number;
         outlinePanelWidth?: number;

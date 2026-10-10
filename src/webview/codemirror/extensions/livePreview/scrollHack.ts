@@ -68,7 +68,7 @@ class CustomScrollbarPlugin implements PluginValue {
             backgroundColor: 'transparent',
             pointerEvents: 'auto',
         } as Partial<CSSStyleDeclaration>);
-        this.track.setAttribute('data-flowmd-scrollbar', 'track');
+        this.track.setAttribute('data-livewritemd-scrollbar', 'track');
 
         Object.assign(this.thumb.style, {
             position: 'absolute',

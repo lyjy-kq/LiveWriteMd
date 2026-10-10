@@ -1,5 +1,5 @@
 /**
- * FlowMD 右侧大纲面板。
+ * LiveWriteMD 右侧大纲面板。
  *
  * 这个模块负责在 Webview 中创建右侧大纲、可拖拽分隔线、
  * 标题树渲染、折叠状态持久化以及标题点击跳转。
@@ -72,37 +72,37 @@ const OUTLINE_DIVIDER_WIDTH = 8;
 /**
  * 右侧面板样式注入标识。
  */
-const OUTLINE_STYLE_ID = 'flowmd-outline-style';
+const OUTLINE_STYLE_ID = 'livewritemd-outline-style';
 
 /**
  * 根布局容器标识。
  */
-const OUTLINE_ROOT_ID = 'flowmd-app-root';
+const OUTLINE_ROOT_ID = 'livewritemd-app-root';
 
 /**
  * 编辑器外壳容器标识。
  */
-const OUTLINE_EDITOR_SHELL_ID = 'flowmd-editor-shell';
+const OUTLINE_EDITOR_SHELL_ID = 'livewritemd-editor-shell';
 
 /**
  * 大纲面板容器标识。
  */
-const OUTLINE_PANEL_ID = 'flowmd-outline-pane';
+const OUTLINE_PANEL_ID = 'livewritemd-outline-pane';
 
 /**
  * 大纲树根容器标识。
  */
-const OUTLINE_TREE_ID = 'flowmd-outline-tree';
+const OUTLINE_TREE_ID = 'livewritemd-outline-tree';
 
 /**
  * 大纲空状态容器标识。
  */
-const OUTLINE_EMPTY_ID = 'flowmd-outline-empty';
+const OUTLINE_EMPTY_ID = 'livewritemd-outline-empty';
 
 /**
  * 大纲分隔条标识。
  */
-const OUTLINE_DIVIDER_ID = 'flowmd-outline-divider';
+const OUTLINE_DIVIDER_ID = 'livewritemd-outline-divider';
 
 /**
  * 安全读取对象类型值。
@@ -166,7 +166,7 @@ function readOutlineState(rawState: unknown): OutlinePersistedState | null {
         return null;
     }
 
-    const outlineState = rawState.flowmdOutline;
+    const outlineState = rawState.livewritemdOutline;
     if (!isRecord(outlineState)) {
         return null;
     }
@@ -199,7 +199,7 @@ function persistOutlineState(
     state: OutlinePersistedState
 ): void {
     const nextState: Record<string, unknown> = isRecord(rawState) ? { ...rawState } : {};
-    nextState.flowmdOutline = state;
+    nextState.livewritemdOutline = state;
     setState(nextState);
 }
 
@@ -332,7 +332,7 @@ function buildOutlineTree(
 }
 
 /**
- * FlowMD 右侧大纲面板管理器。
+ * LiveWriteMD 右侧大纲面板管理器。
  */
 export class OutlineManager {
     /** 编辑器宿主容器。 */
@@ -425,7 +425,7 @@ export class OutlineManager {
         this.outlineTree.setAttribute('role', 'tree');
 
         this.outlineHeader = document.createElement('div');
-        this.outlineHeader.className = 'flowmd-outline-header';
+        this.outlineHeader.className = 'livewritemd-outline-header';
         const headerTitle = document.createElement('strong');
         headerTitle.textContent = 'Outline';
         const headerHint = document.createElement('span');
@@ -557,8 +557,8 @@ body {
 }
 
 #${OUTLINE_PANEL_ID} {
-    flex: 0 0 var(--flowmd-outline-width, ${DEFAULT_OUTLINE_WIDTH}px);
-    width: var(--flowmd-outline-width, ${DEFAULT_OUTLINE_WIDTH}px);
+    flex: 0 0 var(--livewritemd-outline-width, ${DEFAULT_OUTLINE_WIDTH}px);
+    width: var(--livewritemd-outline-width, ${DEFAULT_OUTLINE_WIDTH}px);
     min-width: ${MIN_OUTLINE_WIDTH}px;
     max-width: min(${MAX_OUTLINE_WIDTH}px, 45vw);
     height: 100%;
@@ -571,7 +571,7 @@ body {
     box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.02);
 }
 
-#${OUTLINE_PANEL_ID} .flowmd-outline-header {
+#${OUTLINE_PANEL_ID} .livewritemd-outline-header {
     flex: 0 0 auto;
     display: flex;
     align-items: center;
@@ -585,7 +585,7 @@ body {
     color: var(--vscode-descriptionForeground, var(--vscode-editor-foreground, #d4d4d4));
 }
 
-#${OUTLINE_PANEL_ID} .flowmd-outline-header strong {
+#${OUTLINE_PANEL_ID} .livewritemd-outline-header strong {
     font-size: 12px;
     letter-spacing: 0.08em;
 }
@@ -616,13 +616,13 @@ body {
     display: flex;
 }
 
-.flowmd-outline-node {
+.livewritemd-outline-node {
     position: relative;
     margin: 0;
     padding: 0;
 }
 
-.flowmd-outline-row {
+.livewritemd-outline-row {
     position: relative;
     z-index: 0;
     display: flex;
@@ -636,13 +636,13 @@ body {
     transition: background-color 120ms ease, color 120ms ease;
 }
 
-.flowmd-outline-node + .flowmd-outline-node > .flowmd-outline-row,
-.flowmd-outline-children > .flowmd-outline-node + .flowmd-outline-node > .flowmd-outline-row {
+.livewritemd-outline-node + .livewritemd-outline-node > .livewritemd-outline-row,
+.livewritemd-outline-children > .livewritemd-outline-node + .livewritemd-outline-node > .livewritemd-outline-row {
     overflow: visible;
 }
 
-.flowmd-outline-node + .flowmd-outline-node::before,
-.flowmd-outline-children > .flowmd-outline-node + .flowmd-outline-node::before {
+.livewritemd-outline-node + .livewritemd-outline-node::before,
+.livewritemd-outline-children > .livewritemd-outline-node + .livewritemd-outline-node::before {
     content: '';
     position: absolute;
     top: 0;
@@ -654,11 +654,11 @@ body {
     z-index: 1;
 }
 
-.flowmd-outline-row:hover {
+.livewritemd-outline-row:hover {
     background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.12));
 }
 
-.flowmd-outline-toggle {
+.livewritemd-outline-toggle {
     flex: 0 0 18px;
     width: 18px;
     height: 18px;
@@ -675,15 +675,15 @@ body {
     opacity: 0.85;
 }
 
-.flowmd-outline-toggle:hover {
+.livewritemd-outline-toggle:hover {
     background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.12));
 }
 
-.flowmd-outline-toggle.is-spacer {
+.livewritemd-outline-toggle.is-spacer {
     visibility: hidden;
 }
 
-.flowmd-outline-title {
+.livewritemd-outline-title {
     flex: 1 1 auto;
     min-width: 0;
     border: none;
@@ -698,38 +698,38 @@ body {
     font: inherit;
 }
 
-.flowmd-outline-title:hover {
+.livewritemd-outline-title:hover {
     color: var(--vscode-textLink-foreground, var(--vscode-focusBorder, #007acc));
 }
 
-.flowmd-outline-node[data-level='1'] .flowmd-outline-title {
+.livewritemd-outline-node[data-level='1'] .livewritemd-outline-title {
     font-weight: 700;
 }
 
-.flowmd-outline-node[data-level='2'] .flowmd-outline-title {
+.livewritemd-outline-node[data-level='2'] .livewritemd-outline-title {
     font-weight: 600;
 }
 
-.flowmd-outline-node[data-level='3'] .flowmd-outline-title {
+.livewritemd-outline-node[data-level='3'] .livewritemd-outline-title {
     opacity: 0.94;
 }
 
-.flowmd-outline-node[data-level='4'] .flowmd-outline-title,
-.flowmd-outline-node[data-level='5'] .flowmd-outline-title,
-.flowmd-outline-node[data-level='6'] .flowmd-outline-title {
+.livewritemd-outline-node[data-level='4'] .livewritemd-outline-title,
+.livewritemd-outline-node[data-level='5'] .livewritemd-outline-title,
+.livewritemd-outline-node[data-level='6'] .livewritemd-outline-title {
     opacity: 0.82;
 }
 
-.flowmd-outline-children {
+.livewritemd-outline-children {
     margin: 0;
     padding: 0;
 }
 
-.flowmd-outline-node.is-collapsed > .flowmd-outline-children {
+.livewritemd-outline-node.is-collapsed > .livewritemd-outline-children {
     display: none;
 }
 
-body.flowmd-outline-resizing {
+body.livewritemd-outline-resizing {
     cursor: col-resize;
     user-select: none;
 }
@@ -767,7 +767,7 @@ body.flowmd-outline-resizing {
             this.isDragging = true;
             this.dragStartX = event.clientX;
             this.dragStartWidth = this.width;
-            document.body.classList.add('flowmd-outline-resizing');
+            document.body.classList.add('livewritemd-outline-resizing');
 
             const handleMove = (moveEvent: PointerEvent): void => {
                 if (!this.isDragging) {
@@ -785,7 +785,7 @@ body.flowmd-outline-resizing {
                 }
 
                 this.isDragging = false;
-                document.body.classList.remove('flowmd-outline-resizing');
+                document.body.classList.remove('livewritemd-outline-resizing');
                 window.removeEventListener('pointermove', handleMove);
                 window.removeEventListener('pointerup', handleUp);
                 window.removeEventListener('pointercancel', handleUp);
@@ -807,7 +807,7 @@ body.flowmd-outline-resizing {
      */
     private applyWidth(width: number, shouldPersist: boolean): void {
         this.width = clampOutlineWidth(width);
-        this.outlinePane.style.setProperty('--flowmd-outline-width', `${this.width}px`);
+        this.outlinePane.style.setProperty('--livewritemd-outline-width', `${this.width}px`);
         this.outlinePane.style.flexBasis = `${this.width}px`;
         this.outlinePane.style.width = `${this.width}px`;
 
@@ -884,7 +884,7 @@ body.flowmd-outline-resizing {
      */
     private renderNode(node: ParsedOutlineNode, depth: number): HTMLDivElement {
         const container = document.createElement('div');
-        container.className = 'flowmd-outline-node';
+        container.className = 'livewritemd-outline-node';
         container.dataset.level = String(node.level);
         container.style.paddingLeft = `${depth * 12}px`;
 
@@ -896,11 +896,11 @@ body.flowmd-outline-resizing {
         }
 
         const row = document.createElement('div');
-        row.className = 'flowmd-outline-row';
+        row.className = 'livewritemd-outline-row';
 
         const toggleButton = document.createElement('button');
         toggleButton.type = 'button';
-        toggleButton.className = 'flowmd-outline-toggle';
+        toggleButton.className = 'livewritemd-outline-toggle';
         toggleButton.textContent = node.hasChildren ? (node.collapsed ? '+' : '-') : '';
         toggleButton.setAttribute('aria-label', node.hasChildren ? 'Toggle section' : 'Section');
         toggleButton.setAttribute('aria-expanded', String(!node.collapsed));
@@ -924,7 +924,7 @@ body.flowmd-outline-resizing {
 
         const titleButton = document.createElement('button');
         titleButton.type = 'button';
-        titleButton.className = 'flowmd-outline-title';
+        titleButton.className = 'livewritemd-outline-title';
         titleButton.textContent = node.text;
         titleButton.title = `Jump to line ${node.line}`;
         titleButton.addEventListener('click', () => {
@@ -936,7 +936,7 @@ body.flowmd-outline-resizing {
         container.appendChild(row);
 
         const childrenContainer = document.createElement('div');
-        childrenContainer.className = 'flowmd-outline-children';
+        childrenContainer.className = 'livewritemd-outline-children';
         if (node.collapsed) {
             childrenContainer.style.display = 'none';
         }

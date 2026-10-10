@@ -3,7 +3,7 @@
  *
  * EditorView.baseTheme() CSS-in-JS definitions for all live preview elements.
  *
- * Colors are hardcoded (not CSS variables) so that FlowMD's theme override
+ * Colors are hardcoded (not CSS variables) so that LiveWriteMD's theme override
  * works independently of VS Code's active color theme. Dark colors are the
  * default; light overrides use the `&light` baseTheme prefix.
  *
@@ -12,6 +12,14 @@
 
 import { EditorView } from '@codemirror/view';
 import type { Extension } from '@codemirror/state';
+
+/**
+ * 勾选标记的 SVG（白色对勾），作为复选框 checked 背景。
+ * input 元素不支持 ::after，对勾只能走背景图；data URI 内
+ * 用单双引号嵌套避免转义。
+ */
+const CHECK_SVG =
+    "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path d='M2.5 6.2 L4.8 8.5 L9.5 3.8' fill='none' stroke='white' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/></svg>\")";
 
 /**
  * Creates the base theme extension with all live preview CSS styles.
@@ -44,36 +52,36 @@ export function createBaseThemeStyles(): Extension {
             lineHeight: '1.6',
         },
         '.cm-md-heading-1': {
-            fontSize: 'var(--flowmd-h1-size, 1.2em)',
+            fontSize: 'var(--livewritemd-h1-size, 1.2em)',
             fontWeight: '700',
             letterSpacing: '-0.02em',
-            color: 'var(--flowmd-h1-color, #eb8383)',
+            color: 'var(--livewritemd-h1-color, #eb8383)',
         },
         '.cm-md-heading-2': {
             fontSize: 'inherit',
             fontWeight: '600',
             letterSpacing: '-0.01em',
-            color: 'var(--flowmd-h2-color, #ae9acb)',
+            color: 'var(--livewritemd-h2-color, #ae9acb)',
         },
         '.cm-md-heading-3': {
             fontSize: 'inherit',
             fontWeight: '600',
-            color: 'var(--flowmd-h3-color, #7db5cd)',
+            color: 'var(--livewritemd-h3-color, #7db5cd)',
         },
         '.cm-md-heading-4': {
             fontSize: 'inherit',
             fontWeight: '600',
-            color: 'var(--flowmd-h4-color, #71a796)',
+            color: 'var(--livewritemd-h4-color, #71a796)',
         },
         '.cm-md-heading-5': {
             fontSize: 'inherit',
             fontWeight: '600',
-            color: 'var(--flowmd-h5-color, #dcbf61)',
+            color: 'var(--livewritemd-h5-color, #dcbf61)',
         },
         '.cm-md-heading-6': {
             fontSize: 'inherit',
             fontWeight: '600',
-            color: 'var(--flowmd-h6-color, #dda36a)',
+            color: 'var(--livewritemd-h6-color, #dda36a)',
             textTransform: 'uppercase',
             letterSpacing: '0.05em',
         },
@@ -88,20 +96,20 @@ export function createBaseThemeStyles(): Extension {
         '.cm-md-bold': {
             fontWeight: '700',
             lineHeight: '1',
-            color: 'var(--flowmd-bold-color, #d9a37a)',
+            color: 'var(--livewritemd-bold-color, #d9a37a)',
         },
         // 斜体默认只变色、不倾斜：合成斜体（italic）默认约 14°，斜得过头。
         // fontStyle 走变量，设置里开启「斜体真倾斜」时由应用层改为 italic。
         '.cm-md-italic': {
-            fontStyle: 'var(--flowmd-italic-style, normal)',
+            fontStyle: 'var(--livewritemd-italic-style, normal)',
             lineHeight: '1',
-            color: 'var(--flowmd-italic-color, #2bbac5)',
+            color: 'var(--livewritemd-italic-color, #2bbac5)',
         },
         '.cm-md-strikethrough': {
             textDecoration: 'line-through',
             lineHeight: '1',
             opacity: '0.6',
-            color: 'var(--flowmd-strikethrough-color, inherit)',
+            color: 'var(--livewritemd-strikethrough-color, inherit)',
         },
 
         // =================================================================
@@ -127,7 +135,7 @@ export function createBaseThemeStyles(): Extension {
             color: '#7d8590',
         },
         '&light .cm-md-src-mark-active': {
-            color: '#8a8f98',
+            color: '#6b7280',
         },
         // 行内元素展开态（`**加粗**`）：外层缩放在行内 style 里给（见 focusMarks.ts），
         // 这里只负责把标记符压灰，以及把行内代码的样式改成「跟着一起缩」。
@@ -135,7 +143,16 @@ export function createBaseThemeStyles(): Extension {
             color: '#7d8590',
         },
         '&light .cm-md-src-delim': {
-            color: '#8a8f98',
+            color: '#6b7280',
+        },
+        // 有序列表序号（1. 2. …）：与 # / - 同色（中性深灰）。
+        // syntaxHighlighting 会在内层 span 上再染 punctuation 色，所以要
+        // 用后代选择器把灰色强制渗透进去。
+        '.cm-md-ordmark, .cm-md-ordmark > *': {
+            color: '#7d8590',
+        },
+        '&light .cm-md-ordmark, &light .cm-md-ordmark > *': {
+            color: '#6b7280',
         },
 
         // 展开态（`**加粗**`）是纯文本，字号在行内 style 里整体缩放。
@@ -158,7 +175,7 @@ export function createBaseThemeStyles(): Extension {
         // =================================================================
         // 字号只用比正文小一点点（0.95em），而且必须是**相对单位**：
         // 原来写的是 var(--vscode-editor-font-size)，那是个绝对像素值，
-        // 正文一旦被「字体缩放」（--flowmd-font-scale）放大，代码还是老大小，
+        // 正文一旦被「字体缩放」（--livewritemd-font-scale）放大，代码还是老大小，
         // 看起来就小了一大截。
         // line-height 设成 1 和展开态同理：等宽字体的 ascent/descent 分布和正文不同，
         // 行盒高度取的是「最大 ascent + 最大 descent」，两块盒子的分布一不一样就会多出零点几像素，
@@ -166,17 +183,17 @@ export function createBaseThemeStyles(): Extension {
         '.cm-md-code': {
             fontFamily:
                 'var(--vscode-editor-font-family, "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace)',
-            fontSize: 'var(--flowmd-inline-code-scale, 0.95em)',
+            fontSize: 'var(--livewritemd-inline-code-scale, 0.95em)',
             lineHeight: '1',
-            fontWeight: 'var(--flowmd-font-weight, 400)',
-            backgroundColor: 'var(--flowmd-inline-code-background, #f0ece0)',
+            fontWeight: 'var(--livewritemd-font-weight, 400)',
+            backgroundColor: 'var(--livewritemd-inline-code-background, #f0ece0)',
             padding: '2px 6px',
             borderRadius: '4px',
-            color: 'var(--flowmd-inline-code-color, #f29a9a)',
+            color: 'var(--livewritemd-inline-code-color, #f29a9a)',
         },
         '&light .cm-md-code': {
-            backgroundColor: 'var(--flowmd-inline-code-background, #eff1f3)',
-            color: 'var(--flowmd-inline-code-color, #f29a9a)',
+            backgroundColor: 'var(--livewritemd-inline-code-background, #eff1f3)',
+            color: 'var(--livewritemd-inline-code-color, #f29a9a)',
         },
 
         // 被 widget 顶替掉的源码（行内公式、单元格复选框）：压 0 宽藏起来，
@@ -192,9 +209,9 @@ export function createBaseThemeStyles(): Extension {
         // Links
         // =================================================================
         '.cm-md-link, .cm-md-file-link': {
-            color: 'var(--flowmd-link-color, #338122)',
+            color: 'var(--livewritemd-link-color, #338122)',
             textDecoration: 'underline',
-            textDecorationColor: 'var(--flowmd-link-color, #338122)',
+            textDecorationColor: 'var(--livewritemd-link-color, #338122)',
             textDecorationSkipInk: 'auto',
             textUnderlineOffset: '3px',
             cursor: 'pointer',
@@ -204,65 +221,65 @@ export function createBaseThemeStyles(): Extension {
             opacity: '0.8',
         },
         '&light .cm-md-link, &light .cm-md-file-link': {
-            color: 'var(--flowmd-link-color, #338122)',
-            textDecorationColor: 'var(--flowmd-link-color, #338122)',
+            color: 'var(--livewritemd-link-color, #338122)',
+            textDecorationColor: 'var(--livewritemd-link-color, #338122)',
         },
 
         // =================================================================
         // Blockquotes
         // =================================================================
         '.cm-md-blockquote': {
-            borderLeft: '3px solid var(--flowmd-quote-border-color, #007acc)',
+            borderLeft: '3px solid var(--livewritemd-quote-border-color, #007acc)',
             paddingLeft: '1.2em !important',
-            color: 'var(--flowmd-quote-text-color, #999)',
+            color: 'var(--livewritemd-quote-text-color, #999)',
         },
         '&light .cm-md-blockquote': {
-            borderLeft: '3px solid var(--flowmd-quote-border-color, #d0d7de)',
-            color: 'var(--flowmd-quote-text-color, #656d76)',
+            borderLeft: '3px solid var(--livewritemd-quote-border-color, #d0d7de)',
+            color: 'var(--livewritemd-quote-text-color, #656d76)',
         },
         '.cm-md-blockquote-2': {
             paddingLeft: '2.4em !important',
-            backgroundImage: 'linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc))',
+            backgroundImage: 'linear-gradient(var(--livewritemd-quote-border-color, #007acc), var(--livewritemd-quote-border-color, #007acc))',
             backgroundSize: '3px 100%',
             backgroundRepeat: 'no-repeat',
             backgroundPosition: '1.2em 0',
         },
         '&light .cm-md-blockquote-2': {
-            backgroundImage: 'linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de))',
+            backgroundImage: 'linear-gradient(var(--livewritemd-quote-border-color, #d0d7de), var(--livewritemd-quote-border-color, #d0d7de))',
         },
         '.cm-md-blockquote-3': {
             paddingLeft: '3.6em !important',
-            backgroundImage: 'linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc)), linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc))',
+            backgroundImage: 'linear-gradient(var(--livewritemd-quote-border-color, #007acc), var(--livewritemd-quote-border-color, #007acc)), linear-gradient(var(--livewritemd-quote-border-color, #007acc), var(--livewritemd-quote-border-color, #007acc))',
             backgroundSize: '3px 100%, 3px 100%',
             backgroundRepeat: 'no-repeat, no-repeat',
             backgroundPosition: '1.2em 0, 2.4em 0',
         },
         '&light .cm-md-blockquote-3': {
-            backgroundImage: 'linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de)), linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de))',
+            backgroundImage: 'linear-gradient(var(--livewritemd-quote-border-color, #d0d7de), var(--livewritemd-quote-border-color, #d0d7de)), linear-gradient(var(--livewritemd-quote-border-color, #d0d7de), var(--livewritemd-quote-border-color, #d0d7de))',
         },
         '.cm-md-blockquote-4': {
             paddingLeft: '4.8em !important',
             backgroundImage:
-                'linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc)), linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc)), linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc))',
+                'linear-gradient(var(--livewritemd-quote-border-color, #007acc), var(--livewritemd-quote-border-color, #007acc)), linear-gradient(var(--livewritemd-quote-border-color, #007acc), var(--livewritemd-quote-border-color, #007acc)), linear-gradient(var(--livewritemd-quote-border-color, #007acc), var(--livewritemd-quote-border-color, #007acc))',
             backgroundSize: '3px 100%, 3px 100%, 3px 100%',
             backgroundRepeat: 'no-repeat, no-repeat, no-repeat',
             backgroundPosition: '1.2em 0, 2.4em 0, 3.6em 0',
         },
         '&light .cm-md-blockquote-4': {
             backgroundImage:
-                'linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de)), linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de)), linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de))',
+                'linear-gradient(var(--livewritemd-quote-border-color, #d0d7de), var(--livewritemd-quote-border-color, #d0d7de)), linear-gradient(var(--livewritemd-quote-border-color, #d0d7de), var(--livewritemd-quote-border-color, #d0d7de)), linear-gradient(var(--livewritemd-quote-border-color, #d0d7de), var(--livewritemd-quote-border-color, #d0d7de))',
         },
         '.cm-md-blockquote-5': {
             paddingLeft: '6em !important',
             backgroundImage:
-                'linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc)), linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc)), linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc)), linear-gradient(var(--flowmd-quote-border-color, #007acc), var(--flowmd-quote-border-color, #007acc))',
+                'linear-gradient(var(--livewritemd-quote-border-color, #007acc), var(--livewritemd-quote-border-color, #007acc)), linear-gradient(var(--livewritemd-quote-border-color, #007acc), var(--livewritemd-quote-border-color, #007acc)), linear-gradient(var(--livewritemd-quote-border-color, #007acc), var(--livewritemd-quote-border-color, #007acc)), linear-gradient(var(--livewritemd-quote-border-color, #007acc), var(--livewritemd-quote-border-color, #007acc))',
             backgroundSize: '3px 100%, 3px 100%, 3px 100%, 3px 100%',
             backgroundRepeat: 'no-repeat, no-repeat, no-repeat, no-repeat',
             backgroundPosition: '1.2em 0, 2.4em 0, 3.6em 0, 4.8em 0',
         },
         '&light .cm-md-blockquote-5': {
             backgroundImage:
-                'linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de)), linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de)), linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de)), linear-gradient(var(--flowmd-quote-border-color, #d0d7de), var(--flowmd-quote-border-color, #d0d7de))',
+                'linear-gradient(var(--livewritemd-quote-border-color, #d0d7de), var(--livewritemd-quote-border-color, #d0d7de)), linear-gradient(var(--livewritemd-quote-border-color, #d0d7de), var(--livewritemd-quote-border-color, #d0d7de)), linear-gradient(var(--livewritemd-quote-border-color, #d0d7de), var(--livewritemd-quote-border-color, #d0d7de)), linear-gradient(var(--livewritemd-quote-border-color, #d0d7de), var(--livewritemd-quote-border-color, #d0d7de))',
         },
 
         // =================================================================
@@ -278,7 +295,7 @@ export function createBaseThemeStyles(): Extension {
             lineHeight: 'inherit',
             color: 'inherit',
             backgroundColor:
-                'var(--flowmd-codeblock-background, var(--vscode-textCodeBlock-background, rgba(128,128,128,0.08)))',
+                'var(--livewritemd-codeblock-background, var(--vscode-textCodeBlock-background, rgba(128,128,128,0.08)))',
             // 四条边线一律**不用 border**、改用 inset 阴影，原因见下面 first/last 的说明：
             // 上下边的 1px border 会计入 `.cm-line` 实测盒高（进文本模式后行高跳变）；
             // 左右边在 border-box 下会把正文内容往里挤 1px，文本模式没有竖边，
@@ -287,7 +304,7 @@ export function createBaseThemeStyles(): Extension {
             // 长代码的折行位置也不会变（两态内容宽度相同）。
             // 边线颜色抽成 CSS 变量：浅色只覆盖这一个变量即可，不用重复整段阴影。
             '--cm-codeblock-edge':
-                'var(--flowmd-codeblock-edge, rgba(255, 255, 255, 0.12))',
+                'var(--livewritemd-codeblock-edge, rgba(255, 255, 255, 0.12))',
             boxShadow:
                 'inset 1px 0 0 var(--cm-codeblock-edge), inset -1px 0 0 var(--cm-codeblock-edge)',
             // 这里的 0.9em 横向 padding 实际被 theme.ts 的「`.cm-line` { padding: 0 4px }」
@@ -297,10 +314,10 @@ export function createBaseThemeStyles(): Extension {
         },
         '&light .cm-md-codeblock': {
             backgroundColor:
-                'var(--flowmd-codeblock-background, var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.035)))',
+                'var(--livewritemd-codeblock-background, var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.035)))',
             // 浅色边线：只换变量，first/last 那几条 box-shadow 自动跟着变色
             '--cm-codeblock-edge':
-                'var(--flowmd-codeblock-edge, rgba(0, 0, 0, 0.1))',
+                'var(--livewritemd-codeblock-edge, rgba(0, 0, 0, 0.1))',
         },
         // （旧的逐行说明已并入上面 `.cm-md-codeblock` 主规则的注释）
         // 围栏行的上下边**不用 border**：1px border 会计入 `.cm-line` 的实际盒高
@@ -370,7 +387,8 @@ export function createBaseThemeStyles(): Extension {
         // 宽度由 BulletWidget 按源码里 `- ` 的实际宽度现算后写成行内样式，
         // 这里的 1.2em 只是量不到字宽时的兜底值（保证不会挤成一团）。
         '.cm-md-bullet': {
-            color: 'var(--flowmd-bullet-color, #aab1bf)',
+            position: 'relative',
+            color: 'var(--livewritemd-bullet-color, #aab1bf)',
             display: 'inline-block',
             width: '1.2em',
             textAlign: 'center',
@@ -378,12 +396,15 @@ export function createBaseThemeStyles(): Extension {
             fontSize: '1.1em',
             lineHeight: '1',
             verticalAlign: 'middle',
+            // 阻断列表行悬挂 text-indent 的继承
+            textIndent: '0',
+            whiteSpace: 'nowrap',
         },
         // 浅色主题下圆点默认 #191919：浅底上深色圆点最干净。
         // 深色主题默认浅灰——#191919 在深底上对比度只有 1.1:1，等于看不见。
-        // 显式设置 --flowmd-bullet-color 时两主题统一用用户色。
+        // 显式设置 --livewritemd-bullet-color 时两主题统一用用户色。
         '&light .cm-md-bullet': {
-            color: 'var(--flowmd-bullet-color, #191919)',
+            color: 'var(--livewritemd-bullet-color, #191919)',
         },
 
         // =================================================================
@@ -411,7 +432,7 @@ export function createBaseThemeStyles(): Extension {
         // 撑到 1.2em（仍然小于正文行高 1.7em，藏在行盒里不会把行顶高）之后，
         // 整行高度上点哪儿都命中它，光标就落到这一行，`---` 的原文露出来。
         '.cm-md-hr': {
-            '--cm-md-hr-color': 'var(--flowmd-hr-color, rgba(128,128,128,0.3))',
+            '--cm-md-hr-color': 'var(--livewritemd-hr-color, rgba(128,128,128,0.3))',
             display: 'inline-block',
             width: '100%',
             height: '1.2em',
@@ -428,7 +449,7 @@ export function createBaseThemeStyles(): Extension {
             verticalAlign: 'middle',
         },
         '&light .cm-md-hr': {
-            '--cm-md-hr-color': 'var(--flowmd-hr-color, #d0d7de)',
+            '--cm-md-hr-color': 'var(--livewritemd-hr-color, #d0d7de)',
         },
 
         // =================================================================
@@ -497,7 +518,7 @@ export function createBaseThemeStyles(): Extension {
             minHeight: 'calc(1.7em + 6px)',
             // 相邻格子各画一条 1px 的右边框会变成 2px，用负边距让它们叠在一起
             marginLeft: '-1px',
-            border: '1px solid var(--flowmd-table-border-color, rgba(128,128,128,0.28))',
+            border: '1px solid var(--livewritemd-table-border-color, rgba(128,128,128,0.28))',
             boxSizing: 'border-box',
             // 内容比钉子列宽还长时在格子内部换行，不要撑破表格。
             //
@@ -519,28 +540,28 @@ export function createBaseThemeStyles(): Extension {
         // 表头行：加粗 + 淡底
         '.cm-md-table-header .cm-md-tcell': {
             fontWeight: '600',
-            backgroundColor: 'var(--flowmd-table-header-background, rgba(128,128,128,0.10))',
+            backgroundColor: 'var(--livewritemd-table-header-background, rgba(128,128,128,0.10))',
         },
         // 斑马纹（偶数数据行）：变量留空时 fallback transparent、无视觉变化
         '.cm-md-table-stripe .cm-md-tcell': {
-            backgroundColor: 'var(--flowmd-table-stripe-background, transparent)',
+            backgroundColor: 'var(--livewritemd-table-stripe-background, transparent)',
         },
         // 表头行即使带 stripe 标记也以表头底色为准（表头不参与斑马纹）
         '.cm-md-table-header.cm-md-table-stripe .cm-md-tcell': {
-            backgroundColor: 'var(--flowmd-table-header-background, rgba(128,128,128,0.10))',
+            backgroundColor: 'var(--livewritemd-table-header-background, rgba(128,128,128,0.10))',
         },
         // 被框选到的格子：整格上高亮（原生选区只涂文字，看着像没选中）
         '.cm-md-tcell-selected': {
-            backgroundColor: 'var(--flowmd-table-selected-background, rgba(79,193,255,0.22))',
+            backgroundColor: 'var(--livewritemd-table-selected-background, rgba(79,193,255,0.22))',
         },
         '.cm-md-table-header .cm-md-tcell-selected': {
-            backgroundColor: 'var(--flowmd-table-selected-background, rgba(79,193,255,0.28))',
+            backgroundColor: 'var(--livewritemd-table-selected-background, rgba(79,193,255,0.28))',
         },
         '&light .cm-md-tcell-selected': {
-            backgroundColor: 'var(--flowmd-table-selected-background, rgba(9,105,218,0.16))',
+            backgroundColor: 'var(--livewritemd-table-selected-background, rgba(9,105,218,0.16))',
         },
         '&light .cm-md-table-header .cm-md-tcell-selected': {
-            backgroundColor: 'var(--flowmd-table-selected-background, rgba(9,105,218,0.22))',
+            backgroundColor: 'var(--livewritemd-table-selected-background, rgba(9,105,218,0.22))',
         },
         // 分隔行（|---|:--:|）：整行折叠，光标停在上面时由 tableRender 放开
         '.cm-md-table-delimiter': {
@@ -620,16 +641,49 @@ export function createBaseThemeStyles(): Extension {
         // =================================================================
         // Checkboxes
         // =================================================================
+        // 自定义复选框：原生框在深底上白得刺眼、与整体不协调。
         '.cm-md-checkbox': {
+            appearance: 'none',
+            WebkitAppearance: 'none',
             cursor: 'pointer',
+            boxSizing: 'border-box',
             width: '16px',
             height: '16px',
             verticalAlign: 'middle',
-            marginRight: '4px',
-            accentColor: 'var(--flowmd-checkbox-accent, #4fc1ff)',
+            // 清掉 UA input legacy margin（左 4 / 上下 3），只留右 gap
+            margin: '0 4px 0 0',
+            padding: '0',
+            border:
+                '1.5px solid var(--livewritemd-checkbox-border, rgba(205,210,220,0.4))',
+            borderRadius: '4px',
+            backgroundColor: 'transparent',
+            transition:
+                'background-color 0.13s ease, border-color 0.13s ease',
         },
+        '.cm-md-checkbox:hover': {
+            borderColor: 'var(--livewritemd-checkbox-border-hover, rgba(205,210,220,0.75))',
+        },
+        // 已勾选：accent 底 + 白色 SVG 对勾（input 不支持 ::after）
+        '.cm-md-checkbox:checked': {
+            borderColor: 'var(--livewritemd-checkbox-accent, #4fc1ff)',
+            backgroundColor: 'var(--livewritemd-checkbox-accent, #4fc1ff)',
+            backgroundImage: CHECK_SVG,
+            backgroundRepeat: 'no-repeat',
+            backgroundPosition: 'center',
+            backgroundSize: '11px 11px',
+        },
+        // 浅色主题：边框与 accent 换色
         '&light .cm-md-checkbox': {
-            accentColor: 'var(--flowmd-checkbox-accent, #0969da)',
+            borderColor:
+                'var(--livewritemd-checkbox-border, rgba(20,25,35,0.35))',
+        },
+        '&light .cm-md-checkbox:hover': {
+            borderColor:
+                'var(--livewritemd-checkbox-border-hover, rgba(20,25,35,0.6))',
+        },
+        '&light .cm-md-checkbox:checked': {
+            borderColor: 'var(--livewritemd-checkbox-accent, #0969da)',
+            backgroundColor: 'var(--livewritemd-checkbox-accent, #0969da)',
         },
 
         // =================================================================
@@ -651,7 +705,7 @@ export function createBaseThemeStyles(): Extension {
         // （见 decorations.ts 的 imageLineDeco）：行里除了图片还有文字时不会命中，
         // 所以不会像原来那样把「文字 + 图片」的行也整行居中。
         '.cm-md-image-line': {
-            textAlign: 'var(--flowmd-media-center-align, center)',
+            textAlign: 'var(--livewritemd-media-center-align, center)',
         },
         '.cm-md-image': {
             maxWidth: '100%',
@@ -1023,95 +1077,74 @@ export function createBaseThemeStyles(): Extension {
         },
 
         // =================================================================
-        // List fold arrows
+        // Bullet dot（圆心 = '-' 墨迹中心）
         // =================================================================
-        '.cm-md-fold-arrow': {
-            display: 'inline-block',
-            width: '16px',
-            fontSize: '11px',
-            color: '#4fc1ff',
-            cursor: 'pointer',
-            textAlign: 'center',
-            userSelect: 'none',
-            marginLeft: '-20px',
-            marginRight: '4px',
-            verticalAlign: 'middle',
+        // top 在 50% 上叠加 --cm-dot-y-correction：空 inline-block 的 middle
+        // 对齐点与 '-' 墨迹中心的亚像素差，由 BulletWidget 实测后写入，
+        // 不补偿圆点会系统性偏下（见 helpers.ts measureBulletYCorrection）
+        '.cm-md-bullet-dot': {
+            position: 'absolute',
+            left: 'var(--cm-mark-center, 0.62em)',
+            top: 'calc(50% + var(--cm-dot-y-correction, 0px))',
+            width: '12px',
+            height: '12px',
             lineHeight: '1',
-            borderRadius: '3px',
-            padding: '2px 0',
-            opacity: '0.7',
-            transition:
-                'color 0.15s ease, background-color 0.15s ease, opacity 0.15s ease, transform 0.15s ease',
-        },
-        '&light .cm-md-fold-arrow': {
-            color: '#0969da',
-        },
-        '.cm-md-fold-arrow:hover': {
-            opacity: '1',
-            backgroundColor: 'rgba(128, 128, 128, 0.15)',
-        },
-        // Collapsed: ▼ rotated to ▶
-        '.cm-md-fold-arrow-collapsed': {
-            transform: 'rotate(-90deg)',
-        },
-        // Expanded: ▼ as-is
-        '.cm-md-fold-arrow-open': {
-            color: '#888',
-            opacity: '0.5',
-            transform: 'rotate(0deg)',
-        },
-        '&light .cm-md-fold-arrow-open': {
-            color: '#656d76',
-        },
-        '.cm-md-fold-arrow-open:hover': {
-            color: '#4fc1ff',
-            opacity: '1',
-        },
-        '&light .cm-md-fold-arrow-open:hover': {
-            color: '#0969da',
-        },
-        // Folded line: bullet gets accent color to match arrow
-        '.cm-md-fold-collapsed-line .cm-md-bullet': {
-            color: '#4fc1ff',
-            opacity: '0.7',
-        },
-        '&light .cm-md-fold-collapsed-line .cm-md-bullet': {
-            color: '#0969da',
+            transform: 'translate(-50%, -50%)',
         },
 
         // =================================================================
+        // Gutter fold chevron（折叠箭头放在行号位置）
+        // =================================================================
+        // 行号格本身是定位上下文：箭头绝对定位铺满它，覆盖在数字之上。
+        '.cm-lineNumbers .cm-gutterElement': {
+            position: 'relative',
+        },
+        // 可折叠行号格：悬停时、或已折叠时，数字让位（透明）。
+        // 用 color:transparent 而不是改 opacity —— 数字是格内文本节点，
+        // 不能单独选；透明后宽度/布局完全不变，不会跳动。
+        '.cm-lineNumbers .cm-gutterElement.cm-md-foldable-line:hover, .cm-lineNumbers .cm-gutterElement.cm-md-foldable-line.is-folded':
+            {
+                color: 'transparent',
+            },
+        // 箭头本体：绝对定位铺满行号格，默认透明。
+        // 颜色用固定变量而非 currentColor —— 父格悬停时 color 已被设为
+        // transparent，继承下去箭头会一起消失。
+        '.cm-md-gutter-fold': {
+            position: 'absolute',
+            inset: '0',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            opacity: '0',
+            cursor: 'pointer',
+            color: 'var(--livewritemd-fold-color, #4fc1ff)',
+            transition: 'opacity 0.15s ease',
+        },
+        // 悬停行号格：箭头淡入
+        '.cm-lineNumbers .cm-gutterElement:hover > .cm-md-gutter-fold': {
+            opacity: '1',
+        },
+        // 折叠态：箭头常驻、旋转朝右
+        '.cm-lineNumbers .cm-gutterElement.is-folded > .cm-md-gutter-fold': {
+            opacity: '1',
+        },
+        '.cm-lineNumbers .cm-gutterElement.is-folded > .cm-md-gutter-fold svg':
+            {
+                transform: 'rotate(-90deg)',
+            },
+        '&light .cm-md-gutter-fold': {
+            color: 'var(--livewritemd-fold-color, #0969da)',
+        },
+        // =================================================================
         // Indent guide lines (for nested list items)
         // =================================================================
-        // 层级引导线：一条 repeating-linear-gradient 竖着铺，铺的范围由
-        // background-size 卡死在「层级 × 缩进单位」里，所以一级缩进看到一条线、
-        // 三级缩进看到三条线。层级和单位由 plugin.ts 现算后写进这两个变量
-        // （见 collectListIndentDecorations），默认值只是拿不到测量结果时的兜底。
-        // 两层背景，一层画「祖先那几条线」，另一层画「自己圆点那一条」：
+        // 这个类本身只定义引导线的**颜色变量**；竖线背景、悬挂缩进（padding/
+        // text-indent）、定位原点全部由 plugin.ts 按真实测量结果写成行内样式，
+        // 见 collectListIndentDecorations 与 helpers.ts 的 createListIndentStyle。
         //
-        // - 祖先线（第 0 … level-1 条）是**接上一行**过来的，要铺满整行高度才连得上；
-        // - 自己那条线要从**圆点中心**往下垂（直到最后一级），所以只画下半行：
-        //   起点压在垂直中点（50%）上，高度 50%。`--cm-md-indent-own` 没有子级时给 0%，
-        //   那条线就不画了（光杆条目下面没有东西可指）。
-        //
-        // 横向位置统一加上 `--cm-md-indent-dot`：圆点的圆心在 `- ` 盒子里
-        // 「半个 `-` 宽」的位置（需求：圆点以 `-` 的中点为圆心），竖线不跟着挪
-        // 就会从圆点左边擦过去。这个偏移由 helpers.ts 量出来，见 collectListIndentDecorations。
-        '.cm-md-indent': {
-            '--cm-md-indent-color': 'rgba(128,128,128,0.25)',
-            // 定位原点是**正文内容区**的左边缘（不是行盒边缘）：行内边距由 CSS 自己算，
-            // 竖线的横向坐标就只剩「层级 × 缩进单位 + 半个 `-` 宽」，不用去问 DOM。
-            backgroundOrigin: 'content-box',
-            backgroundImage:
-                'repeating-linear-gradient(to right, var(--cm-md-indent-color) 0 1px, transparent 1px var(--cm-md-indent-unit, 1.6em)), linear-gradient(to right, var(--cm-md-indent-color) 0 1px, transparent 1px)',
-            backgroundSize:
-                'calc(var(--cm-md-indent-level, 0) * var(--cm-md-indent-unit, 1.6em)) 100%, 1px var(--cm-md-indent-own, 0%)',
-            backgroundRepeat: 'no-repeat, no-repeat',
-            backgroundPosition:
-                'var(--cm-md-indent-dot, 0px) top, calc(var(--cm-md-indent-level, 0) * var(--cm-md-indent-unit, 1.6em) + var(--cm-md-indent-dot, 0px)) 50%',
-        },
-        '&light .cm-md-indent': {
-            '--cm-md-indent-color': 'rgba(0,0,0,0.14)',
-        },
+        // 引导线载体类（背景由 plugin 按层级写成行内样式；颜色为 rainbow，
+        // 见 helpers.ts 的 rainbowIndentColor）。此处无需颜色变量。
+
         // 行首空白被压成一个定宽空盒：宽高都由样式给，里面的空白不再占宽度，
         // 于是「空格缩进」和「Tab 缩进」写出来占的位置完全一样。
         // height:0 是为了不参与行盒高度计算——否则行高会被悄悄垫高一点。
@@ -1120,6 +1153,56 @@ export function createBaseThemeStyles(): Extension {
             height: '0',
             overflow: 'hidden',
             verticalAlign: 'baseline',
+        },
+
+        // =================================================================
+        // Heading fold chevron（标题章节折叠箭头）
+        // =================================================================
+        // 根盒 0 宽、1em 高：为内部箭头提供垂直居中参照；
+        // 水平位置由 widget 行内 left:-4px 推到行号/正文分界处。
+        '.cm-md-heading-fold': {
+            position: 'relative',
+            display: 'inline-block',
+            width: '0',
+            height: '1em',
+            margin: '0',
+            // 默认低调，hover 该行才出现
+            color:
+                'var(--livewritemd-fold-color, rgba(200,205,215,0.6))',
+            opacity: '0',
+            cursor: 'pointer',
+            transition: 'opacity 0.15s ease',
+        },
+        '.cm-md-heading-fold svg': {
+            position: 'absolute',
+            left: '0',
+            top: '50%',
+            transform: 'translate(-50%, -50%)',
+        },
+        '.cm-line:hover > .cm-md-heading-fold, .cm-md-heading-fold.is-folded':
+            {
+                opacity: '1',
+            },
+        // 悬停（未折叠）：与列表 chevron 一致，用 accent 色
+        '.cm-line:hover > .cm-md-heading-fold:not(.is-folded)': {
+            color:
+                'var(--livewritemd-fold-color, var(--livewritemd-accent, #4fc1ff))',
+        },
+        // 折叠态：accent 色 + 旋转朝右
+        '.cm-md-heading-fold.is-folded': {
+            color:
+                'var(--livewritemd-fold-color, var(--livewritemd-accent, #4fc1ff))',
+        },
+        '.cm-md-heading-fold.is-folded svg': {
+            transform: 'translate(-50%, -50%) rotate(-90deg)',
+        },
+        // 浅色主题：默认低调
+        '&light .cm-md-heading-fold': {
+            color:
+                'var(--livewritemd-fold-color, rgba(25,30,40,0.55))',
+        },
+        '&light .cm-line:hover > .cm-md-heading-fold:not(.is-folded), &light .cm-md-heading-fold.is-folded': {
+            color: 'var(--livewritemd-fold-color, #0969da)',
         },
 
         // =================================================================
@@ -1209,7 +1292,7 @@ export function createBaseThemeStyles(): Extension {
         // 内容居中，超出的一小部分裁掉。
         //
         // 高度**就是 2.5 行**，而且这条公式写在这里、不写进行内 style：
-        //   - 行高跟着 `--flowmd-line-height`（webviewContent.ts 注进来的用户设置），
+        //   - 行高跟着 `--livewritemd-line-height`（webviewContent.ts 注进来的用户设置），
         //     用 em 现算，所以改字号/滚轮缩放/换行高设置都会自己跟上；
         //   - 换成 JS 写死的 px 会**钉死**在首次构建那一刻：那时 `.cm-line` 还不存在，
         //     行高量不到、只能猜，猜错的值会被 CM 连同 DOM 一起缓存住
@@ -1224,7 +1307,7 @@ export function createBaseThemeStyles(): Extension {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            height: 'calc(2.5 * var(--flowmd-line-height, 1.7em))',
+            height: 'calc(2.5 * var(--livewritemd-line-height, 1.7em))',
             overflow: 'hidden',
             textAlign: 'center',
             margin: '0',

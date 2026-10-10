@@ -1,59 +1,144 @@
-# Lyjy ObsidianLike MD for VS Code
+# LiveWriteMD
 
-一个面向 VS Code 的 Markdown 编辑器扩展，主打 Obsidian 风格的实时预览、右侧大纲、可拖动分栏和更贴近编辑器的阅读体验。
-## 打包
-npx @vscode/vsce ls --no-dependencies --ignoreFile .vscodeignore
+**在 VS Code 里边写边渲染的所见即所得 Markdown 编辑器。**
 
-## 项目仓库
+实时预览 · 三种模式 · Mermaid 图表 · KaTeX 公式 · 可视化表格 · PDF/HTML 导出 · 完整中文输入法支持
 
-- GitHub: [lyjy-kq/lyjy-obsidianlike-md-forvscode](https://github.com/lyjy-kq/lyjy-obsidianlike-md-forvscode)
-- Issues: [提交问题](https://github.com/lyjy-kq/lyjy-obsidianlike-md-forvscode/issues)
-- README: [项目说明](https://github.com/lyjy-kq/lyjy-obsidianlike-md-forvscode#readme)
+---
 
-## 功能
+LiveWriteMD 把「实时预览（Live Preview）」搬进了 VS Code：你写下的
+Markdown 标记语法在光标离开的瞬间渲染成最终样式，想修改时点回去又是源码——不需要在
+「编辑器」和「预览页」两个标签之间来回切换。`.md` 文件默认直接用 LiveWriteMD 打开。
 
-- Markdown 实时编辑与预览
-- 右侧大纲导航
-- 可拖动并持久化保存的大纲宽度
-- `Ctrl + 滚轮` 调整正文缩放，并自动保存字号
-- 行号、自动换行、可读行宽设置
-- 图片插入、导出 HTML、主题适配
+## ✨ 核心亮点
 
-## 安装与开发
+- **真·所见即所得**：标记符号实时淡入淡出，排版结果就是最终文档的样子；点击任意一行即可就地编辑源码，双击还能把源码行「钉」住。
+- **三种模式自由切换**：实时预览 / 源码 / 阅读，可设默认模式，也能记住每个文件上次用的模式。
+- **丰富的块级渲染**：表格、Mermaid、KaTeX、脚注、任务列表、折叠块、YAML Frontmatter 全部直接渲染。
+- **完整中文输入法（IME）支持**：拼音组词期间不会误触发装饰、不会宽度跳变，中文写作体验与英文一致。
+- **应用内设置面板**：几十个颜色、字号、排版选项实时预览，无需手写 `settings.json`。
+- **一键导出 PDF / HTML**：导出的 HTML 样式自包含，PDF 走无头浏览器，排版与编辑器内一致。
+
+## 📑 三种编辑模式
+
+| 模式 | 说明 |
+| --- | --- |
+| **实时预览 Live** | 默认模式。边写边渲染，光标所在处显示 Markdown 源码，离开后自动渲染 |
+| **阅读 Viewer** | 只读的渲染视图，适合审阅文档，复选框仍可勾选 |
+| **源码 Source** | 只显示 Markdown 原文，等价于传统文本编辑器 |
+
+点击编辑器标题栏的模式按钮即可切换（可在设置里选择「单按钮循环」或「直达按钮」样式），
+也可以用命令面板或正文右键菜单切换。
+
+## 🧩 功能一览
+
+### 实时渲染的 Markdown 元素
+
+- **标题** H1–H6：颜色与字号倍率均可单独定制
+- **行内格式**：加粗、斜体（可选真斜体字形）、删除线、行内代码
+- **链接**：`[文字](地址)`、裸 URL、空链、本地文件路径
+- **引用块**与**分隔线**
+- **有序 / 无序列表**：续行悬挂缩进对齐、层级引导线
+- **任务列表**：渲染成复选框，直接点击即可勾选，源码同步更新
+- **表格**：可视化渲染，表头底色、斑马纹、选中格子高亮；右键菜单可直接增删行列
+- **代码块**：数十种编程语言语法高亮，右上角一键复制
+- **数学公式**：行内与块级 KaTeX 实时渲染
+- **Mermaid 图表**：流程图、时序图等直接出图
+- **脚注引用 / 定义**、**`<details>` 折叠块**、**YAML Frontmatter** 折叠显示
+- **图片**：自动居中、宽度可按比例调整
+
+### 大纲与折叠
+
+- 右侧**大纲面板**：层级展示全部标题，点击跳转、随光标自动定位
+- 大纲宽度**可拖拽调节**并持久化保存，支持缩进引导线、打开文件时自动展开
+- **悬停行号显示折叠箭头**：可折叠标题章节与嵌套列表，折叠后不影响正文编辑
+
+### 图片处理
+
+- `Ctrl+Shift+I` 插入图片文件
+- **粘贴 / 拖拽**图片自动保存到文档旁的 `assets` 目录（目录名可配置）并插入链接
+- 右键菜单可**下载文档中的远程图片**到本地
+
+### 导出
+
+- **Export as HTML**：生成样式自包含的 HTML 文件，可直接分享
+- **Export as PDF**：通过无头 Edge/Chrome 打印，排版所见即所得（浏览器路径可配置）
+
+### 编辑体验细节
+
+- 完整 IME 支持：中文组词、候选窗状态处理正确，不打断输入
+- **粘贴裸 URL 自动包裹**成 Markdown 链接
+- **括号 / 引号自动配对**
+- 当前行高亮、空白字符显形
+- `Ctrl + 滚轮`调整正文字号并自动保存
+- 大文件打开前警告（阈值可设，0 关闭）
+- 正文**右键菜单**：模式切换、插入图片、导出、表格增删行列、下载远程图片
+
+## ⌨️ 快捷键
+
+| 快捷键 | 功能 |
+| --- | --- |
+| `Ctrl + Shift + I` | 插入图片 |
+| `Ctrl + 滚轮` | 正文字号缩放（自动保存） |
+| 单击渲染行 | 展开该行源码进行编辑 |
+| 双击 | 钉住 / 取消钉住该行源码 |
+| 点击复选框 | 勾选任务项 |
+
+更多命令在 `Ctrl+Shift+P` 命令面板中输入 **LiveWriteMD** 即可找到：
+
+- `LiveWriteMD: Live Preview Mode` / `Viewer Mode` / `Source Mode`
+- `LiveWriteMD: Export as HTML` / `Export as PDF`
+- `LiveWriteMD: 显示/隐藏大纲`
+- `LiveWriteMD: 设置`
+- `LiveWriteMD: Insert Image`
+- `Open with LiveWriteMD`（资源管理器右键 `.md` 文件）
+
+## ⚙️ 设置与个性化
+
+点击编辑器标题栏的**齿轮图标**打开应用内设置面板（或执行命令 `LiveWriteMD: 设置`），
+所有改动实时生效、自动保存。设置按分组组织：
+
+- **通用**：默认模式、模式切换样式、记住每个文件的模式、智能 URL 粘贴
+- **编辑器**：行号、自动换行、正文最大宽度（可读行宽）、字号缩放、当前行高亮、空白字符
+- **标题与文字**：H1–H6 颜色、H1 字号、加粗 / 斜体 / 删除线颜色、斜体真倾斜
+- **代码**：行内代码颜色底色与字号、代码块底色与边线
+- **链接与引用**：链接、引用竖线与文字、分隔线颜色
+- **表格**：边框、表头、斑马纹、选中格子颜色
+- **列表与复选框**：列表圆点、复选框强调色
+- **大纲**：自动展开、默认宽度、缩进引导线
+- **图片与媒体**：图片保存目录、媒体默认宽度、居中对齐
+- **高级**：明暗主题、同步防抖、拖拽判定、双击钉住、大文件阈值、PDF 浏览器路径、调试日志
+
+> 所有颜色项**留空即「自动」**——跟随 VS Code 当前明暗主题；选择颜色后才覆盖，可随时改回。
+
+## 🚀 快速开始
+
+1. 安装扩展。
+2. 打开任意 `.md` 文件，即默认以实时预览模式打开。
+3. 直接开始写作；点标题栏齿轮调整外观，或用右侧大纲浏览长文档。
+
+## 📦 安装
+
+- **VS Code Marketplace**：在扩展面板搜索 **LiveWriteMD** 安装。
+- **从 VSIX 安装**：
+  1. `Ctrl+Shift+P` → `Extensions: Install from VSIX...`
+  2. 选择下载的 `livewrite-md<版本>.vsix`
+  3. 执行 `Developer: Reload Window` 重载窗口
+
+## 🛠️ 开发
 
 ```bash
-npm install
-npm run build
+npm install        # 安装依赖
+npm run build      # 打包扩展宿主与 webview
+npm run watch      # watch 模式持续构建
+npm run package:vsix  # 生成固定文件名的安装包 livewrite-md<版本>.vsix
 ```
 
-## 打包 VSIX
+## 🔗 仓库与反馈
 
-使用固定文件名生成安装包：
+- GitHub: [lyjy-kq/livewrite-md-forvscode](https://github.com/lyjy-kq/livewrite-md-forvscode)
+- 问题与建议：[提交 Issue](https://github.com/lyjy-kq/livewrite-md-forvscode/issues)
 
-```bash
-npm run package:vsix
-```
+## 🙏 致谢
 
-打包后会得到：
-
-```text
-lyjy-obsidianlike-md.vsix
-```
-
-## 从 release 安装 VSIX
-
-如果你从 `release` 下载到了 `lyjy-obsidianlike-md.vsix` 文件，可以按下面步骤安装到 VS Code：
-
-1. 打开 VS Code。
-2. 按 `Ctrl+Shift+P` 打开命令面板。
-3. 输入并选择 `Extensions: Install from VSIX...`。
-4. 选择你下载的 `lyjy-obsidianlike-md.vsix` 文件。
-5. 安装完成后，执行 `Developer: Reload Window` 重载窗口。
-
-如果没有立刻生效，也可以直接重启 VS Code 一次。
-
-打包后的扩展入口位于 `dist/extension.js`。
-
-## 说明
-
-项目灵感来自 FlowMD，感谢原项目提供的思路。
+项目的实时预览交互灵感来自 [Obsidian](https://obsidian.md/)，在此致谢。

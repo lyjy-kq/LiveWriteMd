@@ -5,7 +5,7 @@
  *
  * 1. 持有当前全部设置（默认值来自 settingsSchema 的 getDefaultSettings）；
  * 2. 把设置同步成 documentElement 上的 CSS 自定义属性（颜色 / 尺寸），
- *    styles.ts 里所有 `var(--flowmd-*, 默认)` 读的就是这里；
+ *    styles.ts 里所有 `var(--livewritemd-*, 默认)` 读的就是这里；
  * 3. 给非渲染逻辑（拖拽阈值、双击钉住、引导线开关等）提供类型化读取。
  *
  * 颜色项：值为空串 `""` 时**移除**对应变量，回到「自动 / 跟随主题」；
@@ -60,73 +60,73 @@ function applyColor(
 function applyOneToCss(key: string, value: SettingValue): void {
     switch (key) {
         // ---- 标题颜色 ----
-        case 'h1Color': applyColor('--flowmd-h1-color', value); break;
-        case 'h2Color': applyColor('--flowmd-h2-color', value); break;
-        case 'h3Color': applyColor('--flowmd-h3-color', value); break;
-        case 'h4Color': applyColor('--flowmd-h4-color', value); break;
-        case 'h5Color': applyColor('--flowmd-h5-color', value); break;
-        case 'h6Color': applyColor('--flowmd-h6-color', value); break;
+        case 'h1Color': applyColor('--livewritemd-h1-color', value); break;
+        case 'h2Color': applyColor('--livewritemd-h2-color', value); break;
+        case 'h3Color': applyColor('--livewritemd-h3-color', value); break;
+        case 'h4Color': applyColor('--livewritemd-h4-color', value); break;
+        case 'h5Color': applyColor('--livewritemd-h5-color', value); break;
+        case 'h6Color': applyColor('--livewritemd-h6-color', value); break;
         case 'h1Size':
-            setVar('--flowmd-h1-size', `${Number(value)}em`);
+            setVar('--livewritemd-h1-size', `${Number(value)}em`);
             break;
 
         // ---- 加粗 / 斜体 / 删除线 ----
-        case 'boldColor': applyColor('--flowmd-bold-color', value); break;
-        case 'italicColor': applyColor('--flowmd-italic-color', value); break;
+        case 'boldColor': applyColor('--livewritemd-bold-color', value); break;
+        case 'italicColor': applyColor('--livewritemd-italic-color', value); break;
         case 'strikethroughColor':
-            applyColor('--flowmd-strikethrough-color', value);
+            applyColor('--livewritemd-strikethrough-color', value);
             break;
         case 'italicSlant':
-            setVar('--flowmd-italic-style', value ? 'italic' : 'normal');
+            setVar('--livewritemd-italic-style', value ? 'italic' : 'normal');
             break;
 
         // ---- 行内代码 ----
         case 'inlineCodeColor':
-            applyColor('--flowmd-inline-code-color', value);
+            applyColor('--livewritemd-inline-code-color', value);
             break;
         case 'inlineCodeBackground':
-            applyColor('--flowmd-inline-code-background', value);
+            applyColor('--livewritemd-inline-code-background', value);
             break;
         case 'inlineCodeScale':
-            setVar('--flowmd-inline-code-scale', `${Number(value)}em`);
+            setVar('--livewritemd-inline-code-scale', `${Number(value)}em`);
             break;
 
         // ---- 代码块 ----
         case 'codeblockBackground':
-            applyColor('--flowmd-codeblock-background', value);
+            applyColor('--livewritemd-codeblock-background', value);
             break;
         case 'codeblockEdge':
-            applyColor('--flowmd-codeblock-edge', value);
+            applyColor('--livewritemd-codeblock-edge', value);
             break;
 
         // ---- 链接 / 引用 / 分隔线 ----
-        case 'linkColor': applyColor('--flowmd-link-color', value); break;
+        case 'linkColor': applyColor('--livewritemd-link-color', value); break;
         case 'quoteBorderColor':
-            applyColor('--flowmd-quote-border-color', value);
+            applyColor('--livewritemd-quote-border-color', value);
             break;
         case 'quoteTextColor':
-            applyColor('--flowmd-quote-text-color', value);
+            applyColor('--livewritemd-quote-text-color', value);
             break;
-        case 'hrColor': applyColor('--flowmd-hr-color', value); break;
+        case 'hrColor': applyColor('--livewritemd-hr-color', value); break;
 
         // ---- 表格 ----
         case 'tableBorderColor':
-            applyColor('--flowmd-table-border-color', value);
+            applyColor('--livewritemd-table-border-color', value);
             break;
         case 'tableHeaderBackground':
-            applyColor('--flowmd-table-header-background', value);
+            applyColor('--livewritemd-table-header-background', value);
             break;
         case 'tableStripeBackground':
-            applyColor('--flowmd-table-stripe-background', value);
+            applyColor('--livewritemd-table-stripe-background', value);
             break;
         case 'tableSelectedBackground':
-            applyColor('--flowmd-table-selected-background', value);
+            applyColor('--livewritemd-table-selected-background', value);
             break;
 
         // ---- 列表 / 复选框 ----
-        case 'bulletColor': applyColor('--flowmd-bullet-color', value); break;
+        case 'bulletColor': applyColor('--livewritemd-bullet-color', value); break;
         case 'checkboxAccent':
-            applyColor('--flowmd-checkbox-accent', value);
+            applyColor('--livewritemd-checkbox-accent', value);
             break;
 
         // ---- 媒体宽度（变量名沿用历史命名）----
@@ -134,7 +134,7 @@ function applyOneToCss(key: string, value: SettingValue): void {
             setVar('--cm-md-media-width', `${Number(value)}%`);
             break;
         case 'mediaCenter':
-            setVar('--flowmd-media-center-align', value ? 'center' : 'left');
+            setVar('--livewritemd-media-center-align', value ? 'center' : 'left');
             break;
 
         default:

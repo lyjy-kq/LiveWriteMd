@@ -2,7 +2,7 @@
  * CodeMirrorEditor Class Implementation
  *
  * This module implements the CodeMirrorEditor class, which wraps CodeMirror 6
- * to provide a clean API for the FlowMD Webview editor.
+ * to provide a clean API for the LiveWriteMD Webview editor.
  *
  * @module webview/codemirror/editor
  *
@@ -31,7 +31,8 @@ import {
 } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { search, searchKeymap } from '@codemirror/search';
-import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+import { markdown } from '@codemirror/lang-markdown';
+import { tunedMarkdownLanguage } from './extensions/markdownParser.js';
 import { LanguageDescription, LanguageSupport, StreamLanguage } from '@codemirror/language';
 
 // CM6 language packages (static imports for IIFE bundle compatibility)
@@ -61,11 +62,31 @@ import { createThemeExtension } from './extensions/theme';
 import { markdownKeymap } from './extensions/keymap.js';
 import { codeBlockSelectionPlugin } from './extensions/livePreview/codeBlockSelection.js';
 import { createLivePreviewExtension } from './extensions/livePreview/index.js';
+import { gutterFold } from './extensions/gutterFold.js';
+import { listEnterExtension } from './extensions/listEnter.js';
 import { settingsState } from '../settingsState.js';
 import { searchMatchCount } from './extensions/searchMatchCount.js';
 
 import type { ContentChangeCallback } from './types';
-import type { FlowMdEditorSettings } from '../../shared/types.js';
+import type { LiveWriteMdEditorSettings } from '../../shared/types.js';
+
+/**
+ * 检测 VS Code 当前主题类型。
+ *
+ * VS Code 会在 webview 的 <body> 上自动挂 `vscode-light` / `vscode-dark` /
+ * `vscode-high-contrast` / `vscode-high-contrast-light` 类。
+ * 默认按深色兜底（与 VS Code 默认主题一致）。
+ */
+function detectVsCodeTheme(): 'light' | 'dark' {
+    const body = document.body;
+    if (
+        body.classList.contains('vscode-light') ||
+        body.classList.contains('vscode-high-contrast-light')
+    ) {
+        return 'light';
+    }
+    return 'dark';
+}
 
 /**
  * 光标行变化回调。
@@ -239,7 +260,7 @@ class InvalidContainerError extends Error {
 /**
  * CodeMirrorEditor class
  *
- * Wraps CodeMirror 6 EditorView to provide a simplified API for the FlowMD editor.
+ * Wraps CodeMirror 6 EditorView to provide a simplified API for the LiveWriteMD editor.
  * Handles editor lifecycle (create/destroy), content management (set/get),
  * and content change notifications.
  *
@@ -285,6 +306,12 @@ export class CodeMirrorEditor {
 
     /** Compartment for dynamic live preview reconfiguration */
     private livePreviewCompartment = new Compartment();
+
+    /** Compartment for dynamic theme (light/dark) reconfiguration */
+    private themeCompartment = new Compartment();
+
+    /** Observer for VS Code theme kind changes */
+    private themeObserver: MutationObserver | null = null;
 
     /** Compartment for dynamic line wrapping reconfiguration */
     private lineWrappingCompartment = new Compartment();
@@ -336,7 +363,7 @@ export class CodeMirrorEditor {
      * @returns void
      */
     private applyFontScale(): void {
-        this.container.style.setProperty('--flowmd-font-scale', this.fontScale.toFixed(2));
+        this.container.style.setProperty('--livewritemd-font-scale', this.fontScale.toFixed(2));
     }
 
     /**
@@ -432,7 +459,7 @@ export class CodeMirrorEditor {
                 highlightSpecialChars(),
                 settingsState.getBoolean('highlightWhitespace') ? highlightWhitespace() : [],
             ]),
-            this.lineNumbersCompartment.of(lineNumbers()),
+            this.lineNumbersCompartment.of([lineNumbers(), gutterFold]),
 
             // Multiple selections / cursors (required for rectangular selection)
             EditorState.allowMultipleSelections.of(true),
@@ -517,6 +544,7 @@ export class CodeMirrorEditor {
             searchMatchCount,
 
             // Keybindings
+            listEnterExtension,
             keymap.of([
                 indentWithTab,
                 ...markdownKeymap,
@@ -527,13 +555,15 @@ export class CodeMirrorEditor {
 
             // Markdown language support with code block syntax highlighting
             markdown({
-                base: markdownLanguage,
+                base: tunedMarkdownLanguage,
                 codeLanguages,
                 addKeymap: true,
             }),
 
-            // Theme extension (VS Code integration, cursor/selection colors)
-            ...createThemeExtension(),
+            // Theme extension (light/dark, follows VS Code theme kind)
+            this.themeCompartment.of(
+                createThemeExtension(detectVsCodeTheme())
+            ),
 
             // Live Preview (Obsidian-style Markdown rendering, dynamically reconfigurable)
             this.livePreviewCompartment.of(createLivePreviewExtension()),
@@ -544,7 +574,7 @@ export class CodeMirrorEditor {
             EditorView.updateListener.of((update) => {
                 if (update.docChanged) {
                     console.debug(
-                        `[FlowMD] updateListener: docChanged=true suppressOnChange=${this.suppressOnChange} composing=${update.view.composing} hasCallback=${!!this.onChangeCallback}`
+                        `[LiveWriteMD] updateListener: docChanged=true suppressOnChange=${this.suppressOnChange} composing=${update.view.composing} hasCallback=${!!this.onChangeCallback}`
                     );
                 }
                 if (
@@ -554,7 +584,7 @@ export class CodeMirrorEditor {
                     this.onChangeCallback
                 ) {
                     console.debug(
-                        `[FlowMD] updateListener: calling onChangeCallback (docLen=${update.state.doc.length})`
+                        `[LiveWriteMD] updateListener: calling onChangeCallback (docLen=${update.state.doc.length})`
                     );
                     this.onChangeCallback(update.state.doc.toString());
                 }
@@ -608,7 +638,29 @@ export class CodeMirrorEditor {
         this.applyFontScale();
         this.reportViewportLine(this.view);
 
+        // 监听 VS Code 主题切换：body 类变化时重配主题（深浅色同步切换）
+        this.startThemeObserver();
+
         return Promise.resolve();
+    }
+
+    /** 监听 document.body 上的 VS Code 主题类变化，动态切换编辑器主题。 */
+    private startThemeObserver(): void {
+        let current = detectVsCodeTheme();
+        this.themeObserver = new MutationObserver(() => {
+            const next = detectVsCodeTheme();
+            if (next === current || !this.view) return;
+            current = next;
+            this.view.dispatch({
+                effects: this.themeCompartment.reconfigure(
+                    createThemeExtension(next)
+                ),
+            });
+        });
+        this.themeObserver.observe(document.body, {
+            attributes: true,
+            attributeFilter: ['class'],
+        });
     }
 
     /**
@@ -617,6 +669,10 @@ export class CodeMirrorEditor {
      * Safe to call multiple times or before create().
      */
     destroy(): void {
+        if (this.themeObserver) {
+            this.themeObserver.disconnect();
+            this.themeObserver = null;
+        }
         if (this.view) {
             if (this.viewportLineFrame !== null) {
                 window.cancelAnimationFrame(this.viewportLineFrame);
@@ -653,7 +709,7 @@ export class CodeMirrorEditor {
         // not-composing transition and sends the final content at that point.
         if (this.view.composing) {
             console.debug(
-                `[FlowMD] setContent SKIPPED (composing=true) contentLen=${content.length}`
+                `[LiveWriteMD] setContent SKIPPED (composing=true) contentLen=${content.length}`
             );
             return;
         }
@@ -665,7 +721,7 @@ export class CodeMirrorEditor {
             // Skip dispatch if content hasn't changed (prevents cursor reset after Ctrl+Z)
             if (this.view.state.doc.toString() === content) {
                 console.debug(
-                    `[FlowMD] setContent SKIPPED (content unchanged) contentLen=${content.length}`
+                    `[LiveWriteMD] setContent SKIPPED (content unchanged) contentLen=${content.length}`
                 );
                 return;
             }
@@ -678,7 +734,7 @@ export class CodeMirrorEditor {
             const scrollTop = this.view.scrollDOM.scrollTop;
 
             console.debug(
-                `[FlowMD] setContent DISPATCHING: currentLen=${currentLength} newLen=${content.length} cursorPos=${cursorPos} newCursorPos=${newCursorPos} hasFocus=${this.view.hasFocus}`
+                `[LiveWriteMD] setContent DISPATCHING: currentLen=${currentLength} newLen=${content.length} cursorPos=${cursorPos} newCursorPos=${newCursorPos} hasFocus=${this.view.hasFocus}`
             );
 
             // Replace all content while preserving cursor and scroll
@@ -692,7 +748,7 @@ export class CodeMirrorEditor {
                 annotations: Transaction.addToHistory.of(false),
             });
 
-            console.debug(`[FlowMD] setContent DONE: hasFocus=${this.view.hasFocus}`);
+            console.debug(`[LiveWriteMD] setContent DONE: hasFocus=${this.view.hasFocus}`);
 
             // Restore scroll position (external updates shouldn't move the view)
             this.view.scrollDOM.scrollTop = scrollTop;
@@ -914,7 +970,7 @@ export class CodeMirrorEditor {
      *
      * @param settings - The editor settings to apply
      */
-    applySettings(settings: FlowMdEditorSettings): void {
+    applySettings(settings: LiveWriteMdEditorSettings): void {
         if (!this.view) return;
 
         this.fontScale = Math.min(
@@ -925,7 +981,7 @@ export class CodeMirrorEditor {
         // Line numbers
         this.view.dispatch({
             effects: this.lineNumbersCompartment.reconfigure(
-                settings.lineNumbers ? lineNumbers() : []
+                settings.lineNumbers ? [lineNumbers(), gutterFold] : []
             ),
         });
 
@@ -957,7 +1013,7 @@ export class CodeMirrorEditor {
         const editorEl = this.container;
         const maxWidth =
             settings.readableLineLength > 0 ? `${settings.readableLineLength}px` : '100%';
-        editorEl.style.setProperty('--flowmd-max-width', maxWidth);
+        editorEl.style.setProperty('--livewritemd-max-width', maxWidth);
 
         this.applyFontScale();
     }

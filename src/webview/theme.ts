@@ -1,5 +1,5 @@
 /**
- * FlowMD Webview Theme Manager
+ * LiveWriteMD Webview Theme Manager
  *
  * This module provides the WebviewThemeManager class that handles theme
  * switching functionality for the Webview editor.

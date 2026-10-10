@@ -1,18 +1,18 @@
 {
-    "name": "lyjy-obsidianlike-md",
-    "displayName": "Lyjy ObsidianLike MD for VS Code",
+    "name": "livewrite-md",
+    "displayName": "LiveWriteMD",
     "description": "WYSIWYG Markdown editor for VS Code with Obsidian-style live preview. Tables, Mermaid diagrams, KaTeX math, code block syntax highlighting, and full IME support.",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "publisher": "lyjy",
     "license": "SEE LICENSE IN LICENSE",
     "repository": {
         "type": "git",
-        "url": "https://github.com/lyjy-kq/lyjy-obsidianlike-md-forvscode"
+        "url": "https://github.com/lyjy-kq/livewrite-md-forvscode"
     },
     "bugs": {
-        "url": "https://github.com/lyjy-kq/lyjy-obsidianlike-md-forvscode/issues"
+        "url": "https://github.com/lyjy-kq/livewrite-md-forvscode/issues"
     },
-    "homepage": "https://github.com/lyjy-kq/lyjy-obsidianlike-md-forvscode#readme",
+    "homepage": "https://github.com/lyjy-kq/livewrite-md-forvscode#readme",
     "engines": {
         "vscode": "^1.85.0"
     },
@@ -37,12 +37,6 @@
     },
     "markdown": "github",
     "qna": "marketplace",
-    "activationEvents": [
-        "onCustomEditor:flowMd.editor",
-        "onCommand:flowMd.exportAsHtml",
-        "onCommand:flowMd.exportAsPdf",
-        "onCommand:flowMd.toggleOutline"
-    ],
     "main": "./dist/extension.js",
     "contributes": {
         "configurationDefaults": {
@@ -52,16 +46,14 @@
         },
         "customEditors": [
             {
-                "viewType": "flowMd.editor",
-                "displayName": "FlowMD Editor",
+                "viewType": "liveWriteMd.editor",
+                "displayName": "LiveWriteMD Editor",
                 "selector": [
                     {
-                        "filenamePattern": "*.md",
-                        "scheme": "file"
+                        "filenamePattern": "*.md"
                     },
                     {
-                        "filenamePattern": "*.md",
-                        "scheme": "untitled"
+                        "filenamePattern": "*.md"
                     }
                 ],
                 "priority": "default"
@@ -69,163 +61,163 @@
         ],
         "commands": [
             {
-                "command": "flowMd.openWith",
-                "title": "Open with FlowMD",
-                "category": "FlowMD"
+                "command": "liveWriteMd.openWith",
+                "title": "Open with LiveWriteMD",
+                "category": "LiveWriteMD"
             },
             {
-                "command": "flowMd.enterViewerMode",
-                "title": "FlowMD: Viewer Mode",
-                "category": "FlowMD",
+                "command": "liveWriteMd.enterViewerMode",
+                "title": "LiveWriteMD: Viewer Mode",
+                "category": "LiveWriteMD",
                 "icon": "$(book)"
             },
             {
-                "command": "flowMd.enterSourceMode",
-                "title": "FlowMD: Source Mode",
-                "category": "FlowMD",
+                "command": "liveWriteMd.enterSourceMode",
+                "title": "LiveWriteMD: Source Mode",
+                "category": "LiveWriteMD",
                 "icon": "$(code)"
             },
             {
-                "command": "flowMd.enterLiveMode",
-                "title": "FlowMD: Live Preview Mode",
-                "category": "FlowMD",
+                "command": "liveWriteMd.enterLiveMode",
+                "title": "LiveWriteMD: Live Preview Mode",
+                "category": "LiveWriteMD",
                 "icon": "$(edit)"
             },
             {
-                "command": "flowMd.exportAsHtml",
+                "command": "liveWriteMd.exportAsHtml",
                 "title": "Export as HTML",
-                "category": "FlowMD"
+                "category": "LiveWriteMD"
             },
             {
-                "command": "flowMd.exportAsPdf",
+                "command": "liveWriteMd.exportAsPdf",
                 "title": "Export as PDF",
-                "category": "FlowMD"
+                "category": "LiveWriteMD"
             },
             {
-                "command": "flowMd.toggleOutline",
-                "title": "FlowMD: 显示/隐藏大纲",
-                "category": "FlowMD",
+                "command": "liveWriteMd.toggleOutline",
+                "title": "LiveWriteMD: 显示/隐藏大纲",
+                "category": "LiveWriteMD",
                 "icon": "$(list-unordered)"
             },
             {
-                "command": "flowMd.openSettings",
+                "command": "liveWriteMd.openSettings",
                 "title": "设置",
-                "category": "FlowMD",
+                "category": "LiveWriteMD",
                 "icon": "$(settings-gear)"
             },
             {
-                "command": "flowMd.insertImage",
+                "command": "liveWriteMd.insertImage",
                 "title": "Insert Image",
-                "category": "FlowMD",
+                "category": "LiveWriteMD",
                 "icon": "$(file-media)"
             },
             {
-                "command": "flowMd.insertImageFromExplorer",
-                "title": "Insert into FlowMD",
-                "category": "FlowMD",
+                "command": "liveWriteMd.insertImageFromExplorer",
+                "title": "Insert into LiveWriteMD",
+                "category": "LiveWriteMD",
                 "icon": "$(file-media)"
             }
         ],
         "keybindings": [
             {
-                "command": "flowMd.noop",
+                "command": "liveWriteMd.noop",
                 "key": "ctrl+z",
                 "mac": "cmd+z",
-                "when": "activeCustomEditorId == flowMd.editor"
+                "when": "activeCustomEditorId == liveWriteMd.editor"
             },
             {
-                "command": "flowMd.noop",
+                "command": "liveWriteMd.noop",
                 "key": "ctrl+shift+z",
                 "mac": "cmd+shift+z",
-                "when": "activeCustomEditorId == flowMd.editor"
+                "when": "activeCustomEditorId == liveWriteMd.editor"
             },
             {
-                "command": "flowMd.noop",
+                "command": "liveWriteMd.noop",
                 "key": "ctrl+y",
                 "mac": "cmd+y",
-                "when": "activeCustomEditorId == flowMd.editor"
+                "when": "activeCustomEditorId == liveWriteMd.editor"
             },
             {
-                "command": "flowMd.insertImage",
+                "command": "liveWriteMd.insertImage",
                 "key": "ctrl+shift+i",
                 "mac": "cmd+shift+i",
-                "when": "activeCustomEditorId == flowMd.editor"
+                "when": "activeCustomEditorId == liveWriteMd.editor"
             }
         ],
         "menus": {
             "explorer/context": [
                 {
-                    "command": "flowMd.openWith",
+                    "command": "liveWriteMd.openWith",
                     "when": "resourceExtname == .md",
                     "group": "navigation"
                 },
                 {
-                    "command": "flowMd.insertImageFromExplorer",
-                    "when": "activeCustomEditorId == flowMd.editor && resourceExtname =~ /^\\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i",
+                    "command": "liveWriteMd.insertImageFromExplorer",
+                    "when": "activeCustomEditorId == liveWriteMd.editor && resourceExtname =~ /^\\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i",
                     "group": "navigation@2"
                 },
                 {
-                    "command": "flowMd.exportAsHtml",
+                    "command": "liveWriteMd.exportAsHtml",
                     "when": "resourceExtname == .md",
                     "group": "1_modification"
                 },
                 {
-                    "command": "flowMd.exportAsPdf",
+                    "command": "liveWriteMd.exportAsPdf",
                     "when": "resourceExtname == .md",
                     "group": "1_modification"
                 }
             ],
             "editor/title": [
                 {
-                    "command": "flowMd.toggleOutline",
-                    "when": "activeCustomEditorId == flowMd.editor",
+                    "command": "liveWriteMd.toggleOutline",
+                    "when": "activeCustomEditorId == liveWriteMd.editor",
                     "group": "navigation@9"
                 },
                 {
-                    "command": "flowMd.openSettings",
-                    "when": "activeCustomEditorId == flowMd.editor",
+                    "command": "liveWriteMd.openSettings",
+                    "when": "activeCustomEditorId == liveWriteMd.editor",
                     "group": "navigation@10"
                 }
             ]
         },
         "configuration": {
-            "title": "FlowMD",
+            "title": "LiveWriteMD",
             "properties": {
-                "flowMd.largeFileWarningThreshold": {
+                "liveWriteMd.largeFileWarningThreshold": {
                     "type": "number",
                     "default": 1048576,
                     "minimum": 0,
                     "description": "Large file warning threshold in bytes. Set to 0 to disable."
                 },
-                "flowMd.syncDebounceMs": {
+                "liveWriteMd.syncDebounceMs": {
                     "type": "number",
                     "default": 300,
                     "minimum": 50,
                     "maximum": 2000,
                     "description": "Sync debounce time in milliseconds"
                 },
-                "flowMd.enableDebugLog": {
+                "liveWriteMd.enableDebugLog": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Enable verbose debug logging. Logs appear in the Output panel (View > Output > FlowMD)."
+                    "description": "Enable verbose debug logging. Logs appear in the Output panel (View > Output > LiveWriteMD)."
                 },
-                "flowMd.lineNumbers": {
+                "liveWriteMd.lineNumbers": {
                     "type": "boolean",
                     "default": true,
                     "description": "Show line numbers"
                 },
-                "flowMd.wordWrap": {
+                "liveWriteMd.wordWrap": {
                     "type": "boolean",
                     "default": true,
                     "description": "Enable word wrap for long lines"
                 },
-                "flowMd.readableLineLength": {
+                "liveWriteMd.readableLineLength": {
                     "type": "number",
                     "default": 900,
                     "minimum": 0,
                     "description": "Max content width in pixels. Set to 0 for unlimited. Default: 900"
                 },
-                "flowMd.fontScale": {
+                "liveWriteMd.fontScale": {
                     "type": "number",
                     "default": 1,
                     "minimum": 0.5,
@@ -233,7 +225,7 @@
                     "description": "Editor body font size scale. Ctrl+wheel changes this value and saves it automatically.",
                     "markdownDescription": "编辑器正文的字体大小缩放倍率。按 `Ctrl+滚轮` 调整后会自动保存。"
                 },
-                "flowMd.theme": {
+                "liveWriteMd.theme": {
                     "type": "string",
                     "enum": [
                         "auto",
@@ -243,18 +235,18 @@
                     "default": "auto",
                     "description": "Theme setting (auto: follow VS Code theme)"
                 },
-                "flowMd.imageSaveFolder": {
+                "liveWriteMd.imageSaveFolder": {
                     "type": "string",
                     "default": "assets",
                     "description": "Folder name for saved images (relative to .md file). Default: assets"
                 },
-                "flowMd.pdfBrowserPath": {
+                "liveWriteMd.pdfBrowserPath": {
                     "type": "string",
                     "default": "",
                     "description": "Path to the Edge/Chrome executable used for PDF export. Leave empty to auto-detect.",
                     "markdownDescription": "导出 PDF 所用的 Edge/Chrome 可执行文件路径。留空则自动探测。"
                 },
-                "flowMd.defaultMode": {
+                "liveWriteMd.defaultMode": {
                     "type": "string",
                     "enum": [
                         "live",
@@ -269,7 +261,7 @@
                         "Viewer - Read-only rendered view"
                     ]
                 },
-                "flowMd.modeSwitcher": {
+                "liveWriteMd.modeSwitcher": {
                     "type": "string",
                     "enum": [
                         "cycle",
@@ -282,57 +274,57 @@
                         "Buttons - Show direct-jump buttons for the other two modes"
                     ]
                 },
-                "flowMd.rememberLastMode": {
+                "liveWriteMd.rememberLastMode": {
                     "type": "boolean",
                     "default": true,
                     "description": "Remember the editing mode used per file instead of always using Default mode."
                 },
-                "flowMd.smartUrlPaste": {
+                "liveWriteMd.smartUrlPaste": {
                     "type": "boolean",
                     "default": true,
                     "description": "Automatically wrap a pasted bare URL as a Markdown link."
                 },
-                "flowMd.highlightActiveLine": {
+                "liveWriteMd.highlightActiveLine": {
                     "type": "boolean",
                     "default": true,
                     "description": "Highlight the line that contains the cursor."
                 },
-                "flowMd.highlightWhitespace": {
+                "liveWriteMd.highlightWhitespace": {
                     "type": "boolean",
                     "default": false,
                     "description": "Render spaces and tabs with subtle markers."
                 },
-                "flowMd.h1Color": {
+                "liveWriteMd.h1Color": {
                     "type": "string",
                     "default": "",
                     "description": "Heading 1 color. Empty = auto (follow the theme)."
                 },
-                "flowMd.h2Color": {
+                "liveWriteMd.h2Color": {
                     "type": "string",
                     "default": "",
                     "description": "Heading 2 color. Empty = auto (follow the theme)."
                 },
-                "flowMd.h3Color": {
+                "liveWriteMd.h3Color": {
                     "type": "string",
                     "default": "",
                     "description": "Heading 3 color. Empty = auto (follow the theme)."
                 },
-                "flowMd.h4Color": {
+                "liveWriteMd.h4Color": {
                     "type": "string",
                     "default": "",
                     "description": "Heading 4 color. Empty = auto (follow the theme)."
                 },
-                "flowMd.h5Color": {
+                "liveWriteMd.h5Color": {
                     "type": "string",
                     "default": "",
                     "description": "Heading 5 color. Empty = auto (follow the theme)."
                 },
-                "flowMd.h6Color": {
+                "liveWriteMd.h6Color": {
                     "type": "string",
                     "default": "",
                     "description": "Heading 6 color. Empty = auto (follow the theme)."
                 },
-                "flowMd.h1Size": {
+                "liveWriteMd.h1Size": {
                     "type": "number",
                     "default": 1.2,
                     "minimum": 0.9,
@@ -340,37 +332,37 @@
                     "multipleOf": 0.01,
                     "description": "Heading 1 font size relative to body text."
                 },
-                "flowMd.boldColor": {
+                "liveWriteMd.boldColor": {
                     "type": "string",
                     "default": "",
                     "description": "Bold text color. Empty = auto (follow the theme)."
                 },
-                "flowMd.italicColor": {
+                "liveWriteMd.italicColor": {
                     "type": "string",
                     "default": "",
                     "description": "Italic text color. Empty = auto (follow the theme)."
                 },
-                "flowMd.italicSlant": {
+                "liveWriteMd.italicSlant": {
                     "type": "boolean",
                     "default": false,
                     "description": "Use a real slanted italic glyph instead of color-only emphasis."
                 },
-                "flowMd.strikethroughColor": {
+                "liveWriteMd.strikethroughColor": {
                     "type": "string",
                     "default": "",
                     "description": "Strikethrough color. Empty = auto (follow the theme)."
                 },
-                "flowMd.inlineCodeColor": {
+                "liveWriteMd.inlineCodeColor": {
                     "type": "string",
                     "default": "",
                     "description": "Inline code text color. Empty = auto (follow the theme)."
                 },
-                "flowMd.inlineCodeBackground": {
+                "liveWriteMd.inlineCodeBackground": {
                     "type": "string",
                     "default": "",
                     "description": "Inline code background color. Empty = auto (follow the theme)."
                 },
-                "flowMd.inlineCodeScale": {
+                "liveWriteMd.inlineCodeScale": {
                     "type": "number",
                     "default": 0.95,
                     "minimum": 0.8,
@@ -378,72 +370,72 @@
                     "multipleOf": 0.01,
                     "description": "Inline code font size relative to body text."
                 },
-                "flowMd.codeblockBackground": {
+                "liveWriteMd.codeblockBackground": {
                     "type": "string",
                     "default": "",
                     "description": "Code block background color. Empty = follow VS Code theme."
                 },
-                "flowMd.codeblockEdge": {
+                "liveWriteMd.codeblockEdge": {
                     "type": "string",
                     "default": "",
                     "description": "Code block edge color. Empty = follow VS Code theme."
                 },
-                "flowMd.linkColor": {
+                "liveWriteMd.linkColor": {
                     "type": "string",
                     "default": "",
                     "description": "Link color. Empty = auto (follow the theme)."
                 },
-                "flowMd.quoteBorderColor": {
+                "liveWriteMd.quoteBorderColor": {
                     "type": "string",
                     "default": "",
                     "description": "Blockquote left border color. Empty = auto (follow the theme)."
                 },
-                "flowMd.quoteTextColor": {
+                "liveWriteMd.quoteTextColor": {
                     "type": "string",
                     "default": "",
                     "description": "Blockquote text color. Empty = auto (follow the theme)."
                 },
-                "flowMd.hrColor": {
+                "liveWriteMd.hrColor": {
                     "type": "string",
                     "default": "",
                     "description": "Horizontal rule color. Empty = auto (follow the theme)."
                 },
-                "flowMd.tableBorderColor": {
+                "liveWriteMd.tableBorderColor": {
                     "type": "string",
                     "default": "",
                     "description": "Table border color. Empty = auto (follow the theme)."
                 },
-                "flowMd.tableHeaderBackground": {
+                "liveWriteMd.tableHeaderBackground": {
                     "type": "string",
                     "default": "",
                     "description": "Table header background color. Empty = auto (follow the theme)."
                 },
-                "flowMd.tableStripeBackground": {
+                "liveWriteMd.tableStripeBackground": {
                     "type": "string",
                     "default": "",
                     "description": "Background for striped (even) table rows. Empty = no stripes."
                 },
-                "flowMd.tableSelectedBackground": {
+                "liveWriteMd.tableSelectedBackground": {
                     "type": "string",
                     "default": "",
                     "description": "Selected table cell highlight color. Empty = auto (follow the theme)."
                 },
-                "flowMd.bulletColor": {
+                "liveWriteMd.bulletColor": {
                     "type": "string",
                     "default": "",
                     "description": "List bullet color. Empty = auto (follow the theme)."
                 },
-                "flowMd.checkboxAccent": {
+                "liveWriteMd.checkboxAccent": {
                     "type": "string",
                     "default": "",
                     "description": "Checkbox accent color. Empty = auto (follow the theme)."
                 },
-                "flowMd.outlineAutoOpen": {
+                "liveWriteMd.outlineAutoOpen": {
                     "type": "boolean",
                     "default": false,
                     "description": "Expand the outline automatically when a file opens."
                 },
-                "flowMd.outlineWidth": {
+                "liveWriteMd.outlineWidth": {
                     "type": "number",
                     "default": 280,
                     "minimum": 220,
@@ -451,31 +443,31 @@
                     "multipleOf": 4,
                     "description": "Default outline panel width in pixels."
                 },
-                "flowMd.outlineGuides": {
+                "liveWriteMd.outlineGuides": {
                     "type": "boolean",
                     "default": true,
                     "description": "Show indentation guides in the outline."
                 },
-                "flowMd.mediaWidth": {
+                "liveWriteMd.mediaWidth": {
                     "type": "number",
                     "default": 75,
                     "minimum": 20,
                     "maximum": 100,
                     "description": "Default media width as a percentage of body width."
                 },
-                "flowMd.mediaCenter": {
+                "liveWriteMd.mediaCenter": {
                     "type": "boolean",
                     "default": true,
                     "description": "Center media that occupies its own line."
                 },
-                "flowMd.dragThreshold": {
+                "liveWriteMd.dragThreshold": {
                     "type": "number",
                     "default": 4,
                     "minimum": 2,
                     "maximum": 15,
                     "description": "Mouse movement in pixels required to count as a drag-select."
                 },
-                "flowMd.doubleClickPin": {
+                "liveWriteMd.doubleClickPin": {
                     "type": "boolean",
                     "default": true,
                     "description": "Double-click to pin the source view of a line."
@@ -536,6 +528,7 @@
         "@codemirror/view": "^6.39.12",
         "@lezer/common": "^1.5.1",
         "@lezer/highlight": "^1.2.3",
+        "@lezer/markdown": "^1.6.4",
         "katex": "^0.16.28",
         "marked": "^16.2.0",
         "mermaid": "^11.12.2"

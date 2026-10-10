@@ -1,7 +1,7 @@
 /**
  * CodeMirror Theme Extension
  *
- * This module provides theme configuration for the FlowMD editor,
+ * This module provides theme configuration for the LiveWriteMD editor,
  * including light and dark themes that integrate with VS Code's
  * color scheme using CSS variables.
  *
@@ -76,7 +76,7 @@ export const themeCompartment = new Compartment();
  */
 export const lightTheme: Extension = EditorView.theme(
     {
-        // Root editor container — FlowMD独自カラー
+        // Root editor container — LiveWriteMD独自カラー
         '&': {
             backgroundColor: 'var(--vscode-editor-background, #1e1e1e)',
             color: 'var(--vscode-editor-foreground, #d4d4d4)',
@@ -93,9 +93,9 @@ export const lightTheme: Extension = EditorView.theme(
         '.cm-content': {
             fontFamily: 'inherit',
             fontSize:
-                'calc(var(--flowmd-editor-font-size, var(--vscode-editor-font-size, 14px)) * var(--flowmd-font-scale, 1))',
-            fontWeight: 'var(--flowmd-font-weight, 400)',
-            lineHeight: 'var(--flowmd-line-height, 1.7em)',
+                'calc(var(--livewritemd-editor-font-size, var(--vscode-editor-font-size, 14px)) * var(--livewritemd-font-scale, 1))',
+            fontWeight: 'var(--livewritemd-font-weight, 400)',
+            lineHeight: 'var(--livewritemd-line-height, 1.7em)',
             color: 'inherit',
             caretColor: 'var(--vscode-editorCursor-foreground, var(--vscode-editor-foreground, #d4d4d4))',
             padding: '8px 0',
@@ -150,7 +150,7 @@ export const lightTheme: Extension = EditorView.theme(
         // Line numbers gutter
         '.cm-gutters': {
             backgroundColor: 'transparent',
-            color: '#999999',
+            color: '#6a737d',
             border: 'none',
             borderRight: '1px solid #e0e0e0',
         },
@@ -163,7 +163,7 @@ export const lightTheme: Extension = EditorView.theme(
 
         // Fold gutter
         '.cm-foldGutter': {
-            color: '#999999',
+            color: '#6a737d',
         },
 
         // 行号数字在格子里**垂直居中**。
@@ -343,7 +343,7 @@ export const lightTheme: Extension = EditorView.theme(
  */
 export const darkTheme: Extension = EditorView.theme(
     {
-        // Root editor container — FlowMD独自カラー
+        // Root editor container — LiveWriteMD独自カラー
         '&': {
             backgroundColor: 'var(--vscode-editor-background, #1e1e1e)',
             color: 'var(--vscode-editor-foreground, #d4d4d4)',
@@ -360,9 +360,9 @@ export const darkTheme: Extension = EditorView.theme(
         '.cm-content': {
             fontFamily: 'inherit',
             fontSize:
-                'calc(var(--flowmd-editor-font-size, var(--vscode-editor-font-size, 14px)) * var(--flowmd-font-scale, 1))',
-            fontWeight: 'var(--flowmd-font-weight, 400)',
-            lineHeight: 'var(--flowmd-line-height, 1.7em)',
+                'calc(var(--livewritemd-editor-font-size, var(--vscode-editor-font-size, 14px)) * var(--livewritemd-font-scale, 1))',
+            fontWeight: 'var(--livewritemd-font-weight, 400)',
+            lineHeight: 'var(--livewritemd-line-height, 1.7em)',
             color: 'inherit',
             caretColor: 'var(--vscode-editorCursor-foreground, var(--vscode-editor-foreground, #d4d4d4))',
             padding: '8px 0',

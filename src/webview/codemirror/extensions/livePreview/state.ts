@@ -248,8 +248,11 @@ export const foldToggleEffect = StateEffect.define<null>();
  */
 export const tableRemeasureEffect = StateEffect.define<null>();
 
-/** Set of document positions (line.from) for folded list items */
-export const foldedListItems = new Set<number>();
+/**
+ * 已折叠行的行首位置集合（line.from）。
+ * 同时用于：列表项折叠、标题章节折叠。
+ */
+export const foldedLines = new Set<number>();
 
 // =============================================================================
 // Mermaid Cache

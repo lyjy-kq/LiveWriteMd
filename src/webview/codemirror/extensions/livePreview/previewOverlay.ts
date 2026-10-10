@@ -519,12 +519,12 @@ export async function copyMermaidRenderedImageSafely(renderedRoot: ParentNode): 
     try {
         const svgElement = renderedRoot.querySelector('svg');
         if (!svgElement) {
-            console.debug('[FlowMD] Mermaid copy aborted: SVG element not found');
+            console.debug('[LiveWriteMD] Mermaid copy aborted: SVG element not found');
             return false;
         }
 
         const svg = new XMLSerializer().serializeToString(svgElement);
-        console.debug(`[FlowMD] Mermaid copy found SVG, length=${svg.length}`);
+        console.debug(`[LiveWriteMD] Mermaid copy found SVG, length=${svg.length}`);
         try {
             if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
                 const clipboardItemFactory = ClipboardItem as ClipboardItemConstructorWithPromise;
@@ -535,21 +535,21 @@ export async function copyMermaidRenderedImageSafely(renderedRoot: ParentNode): 
                         'text/plain': new Blob([svg], { type: 'text/plain;charset=utf-8' }),
                     }),
                 ]);
-                console.debug('[FlowMD] Mermaid PNG copy result: success');
+                console.debug('[LiveWriteMD] Mermaid PNG copy result: success');
                 return true;
             }
 
             const success = await copyTextSafely(svg);
-            console.debug(`[FlowMD] Mermaid PNG copy fallback text result: ${success ? 'success' : 'failed'}`);
+            console.debug(`[LiveWriteMD] Mermaid PNG copy fallback text result: ${success ? 'success' : 'failed'}`);
             return success;
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
-            console.debug(`[FlowMD] Mermaid PNG copy failed, fallback to text: ${errorMessage}`);
+            console.debug(`[LiveWriteMD] Mermaid PNG copy failed, fallback to text: ${errorMessage}`);
             return copyTextSafely(svg);
         }
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        console.debug(`[FlowMD] Mermaid copy failed in webview: ${errorMessage}`);
+        console.debug(`[LiveWriteMD] Mermaid copy failed in webview: ${errorMessage}`);
         return false;
     }
 }

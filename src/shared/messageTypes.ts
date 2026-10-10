@@ -1,5 +1,5 @@
 /**
- * FlowMD 消息类型常量定义。
+ * LiveWriteMD 消息类型常量定义。
  *
  * 这个文件集中维护扩展与 Webview 之间的消息类型字符串，避免各模块
  * 分散硬编码导致契约不一致。
@@ -101,7 +101,7 @@ export const MESSAGE_TYPES = {
 
     /**
      * 打开设置面板消息类型。
-     * 扩展侧执行「FlowMD: 设置」命令后发给当前编辑器。
+     * 扩展侧执行「LiveWriteMD: 设置」命令后发给当前编辑器。
      */
     OPEN_SETTINGS: 'openSettings',
 

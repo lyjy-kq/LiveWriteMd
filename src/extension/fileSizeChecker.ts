@@ -1,8 +1,8 @@
 /**
- * File Size Checker for FlowMD
+ * File Size Checker for LiveWriteMD
  *
  * This module provides functionality to check file sizes and warn users
- * when opening large files in the FlowMD WYSIWYG editor. Large files
+ * when opening large files in the LiveWriteMD WYSIWYG editor. Large files
  * may cause performance issues in the Webview-based editor.
  *
  * File Size Categories (DES-P-002):
@@ -41,13 +41,13 @@ export const SMALL_FILE_THRESHOLD: number = 100 * 1024; // 100KB
  *
  * Design Reference: DES-A-007
  *
- * @property shouldProceed - Whether to proceed with FlowMD editor
+ * @property shouldProceed - Whether to proceed with LiveWriteMD editor
  * @property fileSize - The file size in bytes
  * @property action - The action to take: 'proceed', 'standardEditor', or 'cancel'
  * @property warning - Optional warning message that was shown
  */
 export interface IFileSizeCheckResult {
-    /** Whether to proceed with FlowMD editor */
+    /** Whether to proceed with LiveWriteMD editor */
     shouldProceed: boolean;
     /** The file size in bytes */
     fileSize: number;
@@ -117,7 +117,7 @@ export function getFileSizeBytes(document: { getText(): string }): number {
  * ```typescript
  * const result = await checkFileSize(document);
  * if (result.shouldProceed) {
- *     // Proceed with FlowMD editor
+ *     // Proceed with LiveWriteMD editor
  * } else if (result.action === 'standardEditor') {
  *     // Open with text editor
  *     await openWithTextEditor(document.uri);
@@ -172,7 +172,7 @@ export async function checkFileSize(document: vscode.TextDocument): Promise<IFil
     // Large files (> threshold): Warning with user choice
     const warningMessage =
         `This file is ${formatFileSize(fileSize)}. ` +
-        `Editing in FlowMD editor may affect performance.`;
+        `Editing in LiveWriteMD editor may affect performance.`;
     Logger.warn(
         `Large file detected: ${formatFileSize(fileSize)} (threshold: ${formatFileSize(largeFileThreshold)})`
     );
@@ -214,7 +214,7 @@ export async function checkFileSize(document: vscode.TextDocument): Promise<IFil
 
 /**
  * Open document with standard VS Code text editor.
- * Used when user chooses to not use FlowMD for large files.
+ * Used when user chooses to not use LiveWriteMD for large files.
  *
  * @param uri - The document URI to open
  * @returns Promise that resolves when command is executed

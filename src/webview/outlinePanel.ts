@@ -1,5 +1,5 @@
 /**
- * FlowMD 鍙充晶澶х翰闈㈡澘鎺у埗鍣ㄣ€? *
+ * LiveWriteMD 鍙充晶澶х翰闈㈡澘鎺у埗鍣ㄣ€? *
  * 杩欎釜妯″潡璐熻矗鍦?Webview 閲屾覆鏌?Markdown 鏍囬鏍戯紝
  * 澶勭悊鎶樺彔灞曞紑銆佹爣棰樿烦杞€佸搴︽嫋鎷姐€佸簳閮ㄦ搷浣滄爮鍜屾偓娴彁绀恒€? */
 
@@ -48,7 +48,7 @@ export interface OutlinePanelOptions {
 }
 
 /**
- * FlowMD 鍙充晶澶х翰闈㈡澘鎺у埗鍣ㄣ€? */
+ * LiveWriteMD 鍙充晶澶х翰闈㈡澘鎺у埗鍣ㄣ€? */
 export class OutlinePanel {
     /** 澶х翰澶栧眰瀹瑰櫒銆?*/
     private readonly panelEl: HTMLElement;
@@ -139,10 +139,10 @@ export class OutlinePanel {
 
     /** 鍏佽鐨勬渶灏忓搴︺€?*/
     /** 收起后右下角“展开大纲”浮动按钮的元素 ID。 */
-    private static readonly REOPEN_BUTTON_ID = 'flowmd-outline-reopen';
+    private static readonly REOPEN_BUTTON_ID = 'livewritemd-outline-reopen';
 
     /** 浮动按钮样式表的元素 ID，用于避免重复注入。 */
-    private static readonly REOPEN_BUTTON_STYLE_ID = 'flowmd-outline-reopen-style';
+    private static readonly REOPEN_BUTTON_STYLE_ID = 'livewritemd-outline-reopen-style';
 
     private static readonly MIN_WIDTH = 220;
 
@@ -218,7 +218,7 @@ export class OutlinePanel {
      */
     private applyWidth(width: number): void {
         this.width = this.clampWidth(width);
-        document.documentElement.style.setProperty('--flowmd-outline-width', `${this.width}px`);
+        document.documentElement.style.setProperty('--livewritemd-outline-width', `${this.width}px`);
         this.panelEl.style.width = `${this.width}px`;
         this.panelEl.style.flexBasis = `${this.width}px`;
     }
@@ -252,7 +252,7 @@ export class OutlinePanel {
         this.dragStartX = event.clientX;
         this.dragStartWidth = this.width;
         this.resizerEl.dataset.dragging = 'true';
-        document.body.classList.add('flowmd-outline-resizing');
+        document.body.classList.add('livewritemd-outline-resizing');
 
         const onMove = (moveEvent: PointerEvent): void => {
             if (!this.dragging) {
@@ -271,7 +271,7 @@ export class OutlinePanel {
 
             this.dragging = false;
             this.resizerEl.dataset.dragging = 'false';
-            document.body.classList.remove('flowmd-outline-resizing');
+            document.body.classList.remove('livewritemd-outline-resizing');
             this.resizerEl.releasePointerCapture(upEvent.pointerId);
             window.removeEventListener('pointermove', onMove);
             window.removeEventListener('pointerup', onUp);

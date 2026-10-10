@@ -1,5 +1,5 @@
 /**
- * SettingsPanel —— FlowMD 应用内设置面板（Obsidian 风格）。
+ * SettingsPanel —— LiveWriteMD 应用内设置面板（Obsidian 风格）。
  *
  * - 左侧分组导航，右侧当前分组的设置项（滚动）；
  * - 控件：开关、滑块、颜色取色器（含「自动 / 重置」）、下拉、文本；
@@ -26,13 +26,13 @@ export type SettingChangeHandler = (key: string, value: SettingValue) => void;
 // =============================================================================
 
 const PANEL_STYLES = `
-#flowmd-settings-root {
+#livewritemd-settings-root {
     position: fixed;
     inset: 0;
     z-index: 99999;
     display: none;
 }
-#flowmd-settings-root[data-open="true"] { display: block; }
+#livewritemd-settings-root[data-open="true"] { display: block; }
 
 .fms-overlay {
     position: absolute;
@@ -492,7 +492,7 @@ function renderControl(item: SettingItem, ctx: ControlContext): HTMLElement {
 
 class SettingsPanelImpl {
     /** webview 内常驻启动按钮的元素 id。 */
-    private static readonly LAUNCHER_ID = 'flowmd-settings-launcher';
+    private static readonly LAUNCHER_ID = 'livewritemd-settings-launcher';
 
     /** 根元素。 */
     private root: HTMLElement;
@@ -512,12 +512,12 @@ class SettingsPanelImpl {
         document.head.appendChild(style);
 
         this.root = document.createElement('div');
-        this.root.id = 'flowmd-settings-root';
+        this.root.id = 'livewritemd-settings-root';
         this.root.innerHTML = `
             <div class="fms-overlay"></div>
-            <div class="fms-window" role="dialog" aria-modal="true" aria-label="FlowMD 设置">
+            <div class="fms-window" role="dialog" aria-modal="true" aria-label="LiveWriteMD 设置">
                 <div class="fms-header">
-                    <span class="fms-header-title">FlowMD 设置</span>
+                    <span class="fms-header-title">LiveWriteMD 设置</span>
                     <button class="fms-close" type="button" aria-label="关闭">✕</button>
                 </div>
                 <div class="fms-body">
@@ -564,8 +564,8 @@ class SettingsPanelImpl {
         // 与大纲操作组按钮同款（28×28、边框、图标居中）
         button.className = 'outline-action-btn';
         button.setAttribute('data-outline-action', 'open-settings');
-        button.title = 'FlowMD 设置';
-        button.setAttribute('aria-label', 'FlowMD 设置');
+        button.title = 'LiveWriteMD 设置';
+        button.setAttribute('aria-label', 'LiveWriteMD 设置');
         button.innerHTML = `
             <span class="outline-action-icon" aria-hidden="true">
                 <svg viewBox="0 0 16 16" style="width:15px;height:15px;fill:currentColor">

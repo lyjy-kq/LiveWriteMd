@@ -1,5 +1,5 @@
 /**
- * FlowMD Image Save Handler
+ * LiveWriteMD Image Save Handler
  *
  * Handles image file saving for drag & drop and clipboard paste operations.
  * All file system operations are performed on the Extension side for security.

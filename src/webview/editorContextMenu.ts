@@ -1,5 +1,5 @@
 /**
- * FlowMD 正文右键菜单模块。
+ * LiveWriteMD 正文右键菜单模块。
  *
  * 这个模块只负责 Webview 中 Markdown 正文区域的自定义右键菜单，
  * 不处理大纲、标题栏或其它辅助 UI 的菜单逻辑。
@@ -74,7 +74,7 @@ const TABLE_MENU_ITEMS: Array<{ action: TableCommand; label: string }> = [
 ];
 
 /**
- * FlowMD 正文右键菜单控制器。
+ * LiveWriteMD 正文右键菜单控制器。
  */
 export class EditorContextMenu {
     /** 菜单根节点。 */
@@ -93,7 +93,7 @@ export class EditorContextMenu {
     private readonly buttons = new Map<MenuAction, HTMLButtonElement>();
 
     /** 菜单样式标识。 */
-    private static readonly STYLE_ID = 'flowmd-editor-context-menu-style';
+    private static readonly STYLE_ID = 'livewritemd-editor-context-menu-style';
 
     /**
      * 创建正文右键菜单控制器。
@@ -145,7 +145,7 @@ export class EditorContextMenu {
      */
     private createMenuElement(): HTMLDivElement {
         const menu = document.createElement('div');
-        menu.className = 'flowmd-editor-context-menu';
+        menu.className = 'livewritemd-editor-context-menu';
         menu.setAttribute('role', 'menu');
         menu.setAttribute('aria-hidden', 'true');
 
@@ -162,9 +162,9 @@ export class EditorContextMenu {
         const exportPdfButton = this.createMenuButton('export-as-pdf', '导出为 PDF');
 
         const firstSeparator = document.createElement('div');
-        firstSeparator.className = 'flowmd-editor-context-menu-separator';
+        firstSeparator.className = 'livewritemd-editor-context-menu-separator';
         const secondSeparator = document.createElement('div');
-        secondSeparator.className = 'flowmd-editor-context-menu-separator';
+        secondSeparator.className = 'livewritemd-editor-context-menu-separator';
 
         menu.appendChild(insertButton);
         menu.appendChild(downloadButton);
@@ -204,7 +204,7 @@ export class EditorContextMenu {
      */
     private createTableGroup(): HTMLDivElement {
         const group = document.createElement('div');
-        group.className = 'flowmd-editor-context-menu-group';
+        group.className = 'livewritemd-editor-context-menu-group';
         group.dataset.group = 'table';
         group.style.display = 'none';
 
@@ -214,7 +214,7 @@ export class EditorContextMenu {
             this.buttons.set(item.action, button);
         }
         const separator = document.createElement('div');
-        separator.className = 'flowmd-editor-context-menu-separator';
+        separator.className = 'livewritemd-editor-context-menu-separator';
         group.appendChild(separator);
         return group;
     }
@@ -232,7 +232,7 @@ export class EditorContextMenu {
         const style = document.createElement('style');
         style.id = EditorContextMenu.STYLE_ID;
         style.textContent = `
-            .flowmd-editor-context-menu {
+            .livewritemd-editor-context-menu {
                 position: fixed;
                 z-index: 9999;
                 display: none;
@@ -246,11 +246,11 @@ export class EditorContextMenu {
                 backdrop-filter: none;
             }
 
-            .flowmd-editor-context-menu[aria-hidden='true'] {
+            .livewritemd-editor-context-menu[aria-hidden='true'] {
                 pointer-events: none;
             }
 
-            .flowmd-editor-context-menu-item {
+            .livewritemd-editor-context-menu-item {
                 width: 100%;
                 display: flex;
                 align-items: center;
@@ -267,21 +267,21 @@ export class EditorContextMenu {
                 line-height: 1.4;
             }
 
-            .flowmd-editor-context-menu-item:hover:not(:disabled) {
+            .livewritemd-editor-context-menu-item:hover:not(:disabled) {
                 background: var(--vscode-menu-selectionBackground, rgba(127, 127, 127, 0.18));
                 color: var(--vscode-menu-selectionForeground, var(--vscode-foreground, #d4d4d4));
             }
 
-            .flowmd-editor-context-menu-item:disabled {
+            .livewritemd-editor-context-menu-item:disabled {
                 opacity: 0.45;
                 cursor: default;
             }
 
-            .flowmd-editor-context-menu-item[data-active='true'] {
+            .livewritemd-editor-context-menu-item[data-active='true'] {
                 font-weight: 600;
             }
 
-            .flowmd-editor-context-menu-separator {
+            .livewritemd-editor-context-menu-separator {
                 height: 1px;
                 margin: 4px 6px;
                 background: var(--vscode-menu-separatorBackground, rgba(127, 127, 127, 0.18));
@@ -300,7 +300,7 @@ export class EditorContextMenu {
     private createMenuButton(action: MenuAction, label: string): HTMLButtonElement {
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'flowmd-editor-context-menu-item';
+        button.className = 'livewritemd-editor-context-menu-item';
         button.dataset.action = action;
         button.setAttribute('role', 'menuitem');
         button.textContent = label;

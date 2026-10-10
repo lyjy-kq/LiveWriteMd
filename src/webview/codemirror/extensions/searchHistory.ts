@@ -114,8 +114,8 @@ class SearchHistoryControllerImpl implements SearchHistoryController {
         this.historyState = normalizeSearchHistoryState(initialHistory);
 
         const controllerId = ++nextSearchHistoryControllerId;
-        this.searchListId = `flowmd-search-history-search-${controllerId}`;
-        this.replaceListId = `flowmd-search-history-replace-${controllerId}`;
+        this.searchListId = `livewritemd-search-history-search-${controllerId}`;
+        this.replaceListId = `livewritemd-search-history-replace-${controllerId}`;
 
         this.searchListEl = document.createElement('datalist');
         this.searchListEl.id = this.searchListId;

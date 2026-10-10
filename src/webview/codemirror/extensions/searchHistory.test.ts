@@ -41,8 +41,8 @@ describe('createSearchHistoryController', () => {
         const searchInput = view.dom.querySelector<HTMLInputElement>('input[name="search"]');
         const replaceInput = view.dom.querySelector<HTMLInputElement>('input[name="replace"]');
 
-        expect(searchInput?.getAttribute('list')).toContain('flowmd-search-history-search-');
-        expect(replaceInput?.getAttribute('list')).toContain('flowmd-search-history-replace-');
+        expect(searchInput?.getAttribute('list')).toContain('livewritemd-search-history-search-');
+        expect(replaceInput?.getAttribute('list')).toContain('livewritemd-search-history-replace-');
         expect(view.dom.querySelectorAll('datalist')).toHaveLength(2);
         expect(onChange).not.toHaveBeenCalled();
     });

@@ -34,7 +34,12 @@
 import type { EditorState } from '@codemirror/state';
 import type { SyntaxNode, Tree } from '@lezer/common';
 import { EditorView } from '@codemirror/view';
-import { getMeasureContext } from './helpers.js';
+import {
+    detectIndentUnit,
+    getMeasureContext,
+    getListIndent,
+    measureIndentUnitPx,
+} from './helpers.js';
 import { fontSpec } from './layoutMetrics.js';
 import { availableTableWidth } from './tableRender.js';
 import {
@@ -92,7 +97,7 @@ export interface IOpenWrapContext {
     family: string;
     /** 行内代码的等宽字体族（渲染态目标宽度用） */
     codeFamily: string;
-    /** 正文字重（用户可调，--flowmd-font-weight） */
+    /** 正文字重（用户可调，--livewritemd-font-weight） */
     textWeight: string;
     /** 画布上下文（已配好正文字体）：折行预判用它量宽，不触发布局 */
     canvas: CanvasRenderingContext2D;
@@ -143,6 +148,12 @@ interface ILineGeometry {
     insetR: number;
     /** 内容文字区宽度 = 行盒宽 − 左右内边距 */
     width: number;
+    /**
+     * 悬挂缩进宽度（px）：真实列表行通过 padding-left + text-indent 让续行
+     * 从 marker 列起。模拟器要同样设 text-indent 才能复现首行满宽、续行窄，
+     * 非列表行为 0
+     */
+    hang: number;
 }
 
 /**
@@ -177,7 +188,8 @@ function measureLineGeometry(
     const insetR =
         (Number.parseFloat(cs.paddingRight) || 0) + (Number.parseFloat(cs.borderRightWidth) || 0);
     const width = lineEl.getBoundingClientRect().width - insetL - insetR;
-    return width > 50 ? { insetL, insetR, width } : null;
+    // hang 由调用方（computeOpenScalesWrapped）按文档缩进补算后写入
+    return width > 50 ? { insetL, insetR, width, hang: 0 } : null;
 }
 
 /**
@@ -497,6 +509,12 @@ class WrapSim {
             block.style.paddingLeft = `${geom.insetL.toFixed(2)}px`;
             block.style.paddingRight = `${geom.insetR.toFixed(2)}px`;
             block.style.width = `${(geom.width + geom.insetL + geom.insetR).toFixed(2)}px`;
+            if (geom.hang > 0) {
+                // 复刻列表行的悬挂缩进：padding 已含 marker 列偏移（insetL 是从
+                // 真实 .cm-line 量的），text-indent 只把首行拉回 —— 首行保持满宽，
+                // 续行从 marker 列开始折，折行点才与真实行一致
+                block.style.textIndent = `${(-geom.hang).toFixed(2)}px`;
+            }
         }
         for (const seg of segments) {
             const span = document.createElement('span');
@@ -604,6 +622,14 @@ export function computeOpenScalesWrapped(
     const results: Array<IWrapResult | null> = infos.map(() => null);
     if (infos.length === 0) return results;
 
+    // 缩进单位：取样前 200 行探测（与 plugin.ts 的 collectListIndentDecorations
+    // 同思路），用来把每个列表行的悬挂缩进宽度算给折行模拟器
+    const indentSamples: string[] = [];
+    for (let ln = 1; ln <= Math.min(200, state.doc.lines); ln++) {
+        indentSamples.push(state.doc.line(ln).text);
+    }
+    const indentUnitCols = detectIndentUnit(indentSamples);
+
     try {
         // 每元素：真实渲染几何 + 各候选字号的源码探针，全部挂进一个模拟器
         const sim = new WrapSim(ctx.width);
@@ -620,9 +646,17 @@ export function computeOpenScalesWrapped(
             if (!sourceText || !contentText) return; // 空内容交回单行算法
             const line = state.doc.lineAt(info.from);
 
+            // 本行的悬挂缩进宽度（列表行才有）：行层级 × 缩进单位 px，
+            // 与 collectListIndentDecorations 同源，交给模拟器复刻 text-indent
+            const lineIndent = getListIndent(line.text, indentUnitCols);
+            const hangPx = lineIndent.isList
+                ? lineIndent.level * measureIndentUnitPx(indentUnitCols)
+                : 0;
+
             // 真实行几何（引用带 border、内容窄）；量不到放弃
             const geom = measureLineGeometry(ctx, info.from);
             if (!geom) return;
+            geom.hang = hangPx;
 
             // 真实渲染几何：快照只读一次，避免多遍 build 读到源码态
             const snapshotKey = `${line.from}:${info.from - line.from}:${contentText.length}`;

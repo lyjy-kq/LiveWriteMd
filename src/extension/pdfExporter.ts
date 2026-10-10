@@ -1,5 +1,5 @@
 /**
- * FlowMD PDF 导出器
+ * LiveWriteMD PDF 导出器
  *
  * 思路是复用 HTML 导出的渲染结果：先把 Markdown 渲染成独立的 HTML 文档，
  * 再交给本机已安装的 Chromium 系浏览器（Edge / Chrome）用无头模式打印成 PDF。
@@ -40,7 +40,7 @@ const VIRTUAL_TIME_BUDGET_MS = 15_000;
 /**
  * 各平台上 Chromium 系浏览器的常见安装路径。
  *
- * 只做候选探测，找不到时再让用户用 flowMd.pdfBrowserPath 手动指定。
+ * 只做候选探测，找不到时再让用户用 liveWriteMd.pdfBrowserPath 手动指定。
  */
 const BROWSER_CANDIDATES: Record<string, string[]> = {
     win32: [
@@ -79,7 +79,7 @@ const BROWSER_CANDIDATES: Record<string, string[]> = {
  */
 function findBrowserExecutable(): string | null {
     const configured = vscode.workspace
-        .getConfiguration('flowMd')
+        .getConfiguration('liveWriteMd')
         .get<string>('pdfBrowserPath', '')
         .trim();
     if (configured) {
@@ -89,7 +89,7 @@ function findBrowserExecutable(): string | null {
         Logger.warn(`配置的 PDF 浏览器路径不存在，忽略：${configured}`);
     }
 
-    const fromEnv = [process.env.FLOWMD_BROWSER_PATH, process.env.CHROME_PATH]
+    const fromEnv = [process.env.LIVEWRITEMD_BROWSER_PATH, process.env.CHROME_PATH]
         .filter((value): value is string => Boolean(value))
         .map((value) => value.trim());
     for (const candidate of fromEnv) {
@@ -131,7 +131,7 @@ async function runBrowserPrint(
 
     // 独立的用户数据目录：否则用户已经开着浏览器时，命令只会往现有窗口里
     // 新开一个标签页，--print-to-pdf 不会真的执行。
-    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowmd-pdf-'));
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'livewritemd-pdf-'));
 
     const args = [
         headlessFlag,
@@ -204,7 +204,7 @@ async function runBrowserPrint(
 /**
  * 把 Markdown 文件一键导出为 PDF。
  *
- * 可从资源管理器右键菜单、FlowMD 正文右键菜单或命令面板调用。
+ * 可从资源管理器右键菜单、LiveWriteMD 正文右键菜单或命令面板调用。
  *
  * @param uri - 目标 Markdown 文件 URI；省略时自动取当前活动文件
  * @returns Promise<void>
@@ -215,20 +215,20 @@ export async function exportMarkdownAsPdf(uri?: vscode.Uri): Promise<void> {
     try {
         const targetUri = resolveMarkdownTargetUri(uri);
         if (!targetUri) {
-            vscode.window.showWarningMessage('FlowMD: 没有找到可导出的 Markdown 文件。');
+            vscode.window.showWarningMessage('LiveWriteMD: 没有找到可导出的 Markdown 文件。');
             return;
         }
 
         const browserPath = findBrowserExecutable();
         if (!browserPath) {
             const choice = await vscode.window.showErrorMessage(
-                'FlowMD: 导出 PDF 需要本机的 Edge 或 Chrome 浏览器，但没有找到。',
+                'LiveWriteMD: 导出 PDF 需要本机的 Edge 或 Chrome 浏览器，但没有找到。',
                 '手动指定路径'
             );
             if (choice === '手动指定路径') {
                 await vscode.commands.executeCommand(
                     'workbench.action.openSettings',
-                    'flowMd.pdfBrowserPath'
+                    'liveWriteMd.pdfBrowserPath'
                 );
             }
             return;
@@ -241,7 +241,7 @@ export async function exportMarkdownAsPdf(uri?: vscode.Uri): Promise<void> {
         // 临时 HTML 必须落在 md 文件同级目录，这样正文里的相对图片路径才解析得到。
         const htmlPath = path.join(
             path.dirname(targetUri.fsPath),
-            `.${path.basename(basePath)}.flowmd-export-${Date.now()}.html`
+            `.${path.basename(basePath)}.livewritemd-export-${Date.now()}.html`
         );
         tempHtmlPath = htmlPath;
         await vscode.workspace.fs.writeFile(vscode.Uri.file(htmlPath), Buffer.from(html, 'utf-8'));
@@ -249,7 +249,7 @@ export async function exportMarkdownAsPdf(uri?: vscode.Uri): Promise<void> {
         await vscode.window.withProgress(
             {
                 location: vscode.ProgressLocation.Notification,
-                title: `FlowMD: 正在导出 ${title}.pdf …`,
+                title: `LiveWriteMD: 正在导出 ${title}.pdf …`,
             },
             async () => {
                 // 新版 Chrome/Edge 用 --headless=new；老版本不认这个参数，退回 --headless 再试一次。
@@ -265,7 +265,7 @@ export async function exportMarkdownAsPdf(uri?: vscode.Uri): Promise<void> {
 
         Logger.info(`PDF 已导出: ${pdfPath}`);
         const action = await vscode.window.showInformationMessage(
-            `FlowMD: 已导出 ${path.basename(pdfPath)}`,
+            `LiveWriteMD: 已导出 ${path.basename(pdfPath)}`,
             '打开 PDF'
         );
         if (action === '打开 PDF') {
@@ -277,7 +277,7 @@ export async function exportMarkdownAsPdf(uri?: vscode.Uri): Promise<void> {
             `PDF 导出失败: ${errorMessage}`,
             error instanceof Error ? error : undefined
         );
-        vscode.window.showErrorMessage(`FlowMD: PDF 导出失败：${errorMessage}`);
+        vscode.window.showErrorMessage(`LiveWriteMD: PDF 导出失败：${errorMessage}`);
     } finally {
         // 临时 HTML 只是打印用的中间产物，不留在用户目录里。
         if (tempHtmlPath) {

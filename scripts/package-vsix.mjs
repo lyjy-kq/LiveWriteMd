@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * 文件用途：读取仓库版本号并按固定规则生成 VSIX 打包文件名。
- * 功能说明：该脚本由 `pnpm run package:vsix` 调用，最终输出 `lyjy-obsidianlike-md<版本号>.vsix`。
+ * 功能说明：该脚本由 `pnpm run package:vsix` 调用，最终输出 `livewrite-md<版本号>.vsix`。
  */
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -85,7 +85,7 @@ function main() {
     const packageJsonPath = join(projectRoot, 'package.json');
     // 按目标规则拼出最终 VSIX 文件名。
     const version = readVersion(packageJsonPath);
-    const outputPath = join(projectRoot, `lyjy-obsidianlike-md${version}.vsix`);
+    const outputPath = join(projectRoot, `livewrite-md${version}.vsix`);
     // 执行实际打包流程。
     packageVsix(outputPath, projectRoot);
 }

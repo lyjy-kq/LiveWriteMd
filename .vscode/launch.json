@@ -1,16 +1,45 @@
 {
     "version": "0.2.0",
     "configurations": [
+        
         {
-            "name": "Launch FlowMD Extension",
+            // F5 默认项：直接拉起 Chrome 打开编辑器调试页
+            // （test/repro/browser.html，由 scripts/dev-browser.mjs 提供服务），
+            // 并自动打开 DevTools，用浏览器方式反馈渲染问题。
+            // 换文档：浏览器地址栏 URL 加 ?doc=test/xxx.md；
+            // 换浅色：?theme=light。
+            "name": "Debug Webview in Chrome",
+            "type": "chrome",
+            "request": "launch",
+            "url": "http://127.0.0.1:8740/test/repro/browser.html",
+            "webRoot": "${workspaceFolder}",
+            // 独立 profile：一是不污染你日常用的 Chrome，
+            // 二是 Chrome 已有普通实例在跑时，新参数（自动开 DevTools）
+            // 对挂到旧实例上的标签不生效，必须是独立实例
+            "userDataDir": "${workspaceFolder}/.vscode/.chrome-dev-profile",
+            // 启动即自动打开 DevTools，不用再按 F12
+            "runtimeArgs": [
+                "--auto-open-devtools-for-tabs"
+            ],
+            "sourceMaps": true,
+            // sourcemap 只认本仓库的（含 src TS 源码），排除 node_modules
+            "resolveSourceMapLocations": [
+                "${workspaceFolder}/**",
+                "!**/node_modules/**"
+            ],
+            // 前置：watch 构建 + 静态服务器（后台任务，见 tasks.json）
+            "preLaunchTask": "LiveWriteMD: browser dev server"
+        },
+        {
+            "name": "Launch LiveWriteMD Extension",
             "type": "extensionHost",
             "request": "launch",
             "runtimeExecutable": "${execPath}",
             "args": [
                 "--extensionDevelopmentPath=${workspaceFolder}",
                 "--disable-extensions",
-                "--user-data-dir=${workspaceFolder}/.vscode/.flowmd-dev-userdata",
-                "--extensions-dir=${workspaceFolder}/.vscode/.flowmd-dev-extensions",
+                "--user-data-dir=${workspaceFolder}/.vscode/.livewritemd-dev-userdata",
+                "--extensions-dir=${workspaceFolder}/.vscode/.livewritemd-dev-extensions",
                 // 启动就在开发宿主里打开这个文件，省得每次 F5 完还要手动去点开验收。
                 // 等价于 dev.ps1 -Mode debug 的 -File 参数（build 模式不拉窗口，所以那个参数
                 // 挂在这边没意义，真正开文件的是这一行）。想换验收对象就改这个路径，
@@ -23,7 +52,7 @@
             // 按 F5 前先跑 scripts/dev.ps1 -Mode build（任务定义见 .vscode/tasks.json）。
             // 原来写的 "pnpm: build" 在本机跑不起来：pnpm 没授权 esbuild 的构建脚本，
             // 会直接 ERR_PNPM_IGNORED_BUILDS；脚本里默认用的 npm 是能用的。
-            "preLaunchTask": "FlowMD: build (dev.ps1)",
+            "preLaunchTask": "LiveWriteMD: build (dev.ps1)",
             "skipFiles": [
                 "<node_internals>/**"
             ],

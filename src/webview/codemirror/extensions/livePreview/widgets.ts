@@ -11,13 +11,15 @@ import { Transaction } from '@codemirror/state';
 import { EditorView, WidgetType } from '@codemirror/view';
 import {
     applySafeFontStyles,
+    LINE_PADDING_PX,
+    measureBulletYCorrection,
     measureText,
     renderInlineMarkdown,
     resolvePreviewImageUrl,
 } from './helpers.js';
 import {
     copyToClipboard,
-    foldedListItems,
+    foldedLines,
     foldToggleEffect,
     getMermaidTheme,
     sourceModeEffect,
@@ -118,67 +120,65 @@ export class HorizontalRuleWidget extends WidgetType {
 }
 
 /**
- * \u65e0\u5e8f\u5217\u8868\u7684\u5706\u70b9\u3002
+ * 无序列表的圆点。
  *
- * \u5706\u70b9\u9876\u6389\u7684\u662f\u6e90\u7801\u91cc\u7684 `- `\uff08\u6807\u8bb0\u7b26 + \u4e00\u4e2a\u7a7a\u683c\uff09\uff0c\u5982\u679c\u5bbd\u5ea6\u5199\u6b7b\uff08\u539f\u6765\u5199\u7684\u662f 1.2em\uff09\uff0c
- * \u6e32\u67d3\u6001\u548c\u6587\u672c\u6001\u7684\u884c\u5185\u8d77\u70b9\u5c31\u4f1a\u5dee\u51e0\u4e2a\u50cf\u7d20\uff0c\u6253\u5b57\u65f6\u540e\u9762\u7684\u6587\u5b57\u4f1a\u6a2a\u7740\u8df3\u3002
- * \u6240\u4ee5\u8fd9\u91cc\u6309\u5b9e\u9645\u91cf\u51fa\u6765\u7684 `- ` \u5bbd\u5ea6\u7ed9\u5706\u70b9\u5b9a\u5bbd\uff0c\u8ba9\u4e24\u79cd\u72b6\u6001\u5de6\u53f3\u5b8c\u5168\u5bf9\u9f50\u3002
+ * 圆点顶掉源码里的 `- `（标记符 + 一个空格），盒子按实测宽度定宽、
+ * 把正文顶到原位；圆点是 SVG circle：
+ * - 水平圆心落在 `-` 的中点（CSS 变量 --cm-mark-center = markerWidth/2）；
+ * - 垂直方向不能靠 `vertical-align:middle` 隐式命中 —— 空 inline-block 的
+ *   middle 对齐点与 `-` 墨迹中心有亚像素差（圆点偏下），构造时把实测
+ *   差值写进 --cm-dot-y-correction，dot 用 top: calc(50% + 修正) 补偿，
+ *   圆心才精确落在横线墨迹中心（见 helpers.ts 的 measureBulletYCorrection）。
+ *
+ * 折叠交互已移到行号位置（见 gutterFold.ts）：点圆点/行内容一律
+ * 进入文本模式，看到源码 `-`。
  */
 export class BulletWidget extends WidgetType {
-    /** \u6807\u8bb0\u7b26\u81ea\u8eab\u5bbd\u5ea6\uff08px\uff09\uff0c\u5706\u70b9\u5706\u5fc3\u8981\u7528 */
     private readonly markerWidth: number;
-    /** \u7a7a\u683c\u5bbd\u5ea6\uff08px\uff09 */
-    private readonly spaceWidth: number;
-    /** \u76d2\u5b50\u603b\u5bbd = \u6807\u8bb0\u7b26 + \u7a7a\u683c\uff08px\uff09 */
     private readonly width: number;
+    /** 圆点垂直修正量（px，负=向上挪），见 measureBulletYCorrection */
+    private readonly yCorrection: number;
 
-    /**
-     * @param marker - \u6e90\u7801\u91cc\u7684\u6807\u8bb0\u7b26\uff08`-` / `*` / `+`\uff09\uff0c\u7528\u6765\u91cf\u5b83\u52a0\u4e0a\u7a7a\u683c\u6709\u591a\u5bbd
-     *
-     * \u5bbd\u5ea6\u5728**\u6784\u9020\u65f6**\u5c31\u91cf\u597d\u7f13\u5b58\uff1a\u4e00\u65b9\u9762 toDOM \u76f4\u63a5\u7528\uff0c\u53e6\u4e00\u65b9\u9762 eq \u8981\u9760\u5b83\u3002
-     * \u9996\u6b21\u6784\u5efa\u53d1\u751f\u5728\u89c6\u56fe\u6302\u8f7d\u524d\uff0cgetMeasureContext \u53ea\u80fd\u9000\u56de body \u5b57\u4f53\uff0c
-     * \u91cf\u51fa\u6765\u7684\u662f\u9519\u7684\u7a84\u5bbd\u5ea6\uff1b\u6302\u8f7d\u540e\u8865\u7b97\uff08\u89c1 plugin.ts \u7684 bootstrap\uff09
-     * \u4f1a\u91cd\u5efa\u88c5\u9970\u3001\u65b0\u5efa\u672c\u7c7b\u5b9e\u4f8b\uff0ceq \u5fc5\u987b\u8bc6\u522b\u51fa\u5bbd\u5ea6\u53d8\u4e86\uff0c
-     * \u65e7 DOM \u624d\u4e0d\u4f1a\u88ab\u590d\u7528\u3002
-     */
     constructor(private marker = '-') {
         super();
-        // \u91cf\u4e0d\u5230\uff08\u6781\u5c11\u89c1\uff09\u5c31\u4fdd\u6301 0\uff0ctoDOM \u9000\u56de\u6837\u5f0f\u8868\u91cc\u7684 em \u515c\u5e95\u503c
         this.markerWidth = measureText(this.marker, '400');
-        this.spaceWidth = measureText(' ', '400');
-        this.width = this.markerWidth + this.spaceWidth;
+        this.width = this.markerWidth + measureText(' ', '400');
+        this.yCorrection = measureBulletYCorrection(this.marker);
     }
 
     toDOM(): HTMLElement {
         const span = document.createElement('span');
         span.className = 'cm-md-bullet';
-        span.textContent = '\u2022';
-        if (this.width > 0) {
-            span.style.width = `${this.width.toFixed(2)}px`;
-            // \u5706\u70b9\u8981\u4ee5 **`-` \u7684\u4e2d\u70b9** \u4e3a\u5706\u5fc3\uff08\u9700\u6c42 3\uff09\u3002
-            // \u76d2\u5b50\u91cc text-align: center \u628a\u5706\u70b9\u653e\u5728 `- ` \u7684\u6b63\u4e2d\uff0c
-            // \u6bd4 `-` \u7684\u4e2d\u70b9\u504f\u53f3\u4e86\u534a\u4e2a\u7a7a\u683c\uff08\u7a7a\u683c\u4e0d\u53c2\u4e0e\u201c\u4e2d\u70b9\u201d\uff09\uff0c
-            // \u6240\u4ee5\u6574\u4f53\u5de6\u79fb\u534a\u4e2a\u7a7a\u683c\u5bbd\u3002
-            // \u7528 transform \u800c\u4e0d\u6539 width\uff1a\u76d2\u5b50\u5bbd\u5ea6\u4e0d\u80fd\u53d8\uff0c
-            // \u5b83\u8fd8\u8981\u628a\u540e\u9762\u7684\u6b63\u6587\u9876\u5230\u6e90\u7801\u91cc\u90a3\u4e2a\u4f4d\u7f6e\u4e0a\u3002
-            span.style.transform = `translateX(${(-this.spaceWidth / 2).toFixed(2)}px)`;
-        }
+        span.innerHTML =
+            '<span class="cm-md-bullet-dot">' +
+            '<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">' +
+            '<circle cx="6" cy="6" r="3.4" fill="currentColor"/></svg></span>';
+        span.style.width = `${this.width.toFixed(2)}px`;
+        span.style.setProperty(
+            '--cm-mark-center',
+            `${(this.markerWidth / 2).toFixed(2)}px`
+        );
+        span.style.setProperty(
+            '--cm-dot-y-correction',
+            `${this.yCorrection.toFixed(2)}px`
+        );
         return span;
     }
 
+    // 放行 mousedown：点圆点进入该行文本模式（光标落进 `-`）
     ignoreEvent(event: Event): boolean {
-        // \u9ed8\u8ba4\u5b9e\u73b0\u4f1a\u5ffd\u7565 widget \u91cc\u7684\u6240\u6709\u4e8b\u4ef6\uff0c\u70b9\u5230\u5706\u70b9\u4e0a\u5149\u6807\u4e0d\u52a8\u3001\u8fd9\u4e00\u884c\u4e5f\u8fdb\u4e0d\u4e86\u7f16\u8f91\u6001\u3002
-        // \u5355\u51fb\u653e\u884c\uff1a\u5149\u6807\u843d\u5230\u8fd9\u4e00\u884c\uff0c\u5c31\u80fd\u770b\u5230 `- ` \u7684\u6e90\u7801\uff08\u4e00\u6b21\u53ea\u6709\u4e00\u884c\u5c55\u5f00\uff09\u3002
         return event.type !== 'mousedown';
     }
 
     eq(other: BulletWidget): boolean {
-        // marker \u76f8\u540c\u8fd8\u4e0d\u591f\uff1a\u5b57\u4f53\u6d4b\u91cf\u4e0a\u4e0b\u6587\u4ece body \u5207\u5230\u6b63\u6587\u540e\u5bbd\u5ea6\u4f1a\u53d8\uff0c
-        // \u5bbd\u5ea6\u4e0d\u540c\u5fc5\u987b\u91cd\u5efa DOM\uff0c\u5426\u5219\u65e7\u7684\u9519\u8bef\u7a84\u5bbd\u5ea6\u4f1a\u4e00\u76f4\u7559\u7740
         return (
             this.marker === other.marker &&
-            // \u91cf\u5316\u5230 0.01px \u518d\u6bd4\uff0c\u907f\u5f00\u6d6e\u70b9\u5c3e\u5dee\u5bfc\u81f4\u7684\u65e0\u8c13\u91cd\u5efa
-            Math.round(this.width * 100) === Math.round(other.width * 100)
+            Math.round(this.width * 100) ===
+                Math.round(other.width * 100) &&
+            // 字体环境变化（首次构建走 body、正文挂载后重建）会改变修正量，
+            // 不纳入 eq 的话 CM 复用旧 DOM，补偿值停在错的那份上
+            Math.round(this.yCorrection * 100) ===
+                Math.round(other.yCorrection * 100)
         );
     }
 }
@@ -322,8 +322,63 @@ export class FrontmatterWidget extends WidgetType {
 }
 
 // =============================================================================
-// Interactive Widgets
+// Gutter fold widget（折叠箭头统一放在行号位置）
 // =============================================================================
+
+/**
+ * 行号位置的折叠箭头 widget，列表项与标题章节共用。
+ *
+ * 折叠交互从正文内容里彻底剥离：点行内容永远进入文本模式（看到 `-`/`#`），
+ * 只有悬停**行号**时，行号淡出、换成折叠箭头；折叠态箭头常驻行号位、
+ * 旋转朝右、用 accent 色。
+ *
+ * 本 widget 由 gutter 的 lineNumberMarker 替换逻辑注入（见 gutterFold.ts），
+ * 根元素填满 gutter 格子，内部 chevron 居中。
+ */
+export class GutterFoldWidget extends WidgetType {
+    /**
+     * @param folded - 当前是否折叠态
+     */
+    constructor(private folded = false) {
+        super();
+    }
+
+    eq(other: GutterFoldWidget): boolean {
+        return this.folded === other.folded;
+    }
+
+    ignoreEvent(): boolean {
+        // gutter 在 contentDOM 之外，事件不会进编辑器，无需放行
+        return true;
+    }
+
+    toDOM(view: EditorView): HTMLElement {
+        const root = document.createElement('span');
+        root.className =
+            'cm-md-gutter-fold' + (this.folded ? ' is-folded' : '');
+        root.innerHTML =
+            '<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">' +
+            '<polyline points="3,4.5 6,7.5 9,4.5" fill="none" ' +
+            'stroke="currentColor" stroke-width="1.5" stroke-linecap="round" ' +
+            'stroke-linejoin="round"/></svg>';
+        // mousedown 切换折叠：行号不在 content 内，本来也不会放置光标
+        root.addEventListener('mousedown', (e: MouseEvent) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const lineFrom = view.state.doc.lineAt(
+                view.posAtDOM(root, 0)
+            ).from;
+            if (foldedLines.has(lineFrom)) {
+                foldedLines.delete(lineFrom);
+            } else {
+                foldedLines.add(lineFrom);
+            }
+            view.dispatch({ effects: foldToggleEffect.of(null) });
+        });
+        return root;
+    }
+}
 
 /**
  * Widget that renders a checkbox for task list items.
@@ -534,47 +589,6 @@ export class ImageWidget extends WidgetType {
     }
 }
 
-/**
- * Widget that renders a fold arrow for parent list items.
- * Clicking toggles the fold state and forces a view re-render.
- */
-export class FoldArrowWidget extends WidgetType {
-    constructor(
-        private lineFrom: number,
-        private folded: boolean
-    ) {
-        super();
-    }
-
-    eq(other: FoldArrowWidget): boolean {
-        return this.lineFrom === other.lineFrom && this.folded === other.folded;
-    }
-
-    ignoreEvent(event: Event): boolean {
-        return event.type === 'mousedown';
-    }
-
-    toDOM(view: EditorView): HTMLElement {
-        const span = document.createElement('span');
-        span.className =
-            'cm-md-fold-arrow' +
-            (this.folded ? ' cm-md-fold-arrow-collapsed' : ' cm-md-fold-arrow-open');
-        span.textContent = '\u25BC'; // Always ▼, rotated via CSS for collapsed
-        span.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-            if (foldedListItems.has(this.lineFrom)) {
-                foldedListItems.delete(this.lineFrom);
-            } else {
-                foldedListItems.add(this.lineFrom);
-            }
-            // Force decoration rebuild via StateEffect
-            view.dispatch({ effects: foldToggleEffect.of(null) });
-        });
-        return span;
-    }
-}
 
 // =============================================================================
 // Code Block Copy Widget
@@ -1167,7 +1181,7 @@ export class InlineMathWidget extends WidgetType {
                 ...(this.fallbackText !== null ? { errorColor: MATH_PROBE_COLOR } : {}),
             });
         } catch (e) {
-            console.error('[FlowMD] InlineMath KaTeX render error:', e, 'tex:', this.tex);
+            console.error('[LiveWriteMD] InlineMath KaTeX render error:', e, 'tex:', this.tex);
             failed = true;
         }
 
@@ -1206,15 +1220,15 @@ const mathScaleCache = new Map<string, number>();
  * 正文的字号（px）。
  *
  * `.cm-content` 的 font-size 就是 `.cm-content` 那条规则算出来的
- * `--flowmd-editor-font-size × --flowmd-font-scale`，这里照抄一遍 ——
+ * `--livewritemd-editor-font-size × --livewritemd-font-scale`，这里照抄一遍 ——
  * 只用在「连正文行都还没有」的首次构建里给行高兜底。
  *
  * @returns 正文字号（px），两个变量都读不到时按主题默认的 14px
  */
 function contentFontSizePx(): number {
     const root = getComputedStyle(document.documentElement);
-    const base = Number.parseFloat(root.getPropertyValue('--flowmd-editor-font-size'));
-    const scale = Number.parseFloat(root.getPropertyValue('--flowmd-font-scale'));
+    const base = Number.parseFloat(root.getPropertyValue('--livewritemd-editor-font-size'));
+    const scale = Number.parseFloat(root.getPropertyValue('--livewritemd-font-scale'));
     return Number.isFinite(base) ? base * (Number.isFinite(scale) ? scale : 1) : 14;
 }
 
@@ -1224,7 +1238,7 @@ function contentFontSizePx(): number {
  * 三级来源，越靠前越准：
  * 1. 页面上已经有正文行 —— 量它的计算行高（行高是用户可配的，量出来的最准）；
  * 2. 还没有（视图**首次构建**时一行都没有）—— 按 CSS 里用的同一个变量现算：
- *    `--flowmd-line-height` 是 `1.7em` 这种带 em 的写法时乘上正文字号，
+ *    `--livewritemd-line-height` 是 `1.7em` 这种带 em 的写法时乘上正文字号，
  *    写成 `22px` 时直接用；
  * 3. 变量也读不到 —— 字号 × 1.7，即主题里那个兜底值。
  *
@@ -1237,7 +1251,7 @@ function mathLineHeightPx(): number {
         if (Number.isFinite(measured) && measured > 0) return measured;
     }
     const raw = getComputedStyle(document.documentElement)
-        .getPropertyValue('--flowmd-line-height')
+        .getPropertyValue('--livewritemd-line-height')
         .trim();
     const value = Number.parseFloat(raw);
     if (Number.isFinite(value) && value > 0) {
@@ -1250,7 +1264,7 @@ function mathLineHeightPx(): number {
  * 块级公式外框的高度（px）= 2.5 行正文。
  *
  * 只给两件事用：**视口外的高度估算**（`estimatedHeight`）和缩放缓存的 key。
- * 框的真实高度由 CSS 算（styles.ts 里 `calc(2.5 * var(--flowmd-line-height))`），
+ * 框的真实高度由 CSS 算（styles.ts 里 `calc(2.5 * var(--livewritemd-line-height))`），
  * 两边是同一条公式，所以这里算出来的和页面上量到的一致。
  *
  * **别拿它去写行内 style 的高度**：首次构建时 `.cm-line` 还不存在，
@@ -1355,7 +1369,7 @@ export class BlockMathWidget extends WidgetType {
     toDOM(view: EditorView): HTMLElement {
         const div = document.createElement('div');
         div.className = 'cm-md-math-block';
-        // 高度**不写行内 style**：由 styles.ts 的 `calc(2.5 * var(--flowmd-line-height))` 算。
+        // 高度**不写行内 style**：由 styles.ts 的 `calc(2.5 * var(--livewritemd-line-height))` 算。
         // 这里写死一段 px 会永久生效（widget.eq 为真时 CM 复用 DOM、toDOM 不再跑），
         // 而首次构建那一刻量不到行高，写下去的就是个错值 —— 下面每一行都会跟着偏。
         // 点击公式 → 光标落在点击处 → 整段公式进入文本模式
@@ -1377,7 +1391,7 @@ export class BlockMathWidget extends WidgetType {
                 output: 'htmlAndMathml',
             });
         } catch (e) {
-            console.error('[FlowMD] BlockMath KaTeX render error:', e, 'tex:', this.tex);
+            console.error('[LiveWriteMD] BlockMath KaTeX render error:', e, 'tex:', this.tex);
             inner.textContent = `$$${this.tex}$$`;
         }
         div.appendChild(inner);

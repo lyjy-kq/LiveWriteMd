@@ -1,7 +1,7 @@
 /**
- * FlowMD Editor Provider
+ * LiveWriteMD Editor Provider
  *
- * This module implements the CustomTextEditorProvider for the FlowMD extension.
+ * This module implements the CustomTextEditorProvider for the LiveWriteMD extension.
  * It manages the Webview panel, TextDocument synchronization, and handles
  * communication between the Extension and Webview via postMessage.
  *
@@ -48,14 +48,14 @@ import { getSavedSearchHistory, saveSearchHistory } from './searchHistoryStore.j
 // =============================================================================
 
 /**
- * View type identifier for the FlowMD custom editor.
+ * View type identifier for the LiveWriteMD custom editor.
  * Must match the viewType in package.json contributes.customEditors.
  */
-export const VIEW_TYPE = 'flowMd.editor';
+export const VIEW_TYPE = 'liveWriteMd.editor';
 
 /**
  * 澶х翰闈㈡澘瀹藉害鍦ㄦ墿灞曞叏灞€瀛樺偍涓殑閿悕銆? * 鐢ㄤ簬鍦?VS Code 閲嶅惎鍚庢仮澶嶇敤鎴蜂笂涓€娆¤皟鏁寸殑瀹藉害銆? */
-const OUTLINE_PANEL_WIDTH_STORAGE_KEY = 'flowMd.outlineWidth';
+const OUTLINE_PANEL_WIDTH_STORAGE_KEY = 'liveWriteMd.outlineWidth';
 
 /**
  * 澶х翰闈㈡澘瀹藉害鐨勯粯璁ゅ€笺€? * 褰撳瓨鍌ㄧ己澶辨垨鍊奸潪娉曟椂浣跨敤銆? */
@@ -136,18 +136,18 @@ function normalizeOutlinePanelWidth(width: number): number {
 }
 
 // =============================================================================
-// FlowMdEditorProvider
+// LiveWriteMdEditorProvider
 // =============================================================================
 
 /**
- * Custom text editor provider for FlowMD.
+ * Custom text editor provider for LiveWriteMD.
  *
  * Implements VS Code's CustomTextEditorProvider interface to provide
  * a WYSIWYG Markdown editing experience using Milkdown in a Webview.
  *
  * Design Reference: DES-A-003
  */
-export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
+export class LiveWriteMdEditorProvider implements vscode.CustomTextEditorProvider {
     /** Currently active webview panel info */
     private activePanelInfo: { panel: vscode.WebviewPanel; docUri: string } | null = null;
 
@@ -155,14 +155,14 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
     private editorModeMap = new Map<string, string>();
 
     /**
-     * Creates a new instance of FlowMdEditorProvider.
+     * Creates a new instance of LiveWriteMdEditorProvider.
      *
      * @param context - The extension context
      */
     constructor(private readonly context: vscode.ExtensionContext) {}
 
     /**
-     * Sets the editor mode for the active FlowMD editor.
+     * Sets the editor mode for the active LiveWriteMD editor.
      * Cycles through: live 鈫?viewer 鈫?source 鈫?live
      *
      * @param mode - The target mode ('live' | 'viewer' | 'source')
@@ -177,7 +177,7 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
             mode,
         });
 
-        vscode.commands.executeCommand('setContext', 'flowMd.editorMode', mode);
+        vscode.commands.executeCommand('setContext', 'liveWriteMd.editorMode', mode);
         Logger.info(`Editor mode set to '${mode}' for: ${docUri}`);
     }
 
@@ -191,7 +191,7 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
      */
     public toggleOutline(): void {
         if (!this.activePanelInfo) {
-            vscode.window.showWarningMessage('FlowMD: 请在 FlowMD 编辑器中切换大纲。');
+            vscode.window.showWarningMessage('LiveWriteMD: 请在 LiveWriteMD 编辑器中切换大纲。');
             return;
         }
 
@@ -201,13 +201,13 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
     }
 
     /**
-     * 打开当前 FlowMD 编辑器内的设置面板。
+     * 打开当前 LiveWriteMD 编辑器内的设置面板。
      *
      * 面板 UI 在 Webview 侧，这里只发一个打开信号。
      */
     public openSettings(): void {
         if (!this.activePanelInfo) {
-            vscode.window.showWarningMessage('FlowMD: 请先打开一个 FlowMD 编辑器。');
+            vscode.window.showWarningMessage('LiveWriteMD: 请先打开一个 LiveWriteMD 编辑器。');
             return;
         }
         const { panel, docUri } = this.activePanelInfo;
@@ -278,7 +278,7 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             Logger.error(`Image insert failed: ${errorMessage}`);
-            vscode.window.showErrorMessage(`FlowMD: 图片插入失败：${errorMessage}`);
+            vscode.window.showErrorMessage(`LiveWriteMD: 图片插入失败：${errorMessage}`);
         }
     }
 
@@ -291,7 +291,7 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
     public async insertImageFromExplorer(sourceUri: vscode.Uri): Promise<void> {
         if (!this.activePanelInfo) {
             vscode.window.showWarningMessage(
-                'FlowMD: No active editor. Open a .md file with FlowMD first.'
+                'LiveWriteMD: No active editor. Open a .md file with LiveWriteMD first.'
             );
             return;
         }
@@ -331,7 +331,7 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             Logger.error(`Image insert from Explorer failed: ${errorMessage}`);
-            vscode.window.showErrorMessage(`FlowMD: 图片插入失败：${errorMessage}`);
+            vscode.window.showErrorMessage(`LiveWriteMD: 图片插入失败：${errorMessage}`);
         }
     }
 
@@ -347,30 +347,30 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
             const result = await downloadRemoteImagesToAssets(originalContent, document.uri);
 
             if (result.downloadedCount === 0) {
-                await vscode.window.showInformationMessage('FlowMD: 没有找到可下载的网络图片。');
+                await vscode.window.showInformationMessage('LiveWriteMD: 没有找到可下载的网络图片。');
                 return;
             }
 
             const success = await this.updateTextDocument(document, result.content);
             if (!success) {
-                await vscode.window.showErrorMessage('FlowMD: 图片下载成功，但正文回写失败。');
+                await vscode.window.showErrorMessage('LiveWriteMD: 图片下载成功，但正文回写失败。');
                 return;
             }
 
             if (result.failedUrls.length > 0) {
                 await vscode.window.showWarningMessage(
-                    `FlowMD: 已下载 ${result.downloadedCount} 张网络图片，但有 ${result.failedUrls.length} 张失败。`
+                    `LiveWriteMD: 已下载 ${result.downloadedCount} 张网络图片，但有 ${result.failedUrls.length} 张失败。`
                 );
                 return;
             }
 
             await vscode.window.showInformationMessage(
-                `FlowMD: 已下载 ${result.downloadedCount} 张网络图片到 assets。`
+                `LiveWriteMD: 已下载 ${result.downloadedCount} 张网络图片到 assets。`
             );
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             Logger.error(`Download remote images failed: ${errorMessage}`);
-            await vscode.window.showErrorMessage(`FlowMD: 下载网络图片失败：${errorMessage}`);
+            await vscode.window.showErrorMessage(`LiveWriteMD: 下载网络图片失败：${errorMessage}`);
         }
     }
 
@@ -414,8 +414,8 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
             return;
         }
 
-        // fileSizeResult.action === 'proceed' - proceed with FlowMD editor
-        Logger.info(`Proceeding with FlowMD editor: ${document.uri.fsPath}`);
+        // fileSizeResult.action === 'proceed' - proceed with LiveWriteMD editor
+        Logger.info(`Proceeding with LiveWriteMD editor: ${document.uri.fsPath}`);
 
         // =================================================================
         // Webview Configuration (DES-S-002)
@@ -642,13 +642,13 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
         const defaultMode = ConfigManager.getDefaultMode();
         this.editorModeMap.set(docUriStr, defaultMode);
         this.activePanelInfo = { panel: webviewPanel, docUri: docUriStr };
-        vscode.commands.executeCommand('setContext', 'flowMd.editorMode', defaultMode);
+        vscode.commands.executeCommand('setContext', 'liveWriteMd.editorMode', defaultMode);
 
         webviewPanel.onDidChangeViewState(() => {
             if (webviewPanel.active) {
                 this.activePanelInfo = { panel: webviewPanel, docUri: docUriStr };
                 const editorMode = this.editorModeMap.get(docUriStr) ?? 'live';
-                vscode.commands.executeCommand('setContext', 'flowMd.editorMode', editorMode);
+                vscode.commands.executeCommand('setContext', 'liveWriteMd.editorMode', editorMode);
             }
         });
 
@@ -657,11 +657,11 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
         // =================================================================
         const configChangeSubscription = vscode.workspace.onDidChangeConfiguration(
             (e: vscode.ConfigurationChangeEvent) => {
-                if (!e.affectsConfiguration('flowMd')) return;
+                if (!e.affectsConfiguration('liveWriteMd')) return;
 
-                // 任何 flowMd 设置变化：统一重发完整设置（结构化 + 全量），
+                // 任何 liveWriteMd 设置变化：统一重发完整设置（结构化 + 全量），
                 // Webview 侧据此更新编辑器配置与 CSS 变量。
-                Logger.info('FlowMD settings changed');
+                Logger.info('LiveWriteMD settings changed');
                 webviewPanel.webview.postMessage({
                     type: MESSAGE_TYPES.SETTINGS_CHANGE,
                     settings: ConfigManager.getEditorSettings(),
@@ -669,9 +669,9 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
                 });
 
                 // theme 还涉及明暗切换（不只 CSS 变量），额外发一次主题消息。
-                if (e.affectsConfiguration('flowMd.theme')) {
+                if (e.affectsConfiguration('liveWriteMd.theme')) {
                     Logger.info(
-                        `FlowMD theme override changed to: ${ConfigManager.getThemeOverride()}`
+                        `LiveWriteMD theme override changed to: ${ConfigManager.getThemeOverride()}`
                     );
                     webviewPanel.webview.postMessage({
                         type: MESSAGE_TYPES.THEME_CHANGE,
@@ -810,7 +810,7 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
 
             case MESSAGE_TYPES.ERROR:
                 Logger.error(`Webview error: ${message.message}`, new Error(message.stack));
-                await vscode.window.showErrorMessage(`FlowMD: ${message.message}`);
+                await vscode.window.showErrorMessage(`LiveWriteMD: ${message.message}`);
                 break;
 
             // 处理来自 Webview 的搜索/替换历史变更消息。
@@ -837,7 +837,7 @@ export class FlowMdEditorProvider implements vscode.CustomTextEditorProvider {
                     Math.max(0.5, Math.round(scaleMsg.fontScale * 100) / 100)
                 );
                 await vscode.workspace
-                    .getConfiguration('flowMd')
+                    .getConfiguration('liveWriteMd')
                     .update('fontScale', clampedScale, vscode.ConfigurationTarget.Global);
                 Logger.debug(`Editor font scale saved: ${clampedScale}`);
                 break;

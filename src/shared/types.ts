@@ -1,5 +1,5 @@
 /**
- * FlowMD 共享类型定义。
+ * LiveWriteMD 共享类型定义。
  *
  * 这个文件集中存放扩展与 Webview 之间的消息类型、编辑器设置类型，
  * 以及一些通用状态定义，避免各个模块各自维护一份不一致的契约。
@@ -27,7 +27,7 @@ export interface BaseMessage {
 /**
  * 扩展侧传给 Webview 的编辑器设置。
  */
-export interface FlowMdEditorSettings {
+export interface LiveWriteMdEditorSettings {
     /** 是否显示行号。 */
     lineNumbers: boolean;
     /** 是否开启自动换行。 */
@@ -60,7 +60,7 @@ export interface InitMessage extends BaseMessage {
     /** 当前文档 URI。 */
     documentUri: string;
     /** 编辑器设置（结构化：行号 / 换行 / 行宽 / 字号）。 */
-    settings?: FlowMdEditorSettings;
+    settings?: LiveWriteMdEditorSettings;
     /** 全部设置（含颜色、个性化项），供 settingsState 注入 CSS 变量与运行时读取。 */
     allSettings?: Record<string, SettingValue>;
     /** 初始右侧大纲宽度，单位像素。 */
@@ -103,13 +103,13 @@ export interface FontScaleChangeMessage extends BaseMessage {
 
 /**
  * 设置变更消息（扩展 -> Webview）。
- * 任何 flowMd 配置变化都重发完整设置。
+ * 任何 liveWriteMd 配置变化都重发完整设置。
  */
 export interface SettingsChangeMessage extends BaseMessage {
     /** 消息类型。 */
     type: 'settingsChange';
     /** 结构化编辑器设置。 */
-    settings?: FlowMdEditorSettings;
+    settings?: LiveWriteMdEditorSettings;
     /** 全部设置。 */
     allSettings?: Record<string, SettingValue>;
 }
@@ -200,7 +200,7 @@ export interface SearchHistoryChangeMessage extends BaseMessage {
 export interface UpdateSettingMessage extends BaseMessage {
     /** 消息类型。 */
     type: 'updateSetting';
-    /** 设置键（不含 flowMd.）。 */
+    /** 设置键（不含 liveWriteMd.）。 */
     key: string;
     /** 新值。 */
     value: SettingValue;
@@ -298,9 +298,9 @@ export interface SyncState {
 // =============================================================================
 
 /**
- * FlowMD 配置。
+ * LiveWriteMD 配置。
  */
-export interface FlowMdConfiguration {
+export interface LiveWriteMdConfiguration {
     /** 大文件阈值，单位字节。 */
     largeFileThreshold: number;
     /** 内容同步防抖时间，单位毫秒。 */
@@ -312,7 +312,7 @@ export interface FlowMdConfiguration {
 /**
  * 默认配置。
  */
-export const DEFAULT_CONFIG: FlowMdConfiguration = {
+export const DEFAULT_CONFIG: LiveWriteMdConfiguration = {
     /** 默认阈值：1MB。 */
     largeFileThreshold: 1 * 1024 * 1024,
     /** 默认防抖：300ms。 */
