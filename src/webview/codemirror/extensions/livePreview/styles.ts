@@ -70,17 +70,19 @@ export function createBaseThemeStyles(): Extension {
             color: 'inherit',
         },
 
-        // 浅色主题下正文再压深一档（往纯黑方向混 16%）。
+        // 浅色主题下正文直接用纯黑（#000）。
         // 标题 / 加粗 / 斜体的颜色都是「色相 + 正文色」混出来的，
         // 正文本身偏灰的话整体观感都会发虚；这里只动浅色主题，
         // 深色主题的正文保持 VS Code 给的浅灰不变。
+        // 不再和 editor-foreground 做 color-mix：用户要的就是最深的黑，
+        // 混比再往上加也只是逼近 #000，不如直接写死。
         // 选择器只能写「&light .cm-content」：`&light` 生成的是「祖先带主题
         // class」的形式（.ͼ2 .xxx），而主题 class 挂在 .cm-editor 自身，所以
         // `&light .cm-editor` 永远匹配不到；.cm-content 是它的后代才行。
         // 重复一次类名把优先级抬到 (0,3,0)：theme.ts 里那条 `.cm-content
         // { color: inherit }` 也是 (0,2,0)，同一优先级下靠顺序决胜负，赢不了。
         '&light .cm-content.cm-content': {
-            color: `color-mix(in srgb, var(--vscode-editor-foreground, #24292e) 84%, #000)`,
+            color: '#000',
         },
 
         // =================================================================
@@ -134,7 +136,9 @@ export function createBaseThemeStyles(): Extension {
             color: `var(--livewritemd-h1-color, ${tone('#eb8383', true)})`,
         },
         '&light .cm-md-heading-2': {
-            color: `var(--livewritemd-h2-color, ${tone('#ae9acb', true)})`,
+            // 紫色在白底上本来就偏浅，比其它级别多混 14 个百分点（46 → 60），
+            // 混完约 rgb(88,80,100)，仍是紫灰而不是黑。
+            color: `var(--livewritemd-h2-color, ${tone('#ae9acb', true, 60)})`,
         },
         '&light .cm-md-heading-3': {
             color: `var(--livewritemd-h3-color, ${tone('#7db5cd', true)})`,
@@ -172,7 +176,9 @@ export function createBaseThemeStyles(): Extension {
             color: `var(--livewritemd-italic-color, ${tone('#2bbac5')})`,
         },
         '&light .cm-md-bold': {
-            color: `var(--livewritemd-bold-color, ${tone('#d9a37a', true)})`,
+            // 金色系压深后必然偏棕，这是色相决定的；60% 时约 rgb(105,84,67)，
+            // 已经能明显看出是「暗金」而不是橙色，再深就完全是褐色了。
+            color: `var(--livewritemd-bold-color, ${tone('#d9a37a', true, 60)})`,
         },
         '&light .cm-md-italic': {
             color: `var(--livewritemd-italic-color, ${tone('#2bbac5', true)})`,

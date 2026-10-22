@@ -214,10 +214,10 @@ export const MINDMAP_CSS = `
     --lwm-link-color: #9aa5b1;
     --lwm-node-border: #d7dee6;
 }
-/* 浅色主题的节点文字 / 纯文本占位：和实时模式一样往纯黑方向压 16%，
+/* 浅色主题的节点文字 / 纯文本占位：和实时模式一样用纯黑，
    否则节点里的正文会比编辑器正文淡一档（.lwm-node 的 color 会压过继承）。 */
 #mindmap[data-lwm-theme="light"] .lwm-node {
-    color: color-mix(in srgb, var(--vscode-editor-foreground, #24292e) 84%, #000);
+    color: #000;
 }
 .lwm-node .cm-editor {
     background: transparent !important;
