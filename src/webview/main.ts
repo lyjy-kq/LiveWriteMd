@@ -31,7 +31,8 @@
  * - REQ-F-010: Image display
  */
 
-import { CodeMirrorEditor } from './codemirror/editor.js';
+import { CodeMirrorEditor, codeLanguages } from './codemirror/editor.js';
+import { undo, redo } from '@codemirror/commands';
 import { switchTheme } from './codemirror/extensions/theme.js';
 import { setDocumentBaseUri } from './codemirror/extensions/livePreview/index.js';
 import { setMermaidTheme, setPostMessage } from './codemirror/extensions/livePreview/state.js';
@@ -54,6 +55,8 @@ import {
 import type { ThemeType, LiveWriteMdEditorSettings } from '../shared/types.js';
 import type { SearchHistoryState } from '../shared/searchHistory.js';
 import { MESSAGE_TYPES } from '../shared/messageTypes.js';
+import { MindMapApp } from './mindmap/mindmapApp.js';
+import type { MindMapRuntimeSettings } from './mindmap/types.js';
 
 // =============================================================================
 // Type Declarations for VS Code Webview API
@@ -206,6 +209,18 @@ const debouncedSetOutlineContent = (() => {
 let editor: CodeMirrorEditor | null = null;
 
 /**
+ * 导图应用实例（mindmap 模式）。
+ * 惰性创建：第一次进入导图模式时才实例化自研画布（不再有第三方 chunk）。
+ */
+let mindmapApp: MindMapApp | null = null;
+
+/** 当前文档文件名（不含扩展名），导图虚拟根使用。 */
+let mindmapFileName = '';
+
+/** webview 当前明暗主题，导图主题 auto 时跟随。 */
+let currentTheme: ThemeType = 'dark';
+
+/**
  * 搜索/替换历史控制器实例。
  * 用于给 CodeMirror 搜索面板挂载 datalist 并回传历史变更。
  */
@@ -308,6 +323,185 @@ function getOrCreateEditorHost(): HTMLElement {
         document.body.appendChild(container);
     }
     return container;
+}
+
+/**
+ * 获取导图挂载容器（HTML 壳子里已预置 #mindmap）。
+     */
+function getMindmapHost(): HTMLElement {
+    return document.getElementById('mindmap') as HTMLElement;
+}
+
+/**
+ * 从文档 URI 推导文件名（不含扩展名），作为导图虚拟根文本。
+ *
+ * @param uri 文档 URI
+ * @returns 去扩展名后的文件名
+ */
+function fileNameFromUri(uri: string): string {
+    try {
+        const withoutQuery = decodeURIComponent(uri.split('?')[0] ?? uri);
+        const base = withoutQuery.split(/[\\/]/).pop() ?? '';
+        return base.replace(/\.(md|markdown)$/i, '');
+    } catch {
+        const fallback = uri.split(/[\\/]/).pop() ?? '';
+        return fallback.replace(/\.(md|markdown)$/i, '');
+    }
+}
+
+/**
+ * 从 settingsState 读取导图运行时设置。
+     */
+function readMindmapSettings(): MindMapRuntimeSettings {
+    return {
+        mindmapTheme: settingsState.getString('mindmapTheme') || 'auto',
+        mindmapDefaultExpandLevel: settingsState.getNumber('mindmapDefaultExpandLevel'),
+        mindmapPerformanceMode: settingsState.getBoolean('mindmapPerformanceMode'),
+        // 离屏实例 LRU 淘汰：默认关闭
+        mindmapDisplayCache: settingsState.getBoolean('mindmapDisplayCache'),
+        // 节点尺寸上限：getNumber 缺省/异常时回退 0，这里兜底成默认值
+        mindmapNodeMaxWidth: settingsState.getNumber('mindmapNodeMaxWidth') || 20,
+        mindmapNodeMaxLines: settingsState.getNumber('mindmapNodeMaxLines') || 3,
+        // 代码块最小宽度：0 是合法值（不设），不能 || 兜底
+        mindmapCodeMinWidth: settingsState.getNumber('mindmapCodeMinWidth'),
+        // 缩放降级开关：默认关闭，关闭时阈值不参与判断
+        mindmapLiteEnabled: settingsState.getBoolean('mindmapLiteEnabled'),
+        mindmapPlainEnabled: settingsState.getBoolean('mindmapPlainEnabled'),
+        // 缩放降级阈值（百分比）：0 不是合法值（等于任何时候都降级），兜底默认
+        mindmapLiteZoom: settingsState.getNumber('mindmapLiteZoom') || 70,
+        mindmapPlainZoom: settingsState.getNumber('mindmapPlainZoom') || 40,
+    };
+}
+
+/**
+ * 导图编辑回写：把导图算出的新全文同步进隐藏的 CodeMirror 实例。
+ *
+ * 走 CM dispatch 而不是直发 CONTENT_CHANGE，是为了让导图操作进入 CM 撤销栈
+ * （Ctrl+Z / 切回文本 undo 都能撤销，一次导图操作 = 一步 undo），
+ * 随后由现有 contentChange 监听防抖上报给扩展（设计文档 §3.3）。
+ *
+ * dispatch 的变更范围是「新旧全文的公共前后缀之间的最小差异」，
+ * 不是整篇替换：全量替换会让 CM 重建整篇语法树与块装饰，大文档拖动
+ * 松手时会明显卡顿；最小差异的开销只和改动块的大小相关。
+ *
+ * @param newFullText 导图操作算出的新全文
+ */
+function applyMindmapEdit(newFullText: string): void {
+    const view = editor?.getView();
+    if (!view) {
+        sendLog('WARN', 'Mindmap edit ignored: CodeMirror view is not ready');
+        return;
+    }
+    const oldText = view.state.doc.toString();
+    if (oldText === newFullText) return;
+    // 不再全量替换：拖动一次通常只动一小块，算出公共前后缀后只替换中间。
+    // 全量 dispatch 会让隐藏的 CM 重建整篇语法树/块装饰，文档大时拖动
+    // 松手会明显卡一下；最小变更把这块成本压到与改动块同量级。
+    let start = 0;
+    const minLength = Math.min(oldText.length, newFullText.length);
+    while (
+        start < minLength &&
+        oldText.charCodeAt(start) === newFullText.charCodeAt(start)
+    ) {
+        start += 1;
+    }
+    let oldEnd = oldText.length;
+    let newEnd = newFullText.length;
+    while (
+        oldEnd > start &&
+        newEnd > start &&
+        oldText.charCodeAt(oldEnd - 1) === newFullText.charCodeAt(newEnd - 1)
+    ) {
+        oldEnd -= 1;
+        newEnd -= 1;
+    }
+    view.dispatch({
+        changes: {
+            from: start,
+            to: oldEnd,
+            insert: newFullText.slice(start, newEnd),
+        },
+    });
+}
+
+/**
+ * 导图模式的撤销 / 重做（todo.md 任务 7）。
+ *
+ * 导图编辑本来就通过 applyMindmapEdit 走「隐藏 CM 的最小差异 dispatch」进
+ * CM 撤销栈，所以导图里的 Ctrl+Z/Y 等价于对隐藏 CM 执行 undo/redo；
+ * 完成后立即把新文档喂回导图重建（UPDATE 防抖回环太慢，等不起）。
+ */
+function applyMindmapUndoRedo(kind: 'undo' | 'redo'): void {
+    const view = editor?.getView();
+    if (!view) return;
+    const applied = kind === 'undo' ? undo(view) : redo(view);
+    if (applied) {
+        mindmapApp?.setDocument(view.state.doc.toString(), mindmapFileName);
+    }
+}
+
+/**
+ * 进入导图模式：隐藏文本容器（CM 实例保留），惰性创建/复用导图应用。
+ */
+async function enterMindmapMode(): Promise<void> {
+    const host = getMindmapHost();
+    const editorHost = getOrCreateEditorHost();
+    editorHost.hidden = true;
+    host.hidden = false;
+
+    if (!mindmapApp) {
+        mindmapApp = new MindMapApp(host, {
+            onEdit: applyMindmapEdit,
+            onUndo: () => applyMindmapUndoRedo('undo'),
+            onRedo: () => applyMindmapUndoRedo('redo'),
+            // mini-CM 的代码块嵌套高亮语言表（主编辑器同款）
+            codeLanguages,
+            // 任务 16：导图选中节点 → 大纲高亮对应行
+            onSelectLine: (line: number) => outlinePanel?.setActiveLine(line),
+            // 迭代 N3：导图导出 → extension 存盘
+            onExport: (payload) => {
+                vscode.postMessage({ type: 'saveMindmapExport', ...payload });
+            },
+        });
+        mindmapApp.setTheme(currentTheme);
+        mindmapApp.setSettings(readMindmapSettings());
+    }
+    if (editor && editor.isReady()) {
+        mindmapApp.setDocument(editor.getContent(), mindmapFileName);
+    }
+    await mindmapApp.whenReady();
+    mindmapApp.setActive(true);
+    sendLog('INFO', 'Mindmap mode activated');
+}
+
+/**
+ * 退出导图模式：隐藏导图容器、恢复文本容器；CM 状态（撤销栈/光标/滚动）原样保留。
+ */
+function leaveMindmapMode(): void {
+    getMindmapHost().hidden = true;
+    getOrCreateEditorHost().hidden = false;
+    mindmapApp?.setActive(false);
+    // 容器从 display:none 恢复后让 CM 重新测量
+    requestAnimationFrame(() => {
+        editor?.getView()?.requestMeasure();
+    });
+}
+
+/**
+ * 应用扩展侧下发的模式切换（live / viewer / source / mindmap）。
+ *
+ * @param mode 目标模式
+ */
+async function applyEditorMode(mode: EditorMode): Promise<void> {
+    currentEditorMode = mode;
+    if (mode === 'mindmap') {
+        await enterMindmapMode();
+        return;
+    }
+    leaveMindmapMode();
+    if (editor && editor.isReady()) {
+        editor.setMode(mode);
+    }
 }
 
 /**
@@ -429,6 +623,10 @@ function hideBootStatus(): void {
 function registerGlobalErrorDiagnostics(): void {
     window.addEventListener('error', (event: ErrorEvent) => {
         const message = event.error instanceof Error ? event.error.message : event.message;
+        // ResizeObserver 的「loop completed with undelivered notifications」是
+        // 浏览器已知的良性告警（回调里改了布局而已），没有调用栈也没有
+        // 可恢复动作；不往扩展主机刷 ERROR，免得掩盖真正的异常。
+        if (message.includes('ResizeObserver loop')) return;
         const stack = event.error instanceof Error ? event.error.stack : undefined;
         sendLog(
             'ERROR',
@@ -530,13 +728,16 @@ async function handleInit(
     documentUri: string,
     searchHistory: SearchHistoryState,
     settings?: LiveWriteMdEditorSettings,
-    mode?: 'live' | 'viewer' | 'source',
+    mode?: EditorMode,
     outlineWidth?: number,
     allSettings?: Record<string, SettingValue>
 ): Promise<void> {
     hasReceivedInit = true;
     updateBootStatus('已收到 INIT，正在创建 CodeMirror 编辑器。');
     sendLog('INFO', `INIT received: contentLength=${content.length}, theme=${theme}`);
+
+    currentTheme = theme;
+    mindmapFileName = fileNameFromUri(documentUri);
 
     try {
         // Destroy any stale search history controller before rebuilding the editor.
@@ -568,6 +769,11 @@ async function handleInit(
             editor.destroy();
             editor = null;
         }
+        // 导图实例同样重建，容器可见性复位到文本态
+        mindmapApp?.destroy();
+        mindmapApp = null;
+        getMindmapHost().hidden = true;
+        getOrCreateEditorHost().hidden = false;
 
         // Create new CodeMirror editor
         sendLog('INFO', 'Creating CodeMirror editor instance');
@@ -658,7 +864,11 @@ async function handleInit(
         }
 
         // Apply default editor mode
-        if (mode && mode !== 'live') {
+        if (mode === 'mindmap') {
+            await enterMindmapMode();
+            currentEditorMode = 'mindmap';
+            sendLog('INFO', 'Default editor mode applied: mindmap');
+        } else if (mode && mode !== 'live') {
             editor.setMode(mode);
             currentEditorMode = mode;
             sendLog('INFO', `Default editor mode applied: ${mode}`);
@@ -697,6 +907,8 @@ function handleUpdate(content: string): void {
         // setContent() does NOT trigger onChange (feedback loop prevention)
         editor.setContent(content);
         outlinePanel?.setContent(content);
+        // 外部变更同步给导图（导图自身回写不会触发 UPDATE，无环）
+        mindmapApp?.setDocument(content, mindmapFileName);
         syncOutlineActiveLine();
         sendLog('DEBUG', 'UPDATE applied successfully');
         console.debug(`[LiveWriteMD] handleUpdate: setContent completed`);
@@ -721,6 +933,8 @@ function handleUpdate(content: string): void {
  */
 function handleThemeChange(theme: ThemeType): void {
     sendLog('DEBUG', `THEME_CHANGE received: theme=${theme}`);
+    currentTheme = theme;
+    mindmapApp?.setTheme(theme);
 
     try {
         // Apply theme change using ThemeManager (for CSS classes)
@@ -780,6 +994,11 @@ function initialize(): void {
                 });
             },
             onNavigateToLine: (line: number) => {
+                // 任务 16：导图模式下大纲点击 → 选中对应标题节点并画布居中
+                // （大纲行号是 1-based，导图 _lineRange 是 0-based）
+                if (currentEditorMode === 'mindmap' && mindmapApp) {
+                    if (mindmapApp.selectNodeAtLine(line - 1)) return;
+                }
                 editor?.scrollToLine(line);
             },
             isEditable: () => editor?.isEditable() ?? false,
@@ -791,9 +1010,17 @@ function initialize(): void {
                 view.dispatch({ changes: edits });
             },
         });
-        // 大纲操作按钮组已就绪：把「设置」齿轮挂进去（持久化回调用内联写法）
-        settingsPanel.mountLauncher((key, value) => {
+        // 注册设置改动的持久化回调；设置面板的打开入口在编辑器标题栏（openSettings 命令）。
+        settingsPanel.registerChangeHandler((key, value) => {
             vscode.postMessage({ type: MESSAGE_TYPES.UPDATE_SETTING, key, value });
+            // 导图设置在本 webview 立即生效，不等扩展侧回环：
+            // UPDATE_SETTING → 写配置 → onDidChangeConfiguration → 再广播回来，
+            // 隔着两次 IPC，拖滑杆时节点要滞后一拍才变（用户看到的就是
+            // 「代码块最小宽度改了没反应，再动一下才生效」）。
+            // settingsState 已在面板 commit 时更新过，这里直接重测重排。
+            if (key.startsWith('mindmap') && mindmapApp) {
+                mindmapApp.setSettings(readMindmapSettings());
+            }
         });
         sendLog('INFO', 'Outline panel initialized');
     } else {
@@ -801,15 +1028,12 @@ function initialize(): void {
     }
 
     // Markdown 正文右键菜单只绑定到编辑器正文容器，不覆盖大纲和其它 UI。
+    // 模式切换与大纲开关已收编到编辑器标题栏，右键菜单只剩正文编辑相关动作。
     editorContextMenu = new EditorContextMenu({
-        getCurrentMode: () => currentEditorMode,
         onInsertImage: () => messageSender.sendEditorAction('insertImage'),
-        onChangeMode: (mode: EditorMode) => messageSender.sendEditorAction('setMode', mode),
         onExportAsHtml: () => messageSender.sendEditorAction('exportAsHtml'),
         onExportAsPdf: () => messageSender.sendEditorAction('exportAsPdf'),
         onDownloadRemoteImages: () => messageSender.sendEditorAction('downloadRemoteImages'),
-        onToggleOutline: () => outlinePanel?.toggleVisible(),
-        isOutlineVisible: () => outlinePanel?.isOutlineVisible() ?? true,
         // 右键落在表格格子上时，先把这一格变成选区再弹菜单 ——
         // 后面的增删行列都作用在「当前选区覆盖的格子」上，这样点哪儿动哪儿。
         // 已经框选了一片格子、右键又落在选区里的话就别动它，否则一右键就把框选弄丢了。
@@ -864,11 +1088,7 @@ function initialize(): void {
             }
         }
         if (msg && msg.type === 'editorMode') {
-            if (editor && editor.isReady()) {
-                editor.setMode(msg.mode);
-                sendLog('INFO', `Editor mode: ${msg.mode}`);
-            }
-            currentEditorMode = msg.mode;
+            void applyEditorMode(msg.mode as EditorMode);
         }
         if (msg && msg.type === 'settingsChange') {
             if (editor && editor.isReady() && msg.settings) {
@@ -900,7 +1120,7 @@ function initialize(): void {
             documentUri: string,
             searchHistory: SearchHistoryState,
             settings?: LiveWriteMdEditorSettings,
-            mode?: 'live' | 'viewer' | 'source',
+            mode?: EditorMode,
             outlineWidth?: number,
             allSettings?: Record<string, SettingValue>
         ): void => {
@@ -920,6 +1140,8 @@ function initialize(): void {
         onSettingsChange: (msg) => {
             // 完整设置 → CSS 变量 / 运行时读取
             if (msg.allSettings) settingsState.replaceAll(msg.allSettings);
+            // 导图三项设置（主题 / 默认展开层级 / 性能模式）
+            mindmapApp?.setSettings(readMindmapSettings());
             // 结构化设置（行号 / 换行等）重配置编辑器
             if (msg.settings && editor?.isReady()) {
                 editor.applySettings(msg.settings);
@@ -927,8 +1149,12 @@ function initialize(): void {
             sendLog('INFO', 'Settings change applied');
         },
         onOpenSettings: () => {
-            // mountLauncher 时已保存持久化回调，直接打开即可
+            // registerChangeHandler 时已保存持久化回调，直接打开即可
             settingsPanel.open();
+        },
+        onSystemFonts: (fonts) => {
+            // 扩展宿主枚举的本机字体；设置面板的字体输入框用它做候选列表
+            settingsPanel.setSystemFonts(fonts);
         },
     });
 

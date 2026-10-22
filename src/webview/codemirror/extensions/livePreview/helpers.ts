@@ -13,7 +13,11 @@ import type { EditorState } from '@codemirror/state';
 import type { SyntaxNode } from '@lezer/common';
 import type { FrontmatterProperty } from './types.js';
 import { getDocumentBaseUri } from './state.js';
-import { renderMathToHtml } from './mathRender.js';
+import { renderInlineMarkdown } from './inlineEngine.js';
+
+// 统一行内引擎（lezer 驱动，inlineEngine.ts）：live 各处与导图共用。
+// 这里 re-export 保持既有调用方（tableRender / widgets）不用改 import。
+export { renderInlineMarkdown };
 
 /**
  * Escape HTML special characters.
@@ -26,86 +30,8 @@ export function escapeHtml(text: string): string {
         .replace(/"/g, '&quot;');
 }
 
-/**
- * 单元格 / `<details>` 里出现的数学公式片段。
- *
- * 两种定界符一起匹配，`$$...$$` 排在前面优先命中：
- * - 第 1 组：`$$...$$` 的内容（独立公式）
- * - 第 2 组：`$...$` 的内容（行内公式，前后都不能是 `$`，后面也不能跟数字，
- *   免得把「售价 $5」这种普通文本误判成公式）
- */
-const MATH_SEGMENT_PATTERN =
-    /(?<!\$)\$\$([\s\S]+?)\$\$(?!\$)|(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$|\d)/g;
-
-/**
- * 把不含公式的普通片段渲染成 HTML。
- *
- * 先做 HTML 转义，再按少量行内语法替换标签，保证用户输入不会变成真的标签。
- *
- * @param text - 普通文本片段
- * @returns 渲染后的 HTML；片段为空时返回空串
- */
-function renderPlainInline(text: string): string {
-    // Unescape \| to | before HTML escaping (backslash-pipe is Markdown table escape)
-    let html = escapeHtml(text.replace(/\\\|/g, '|').trim());
-    if (html === '') return '';
-    // Restore <br> tags escaped above (GFM table cells use <br> for line breaks)
-    html = html.replace(/&lt;br\s*\/?\s*&gt;/gi, '<br>');
-    // Inline checkboxes (before link processing to avoid conflict)
-    html = html.replace(
-        /\[(x|X)\]/g,
-        '<input type="checkbox" checked class="cm-md-checkbox cm-md-table-checkbox" />'
-    );
-    html = html.replace(
-        /\[ \]/g,
-        '<input type="checkbox" class="cm-md-checkbox cm-md-table-checkbox" />'
-    );
-    // 加粗/斜体带上和编辑器正文同一套类名：颜色、字重都走 styles.ts 里的
-    // `.cm-md-bold` / `.cm-md-italic`，表格单元格和 `<font>` 里的粗斜体
-    // 才会跟正文长得一样，而不是浏览器默认的黑体/倾斜体。
-    html = html.replace(/\*\*(.+?)\*\*/g, '<strong class="cm-md-bold">$1</strong>');
-    html = html.replace(/\*(.+?)\*/g, '<em class="cm-md-italic">$1</em>');
-    html = html.replace(/~~(.+?)~~/g, '<del class="cm-md-strikethrough">$1</del>');
-    html = html.replace(/`(.+?)`/g, '<code class="cm-md-code">$1</code>');
-    html = html.replace(/\[(.+?)\]\((.+?)\)/g, '<a class="cm-md-link">$1</a>');
-    return html;
-}
-
-/**
- * Render inline Markdown to HTML (bold, italic, strikethrough, code, links, math).
- *
- * 公式必须先摘出来再渲染：KaTeX 要的是「没被 HTML 转义过的原文」，
- * 而且它输出的 HTML 也不能再被转义，所以这里按公式切段，
- * 公式段交给 KaTeX，其余段落走普通转义流程，最后拼回去。
- */
-export function renderInlineMarkdown(text: string): string {
-    const segments: string[] = [];
-    let cursor = 0;
-    let match: RegExpExecArray | null;
-
-    MATH_SEGMENT_PATTERN.lastIndex = 0;
-    while ((match = MATH_SEGMENT_PATTERN.exec(text)) !== null) {
-        // 公式前面那一段普通文本
-        segments.push(renderPlainInline(text.slice(cursor, match.index)));
-
-        // 第 1 组命中说明是 $$...$$（独立公式），否则是 $...$（行内公式）
-        const isDisplay = match[1] !== undefined;
-        const tex = (match[1] ?? match[2] ?? '').trim();
-        if (tex) {
-            segments.push(renderMathToHtml(tex, isDisplay));
-        } else {
-            // 空公式（例如 `$ $`）保持原样，避免凭空消失
-            segments.push(renderPlainInline(match[0]));
-        }
-
-        cursor = match.index + match[0].length;
-    }
-    segments.push(renderPlainInline(text.slice(cursor)));
-
-    const html = segments.join('');
-    // 单元格是空的（或者公式渲染失败）时给个占位，否则 td 会塌陷成一条线
-    return html === '' ? '&nbsp;' : html;
-}
+// 行内渲染实现已抽去 inlineEngine.ts（统一行内引擎，lezer 驱动）；
+// 本文件顶部 re-export 的 renderInlineMarkdown 即旧正则实现的直接替代。
 
 /**
  * `<font>` 允许映射到 DOM 的安全 CSS 属性白名单。
@@ -427,6 +353,139 @@ export function extractFencedCodeContent(node: SyntaxNode, state: EditorState): 
 
 
 // =============================================================================
+// 代码块缩进导引（Rainbow indent）
+// =============================================================================
+
+/**
+ * 代码块里一个 Tab 占几列。
+ *
+ * CodeMirror 6 默认 `state.tabSize = 4`，并把 `tab-size: <n>` 逐行写进
+ * `.cm-line` 的内联样式（见 @codemirror/view），所以浏览器实际渲染 Tab
+ * 用的也是这个宽度——这里必须与它一致，不能用浏览器默认的 8。
+ */
+const CODE_TAB_COLUMNS = 4;
+
+/**
+ * Rainbow indent 最多铺几层色带；最深一层会把剩余列数全包住（见下）。
+ *
+ * 20+ 层深缩进在真实代码里极罕见，卡 20 只是防止异常文档塞进几十层背景；
+ * 注意当缩进单位是 2 空格时，6 层只够覆盖 12 列，所以不能再像旧版那样只给 6。
+ */
+const CODE_INDENT_MAX_BANDS = 20;
+
+/**
+ * 代码行的行首缩进信息。
+ */
+export interface CodeBlockIndentInfo {
+    /** 行首空白占的视觉列数（Tab 按 tab-stop 折算）。 */
+    columns: number;
+}
+
+/**
+ * 计算代码行行首空白占的视觉列数，用于缩进导引渲染。
+ *
+ * @param lineText - 当前代码行文本
+ * @param tabSize - 一个 Tab 的停靠宽度（列），默认 4，与 CM state.tabSize 对齐
+ * @returns 缩进信息；未缩进时 columns 为 0
+ */
+export function getCodeBlockIndentInfo(lineText: string, tabSize = CODE_TAB_COLUMNS): CodeBlockIndentInfo {
+    let columns = 0;
+    for (const ch of lineText) {
+        if (ch === ' ') {
+            columns += 1;
+            continue;
+        }
+        if (ch === '\t') {
+            // Tab 跳到「当前列之后的第一个 tabSize 整数倍」位置，
+            // 不是无脑 +tabSize（Tab 在第 0 列才前进整整 4 列）。
+            columns = (Math.floor(columns / tabSize) + 1) * tabSize;
+            continue;
+        }
+        break;
+    }
+    return { columns };
+}
+
+/**
+ * 生成代码块缩进导引（rainbow indent）的内联样式。
+ *
+ * 色带按「缩进层级」铺：每经过一个缩进单位（indentUnit）就换一种颜色——
+ * 用户每按一次 Tab（默认插入 2 空格，即一个缩进单位），颜色就轮换一格。
+ * **最后一层色带不画满一个单位**，宽度恰好 = 行首空白在本单位内的剩余列数
+ * ——于是无论缩进是几列（奇数空格、Tab、空格混 Tab），色带都正好停在
+ * 这一行第一个文字/字母开始的位置，不会渲染到文字上。
+ *
+ * 横向尺寸一律用 **ch 单位**（不用 Canvas 量 px）：`1ch` 就是元素自身字体里
+ * `'0'` 的推进宽度，等宽字体下它**按定义等于一列宽**，浏览器会自动跟着行实际
+ * 使用的字体/字号走。ch 没有测量环节，首屏即正确。
+ *
+ * 超过最大层数的深缩进不另加颜色，而是让最深一层自动变宽把剩余列全包住，
+ * 任何缩进深度都覆盖得到。
+ *
+ * @param columns - 行首空白的视觉列数（getCodeBlockIndentInfo 算出）
+ * @param unitColumns - 一个缩进单位（indentUnit）占几列；色带按此宽度轮换
+ * @returns 可直接写入 line decoration attributes.style 的样式字符串
+ */
+export function createCodeBlockIndentStyle(columns: number, unitColumns: number): string {
+    const backgroundColor = 'var(--vscode-textCodeBlock-background, rgba(128,128,128,0.08))';
+    const palette = [
+        'rgba(235, 131, 131, 0.18)',
+        'rgba(174, 154, 203, 0.18)',
+        'rgba(125, 181, 205, 0.18)',
+        'rgba(113, 167, 150, 0.18)',
+        'rgba(220, 191, 97, 0.18)',
+        'rgba(221, 163, 106, 0.18)',
+        'rgba(184, 245, 162, 0.18)',
+    ];
+
+    // 未缩进：只铺代码块底色，不铺任何色带。
+    if (columns <= 0) {
+        return `background-color: ${backgroundColor}; background-image: none; background-repeat: no-repeat;`;
+    }
+
+    // 兜底：缩进单位异常（0 列）时退回按 4 列一色，避免死循环/除零。
+    const safeUnitColumns = unitColumns > 0 ? unitColumns : CODE_TAB_COLUMNS;
+    const bandCount = Math.min(
+        CODE_INDENT_MAX_BANDS,
+        Math.max(1, Math.ceil(columns / safeUnitColumns))
+    );
+
+    const layers: string[] = [];
+    const positions: string[] = [];
+    const sizes: string[] = [];
+
+    for (let i = 0; i < bandCount; i++) {
+        const startCols = i * safeUnitColumns;
+        // 最后一层：宽度 = 从本层起点到文字起点之间的真实剩余列数。
+        //  - 行首空白不是缩进单位的整数倍时，它就只有余数列那么宽，
+        //    正好停在文字前；
+        //  - 深缩进超过最大层数时，这一层会随之变宽，把最深的空白也盖住。
+        // 其余层固定一个缩进单位宽。
+        const widthCols = i === bandCount - 1 ? columns - startCols : safeUnitColumns;
+
+        layers.push(`linear-gradient(${palette[i % palette.length]}, ${palette[i % palette.length]})`);
+        // ch = 行字体里一列的宽度；小数列（widthCols 恒为整数，保留写法兜底）也准。
+        positions.push(`${startCols.toFixed(2)}ch 0`);
+        sizes.push(`${widthCols.toFixed(2)}ch 100%`);
+    }
+
+    return [
+        `background-color: ${backgroundColor}`,
+        `background-image: ${layers.join(', ')}`,
+        'background-repeat: no-repeat',
+        // 原点用 **content-box**：色带坐标要和「第 0 列字符」对齐，
+        // 而字符从行的内容区（padding 之后）开始。旧实现用 padding-box，
+        // 色带整体左偏一个行内边距（4px），同样停不准。
+        // 裁剪仍用 padding-box：底色铺满整行、圆角处不露黑边。
+        'background-origin: content-box',
+        'background-clip: padding-box',
+        `background-position: ${positions.join(', ')}`,
+        `background-size: ${sizes.join(', ')}`,
+    ].join('; ');
+}
+
+
+// =============================================================================
 // 字宽测量（Canvas）
 // =============================================================================
 //
@@ -567,6 +626,99 @@ export function measureText(
     return m.ctx.measureText(text).width;
 }
 
+/**
+ * 一份「量字宽用」的字体环境。
+ *
+ * 为什么不一律走 getMeasureContext：它只认全局的 `#editor .cm-content`。
+ * 导图节点里的 mini-CM 是独立编辑器 —— 如果页面上恰好没有主编辑器
+ * （复现页 / 单实例场景），它会退到 body 的界面字体（比例字体），
+ * 给 `- ` 量出 9px 这种偏窄的宽度；而同一条行在源码态按节点自己的
+ * 等宽字体渲染时 `- ` 有 15px —— 圆点位置和正文起点就会差一截，
+ * 表现为「进编辑态文字横向跳一下」。
+ *
+ * 所以凡是传得进 EditorView 的地方，都按该视图正文的实际计算样式量。
+ */
+export interface MeasureEnv {
+    /** 正文字号（px）。 */
+    size: number;
+    /** 正文字体族。 */
+    family: string;
+    /** 正文字重。 */
+    weight: string;
+}
+
+/**
+ * 从某个元素（通常是 `.cm-content`）读出量字用的字体环境。
+ *
+ * @param el - 样式来源元素；为空 / 还没挂进文档时返回 null
+ * @returns 字体环境；字号读不出来时返回 null（调用方退回全局口径）
+ */
+export function measureEnvFromElement(el: Element | null | undefined): MeasureEnv | null {
+    if (!el) return null;
+    // 视图首次构建时 DOM 还没进文档：此时 getComputedStyle 给的是空串 /
+    // 浏览器默认字体，量出来的圆点会系统性地窄一截。宁可返回 null
+    // （调用方退回全局口径并记一笔，挂载后补重建），也不要拿它当真。
+    if (!el.isConnected) return null;
+    try {
+        const cs = getComputedStyle(el);
+        const size = Number.parseFloat(cs.fontSize);
+        if (!Number.isFinite(size) || size <= 0) return null;
+        return {
+            size,
+            family: cs.fontFamily || 'monospace',
+            weight: cs.fontWeight || '400',
+        };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 按给定字体环境量文本宽度。
+ *
+ * 与 measureText(text, weight, size, family) 的区别：整份环境一次传进来，
+ * 调用方不用每次拆成散参数；env 为空时退回全局测量口径（行为与旧代码一致）。
+ *
+ * @param env - 字体环境（可为空）
+ * @param text - 待测文本
+ * @param weight - 字重，默认 400
+ * @returns 宽度（px）
+ */
+export function measureTextIn(
+    env: MeasureEnv | null,
+    text: string,
+    weight = '400'
+): number {
+    if (!text) return 0;
+    if (!env) return measureText(text, weight);
+    const m = getMeasureContext();
+    if (!m) {
+        // 没有画布（纯 SSR / 极端环境）：沿用字符数粗估，但字号用 env 的
+        let units = 0;
+        for (const ch of text) units += /[　-鿿＀-￯]/.test(ch) ? 1 : 0.6;
+        return units * env.size;
+    }
+    m.ctx.font = `${weight} ${env.size}px ${env.family}`;
+    return m.ctx.measureText(text).width;
+}
+
+/**
+ * 圆点 widget 的盒宽：`marker + 分隔空白`。
+ *
+ * 渲染态的圆点必须精确顶掉源码里的 `- `（`* ` / `+ ` 同理），
+ * 否则进编辑态露出原文时正文会横向跳；所以宽度按同一套字体量。
+ *
+ * @param marker - 源码标记符（`-` / `*` / `+`）
+ * @param env - 字体环境；为空时退回全局口径
+ * @returns 盒宽（px）
+ */
+export function measureBulletWidth(marker: string, env: MeasureEnv | null): number {
+    return (
+        measureTextIn(env, marker, '400') +
+        measureTextIn(env, ' ', '400')
+    );
+}
+
 // =============================================================================
 // 列表圆点垂直对齐补偿
 // =============================================================================
@@ -632,28 +784,48 @@ function getMiddleAnchorOffset(size: number, family: string): number {
 /**
  * 量「列表圆点圆心」相对 middle 对齐点应补的垂直修正量。
  *
- * @param marker - 源码标记符（`-` / `*` / `+`）
- * @returns 圆点 top 应加的修正量（px，通常为负 = 向上挪）；量不到时给 0，
- *          退回不补偿的旧行为，不影响正常渲染
+ * 圆心目标定为**行盒中心**（距行顶 lineHeight/2）：水平方向圆点仍对准
+ * marker 中点，垂直方向以整行中心为锚（产品决定，见 widgets.ts）。
+ *
+ * @param marker - 源码标记符（`-` / `*` / `+`），其字体盒中心即行盒中心
+ * @returns 圆点 top 应加的修正量（px）；量不到时给 0，退回不补偿的旧行为，
+ *          不影响正常渲染
  */
-export function measureBulletYCorrection(marker = '-'): number {
-    const m = getMeasureContext();
-    if (!m) return 0;
-    // 标记符在源码里是常规字重（400），canvas 字体必须与它一致
-    m.ctx.font = `400 ${m.size}px ${m.family}`;
-    const metrics = m.ctx.measureText(marker);
-    // marker 墨迹中心在基线之上 halfInk px（actualBoundingBoxDescent
-    // 对 Consolas 的 '-' 为负值，因为横线整个落在基线之上）
-    const halfInk =
-        (metrics.actualBoundingBoxAscent -
-            metrics.actualBoundingBoxDescent) /
-        2;
-    // middle 对齐点相对基线的偏移（负 = 在基线之上）
-    const middleOffset = getMiddleAnchorOffset(m.size, m.family);
-    // 圆心要从 middle 点挪到墨迹中心：
-    // 墨迹中心 = 基线 - halfInk；middle 点 = 基线 + middleOffset
-    // correction = 墨迹中心 - middle 点 = -halfInk - middleOffset
-    return -halfInk - middleOffset;
+export function measureBulletYCorrection(
+    marker = '-',
+    env: MeasureEnv | null = null
+): number {
+    // 整体 try/catch，沿用 openWrap 的硬规矩：任何测量意外（离屏探针挂载、
+    // 字体度量失败等）只让本圆点放弃补偿、退回旧行为，绝不能让异常冒泡到
+    // 装饰构建期、把整篇装饰拖垮
+    try {
+        const m = getMeasureContext();
+        if (!m) return 0;
+        // 优先按调用方给的视图字体（导图节点的 mini-CM），没有才用全局正文口径
+        const size = env?.size ?? m.size;
+        const family = env?.family ?? m.family;
+        // 标记符在源码里是常规字重（400），canvas 字体必须与它一致
+        m.ctx.font = `400 ${size}px ${family}`;
+        const metrics = m.ctx.measureText(marker);
+        // middle 对齐点相对基线的偏移（负 = 在基线之上）
+        const middleOffset = getMiddleAnchorOffset(size, family);
+        // 圆心目标 = **行盒（line-box）中心**，即「距离行顶 lineHeight/2」。
+        // CSS 里半行距 = (line-height − 字体盒高) 上下均分，所以行盒中心
+        // 恒等于字体盒（font-bounding box）中心，与行高无关 —— 直接用
+        // canvas 的 fontBoundingBox 度量即可，不需要知道实际 line-height。
+        const lineBoxCenterOffset =
+            (metrics.fontBoundingBoxDescent -
+                metrics.fontBoundingBoxAscent) /
+            2;
+        // correction = 行盒中心 - middle 点
+        return lineBoxCenterOffset - middleOffset;
+    } catch (error) {
+        console.warn(
+            '[bullet] 圆点垂直补偿测量失败，放弃补偿：',
+            error
+        );
+        return 0;
+    }
 }
 
 // =============================================================================
@@ -682,10 +854,41 @@ function matchListWhitespace(lineText: string): string | null {
  * @param whitespace - 行首空白字符串
  * @returns 列数
  */
-function indentColumns(whitespace: string): number {
+export function indentColumns(whitespace: string): number {
     let cols = 0;
     for (const ch of whitespace) cols += ch === '\t' ? LIST_TAB_COLUMNS : 1;
     return cols;
+}
+
+/**
+ * 量一段行首空白的**真实像素宽度**（空格按实测字宽，Tab 跳到下一个 4 列制表位）。
+ *
+ * 色带几何必须以真实空白宽度为准，不能一律用「层级 × 缩进单位」：
+ * 5 个空格（层级 round 到 3 档）的实际 marker 列在 5/2 档之间，按网格算会让
+ * 色带右缘超过真实正文起始、盖到文字上。精确落在网格上的缩进两者结果相同。
+ *
+ * @param whitespace - 行首空白字符串
+ * @returns 像素宽度
+ */
+export function measureWhitespacePx(
+    whitespace: string,
+    env: MeasureEnv | null = null
+): number {
+    const spaceW = measureTextIn(env, ' ', '400');
+    let px = 0;
+    let col = 0;
+    for (const ch of whitespace) {
+        if (ch === '\t') {
+            // Tab：推进到下一个 4 列制表位
+            const next = Math.ceil((col + 1) / LIST_TAB_COLUMNS) * LIST_TAB_COLUMNS;
+            px += (next - col) * spaceW;
+            col = next;
+        } else {
+            px += spaceW;
+            col += 1;
+        }
+    }
+    return px;
 }
 
 /**
@@ -744,20 +947,76 @@ export function getListIndent(
 export const LINE_PADDING_PX = 4;
 
 /**
- * 一条缩进引导线的描述。
+ * 一条缩进色带的描述。
+ *
+ * 层级口径与有序/无序**无关**：当前行的缩进层级只由行首空白决定
+ * （见 getListIndent / parseListMarkerLine），marker 类型只影响右缘位置。
+ *
+ * 所有色带一律**满行高**：一行只要缩进到深度 D，深度 0..D 的每一级色带都铺满
+ * 整行——它们是这一行真实占用的缩进背景。旧实现给「收尾层级」画半高 tail，
+ * 在深层行上会出现一排半高中间断层（用户反馈的 bug），已废弃。
  */
 export interface IndentGuide {
-    /** 中心相对「行 border-box 左缘」的横向位置（px）。 */
-    x: number;
     /**
-     * 线的形态：
-     * - `full`：祖先线，铺满整行，负责把上下行的线接过来；
-     * - `own`：当前行**自己**那条，从首个视觉行的圆点中心（半行处）往下垂，
-     *   只在还有子级时出现；
-     * - `tail`：祖先线在**最后一条后代**处收尾——只画上半行（顶→圆点高度），
-     *   末端渐隐，不再硬切到行底。
+     * marker（`-` / `1.`）之后**正文文字开始处**相对行 border-box 左缘的位置（px）。
+     * 色带右缘对齐到这里。
      */
-    kind: 'full' | 'own' | 'tail';
+    contentX: number;
+}
+
+/**
+ * 一个列表行 marker 区的解析结果（纯文本口径，不依赖 Lezer 语法树）。
+ *
+ * 关键：**有序 / 无序 / 任务项用同一套缩进规则**。Lezer 对有序列表要求
+ * 「缩进 ≥ marker 宽度（`1. ` = 3 列）」才建立嵌套，2 空格的有序子项会被
+ * 压平成兄弟节点、甚至变成上一行的 lazy 续行；无序列表 2 空格即可嵌套。
+ * 统一走「行首空白 → 层级」后，三者行为一致，marker 类型只需提供自己的宽度。
+ */
+export interface ListMarkerInfo {
+    /** 行首空白原文（可能含 Tab）。 */
+    indentText: string;
+    /** 行首空白换算出的视觉列数（Tab=4），即本行的缩进层级依据。 */
+    indentCols: number;
+    /** marker 文本：`-` `*` `+` 或 `1.` `1)`。 */
+    marker: string;
+    /** marker 与正文（或任务复选框）之间的分隔空白原文。 */
+    gap: string;
+    /** marker 大类：无序圆点 / 有序序号 / 任务复选框。 */
+    type: 'bullet' | 'ordered' | 'task';
+}
+
+/**
+ * 从一行文本解析列表 marker 区；不是列表行返回 null。
+ *
+ * 与 matchListWhitespace 的差别：那个只用来探缩进，这里同时取出 marker 文本、
+ * 分隔空白和类型，供「按缩进层级链」生成色带时量各级 marker 的真实宽度。
+ *
+ * @param lineText - 整行文本
+ * @returns marker 区信息；非列表行（含 `1.foo` 这种 marker 后无空白的）返回 null
+ */
+export function parseListMarkerLine(lineText: string): ListMarkerInfo | null {
+    // 分组：1=行首空白 2=marker 3=marker 后分隔空白
+    // marker 后必须紧跟空白或行尾（有序 `1.foo` 不算 marker）
+    const m = /^([ \t]*)([-*+]|\d+[.)])(?=[ \t]|$)([ \t]*)/.exec(lineText);
+    if (!m) return null;
+    const indentText = m[1];
+    const marker = m[2];
+    const gap = m[3];
+    // 任务项：bullet marker + 空白后跟 `[x]` / `[ ]`（复选框由 TaskMarker 分支渲染）
+    const afterGap = lineText.slice(m[0].length);
+    const taskMatch = /^\[([ xX])\]/.exec(afterGap);
+    const type: ListMarkerInfo['type'] = taskMatch
+        ? 'task'
+        : /\d/.test(marker)
+          ? 'ordered'
+          : 'bullet';
+    return {
+        indentText,
+        indentCols: indentColumns(indentText),
+        marker,
+        gap,
+        type,
+    };
 }
 
 /**
@@ -861,38 +1120,35 @@ function hexToRgb(hex: string): [number, number, number] {
 }
 
 /**
- * 梦幻色带：以右侧悬垂线颜色着色，向左铺到另一条悬垂线 / 行左边界。
+ * 缩进色带：以右侧 marker 颜色着色，向左铺到上一个 marker / 行左边界。
  *
- * - 横向 alpha 渐变（靠左实、靠右在右线处渐隐），既有透明感又有梦幻感；
- * - 右缘内缩 0.5px，保证 1px 悬垂线画在色带之上、不被盖住；
- * - 纵向几何（top / height）与该悬垂线完全一致。
+ * - 只有**固定透明度**，无渐变、无梦幻感；alpha 与代码块 indent 色带一致（0.18）；
+ * - 所有悬垂线（1px 竖线）一律隐藏，只保留色带；
+ * - 色带右缘一直铺到 marker 中心列（不内缩），相邻色带/色带与边界之间不留白缝。
  */
-const BAND_ALPHA_LEFT = 0.30;
-const BAND_ALPHA_RIGHT = 0.10;
+const BAND_ALPHA = 0.18;
 
-/** 计算一条悬垂线对应的色带几何（左缘、宽、顶、高），单位 px / %。 */
+/**
+ * 相邻色带的叠压量（px）：每级色带向左压过上一级这么多。
+ *
+ * 不叠压时，色带边界是 19.39px 这类小数，Chrome 对「上一层右缘」和
+ * 「下一层左缘」的取整互相独立、方向可能不一致，中间漏出 1px 行底色
+ * （视觉上就是一二级之间的白线）。固定叠压 1px 后，无论两端如何取整
+ * 都被覆盖；该 1px 由先绘制（更靠上）的上层色带盖住，外观无痕。
+ */
+const BAND_OVERLAP_PX = 1;
+
+/** 计算一条色带的几何（左缘、宽）；纵向一律顶对齐、满行高，单位 px。 */
 function bandGeometry(
     guides: IndentGuide[],
-    index: number,
-    halfPx: number
-): { left: number; top: string; width: string; height: string } {
+    index: number
+): { left: number; width: string } {
     const g = guides[index];
-    // 左缘：上一条悬垂线；最外层 = 行 border-box 左缘（0）
-    const left = index > 0 ? guides[index - 1].x : 0;
-    // 宽：右线中心 − 左缘；内缩 0.5px 给悬垂线留白
-    const width = Math.max(0, g.x - left - 0.5);
-    let top = 'top';
-    let height = '100%';
-    if (g.kind === 'tail') {
-        top = 'top';
-        height = `${halfPx.toFixed(2)}px`;
-    } else if (g.kind === 'own') {
-        // 从「圆点中心」(halfPx) 起笔、直接接到圆点，而不是从文字基线——
-        // 旧写法在圆点(半行)与基线之间留约 6px 断点，色带也跟着断。
-        top = `${halfPx.toFixed(2)}px`;
-        height = `calc(100% - ${halfPx.toFixed(2)}px)`;
-    }
-    return { left, top, width: `${width.toFixed(2)}px`, height };
+    // 左缘：上一个 marker 的正文起始列再左移叠压量；最外层 = 行 border-box 左缘（0）。
+    const left = index > 0 ? guides[index - 1].contentX - BAND_OVERLAP_PX : 0;
+    // 宽：一直铺到「本 marker 之后正文开始处」(contentX)，盖满不留缝。
+    const width = Math.max(0, g.contentX - left);
+    return { left, width: `${width.toFixed(2)}px` };
 }
 
 /**
@@ -901,96 +1157,62 @@ function bandGeometry(
  *
  * ## 悬挂缩进（hangPx）
  *
- * `padding-left = 4px + hangPx`、`text-indent = -hangPx`：
+ * `padding-left = 正文左内边距(lineGutterGap，默认 4px) + hangPx`、`text-indent = -hangPx`：
  * padding 把文字区推到「marker 所在列」，text-indent 只把**第一个视觉行**
  * 拉回原来的行首；于是折出来的续行全部从 marker 列开始（需求：续行与
  * 该层级 marker `-` 本身那一列对齐），首行外观不变。
  *
- * ## 引导线
+ * ## 色带
  *
- * 每条线是一个 1px 宽的 linear-gradient，背景原点用 border-box，
- * 这样同一层级的竖线在不同缩进的行上始终垂直对齐，不受本行 padding 影响：
- * - `full`（祖先）：高 100%、顶对齐，跨行连接；
- * - `own`（自己）：从**文字基线**（下划线位置）垂到行底；
- * - `tail`（收尾祖先）：只画到半行高，末端用 TAIL_FADE_PX 渐隐。
- * 颜色用 `.cm-md-indent` 上定义的 `--cm-md-indent-color`。
+ * 每一级是一个满行高的 linear-gradient 色块，背景原点用 border-box，同一层级
+ * 的色带在不同缩进的行上始终垂直对齐，不受本行 padding 影响。
+ * 颜色按层级在 rainbow 调色板里循环取。
  *
- * 为什么不用「层级 × 固定缩进单位」：bullet（`-`）每级缩进 2 列、ordered
- * （`1.`）每级缩进 3 列，统一公式必然顾此失彼。调用方按语法树各级 ListMark
- * 的真实位置传入，bullet / ordered、任意缩进都能精确对齐 marker 中心。
+ * 层级链由调用方按**行首空白**算出（有序/无序同一套规则）；各级右缘用该级
+ * marker（`-` / `1.` / 任务框）的真实宽度，因此 `10.` 比 `1.` 宽也能对齐。
  *
- * @param guides - 从外到内各级 marker 的引导线
+ * @param guides - 从外到内各级色带（条数 = 层级深度 + 1）
  * @param hangPx - 悬挂缩进宽度（px），即 marker 列相对内容左缘的位置
- * @param halfPx - 首个视觉行一半的高度（px），tail 的纵向分界
- * @param baselinePx - 行顶到文字基线的距离（px），own 的纵向起点
  * @returns 可写入 line decoration attributes.style 的样式
  */
 export function createListIndentStyle(
     guides: IndentGuide[],
-    hangPx: number,
-    halfPx: number
+    hangPx: number
 ): string {
     const decls: string[] = [];
 
     // —— 悬挂缩进 ——
     if (hangPx > 0) {
-        // padding-left 行内长式会顶掉 theme.ts 的 `padding: 0 4px` 左值，
-        // 所以用 calc 把 4px 显式加回来；右内边距不受影响
+        // padding-left 行内长式会顶掉 theme.ts 给 .cm-line 设的左内边距，
+        // 所以用 calc 把「正文与行号线距离」的 CSS 变量显式加回来；
+        // LINE_PADDING_PX 是变量缺省时的兜底，右内边距不受影响
         decls.push(
-            `padding-left:calc(${LINE_PADDING_PX}px + ${hangPx.toFixed(2)}px)`,
+            `padding-left:calc(var(--livewritemd-line-padding-left, ${LINE_PADDING_PX}px) + ${hangPx.toFixed(2)}px)`,
             `text-indent:${(-hangPx).toFixed(2)}px`
         );
     }
 
-    // —— 层级引导线 + 梦幻色带（rainbow：每个缩进层级一种颜色）——
+    // —— 缩进色带（rainbow：每个缩进层级一种颜色；悬垂线全部隐藏）——
     if (guides.length > 0) {
-        // CSS background 图层：先放梦幻色带（下层），再放 1px 悬垂线（上层）。
-        const bandImages: string[] = [];
-        const bandSizes: string[] = [];
-        const bandPositions: string[] = [];
-        const lineImages: string[] = [];
-        const lineSizes: string[] = [];
-        const linePositions: string[] = [];
+        const images: string[] = [];
+        const sizes: string[] = [];
+        const positions: string[] = [];
 
         guides.forEach((g, levelIndex) => {
             const [r, gg, b] = hexToRgb(rainbowIndentColor(levelIndex));
-            // 梦幻色带：左实右虚的横向 alpha 渐变（右缘在悬垂线处渐隐）
-            bandImages.push(
-                `linear-gradient(to right, rgba(${r},${gg},${b},${BAND_ALPHA_LEFT}) 0%, rgba(${r},${gg},${b},${BAND_ALPHA_RIGHT}) 100%)`
-            );
-            const geo = bandGeometry(guides, levelIndex, halfPx);
-            bandSizes.push(`${geo.width} ${geo.height}`);
-            bandPositions.push(`${geo.left.toFixed(2)}px ${geo.top}`);
-
-            // 1px 悬垂线（盖在色带之上）。
-            // 第一级(index 0)的悬垂线隐藏——它的左界已贴住行号线，只留梦幻色带。
-            if (levelIndex > 0) {
-                const color = `rgb(${r},${gg},${b})`;
-                const solidImage = `linear-gradient(to right, ${color} 0 1px, transparent 1px)`;
-                const tailImage = `linear-gradient(to bottom, ${color} 0 calc(100% - ${TAIL_FADE_PX}px), transparent 100%)`;
-                if (g.kind === 'full') {
-                    lineImages.push(solidImage);
-                    lineSizes.push('1px 100%');
-                    linePositions.push(`${g.x.toFixed(2)}px top`);
-                } else if (g.kind === 'tail') {
-                    lineImages.push(tailImage);
-                    // 量不到行高（halfPx=0，极少见的首帧兜底）时收尾线直接不画
-                    lineSizes.push(`1px ${halfPx.toFixed(2)}px`);
-                    linePositions.push(`${g.x.toFixed(2)}px top`);
-                } else {
-                    // own：从「圆点中心」(halfPx) 垂到行底，直接接上圆点、不留断点
-                    lineImages.push(solidImage);
-                    lineSizes.push(`1px calc(100% - ${halfPx.toFixed(2)}px)`);
-                    linePositions.push(`${g.x.toFixed(2)}px ${halfPx.toFixed(2)}px`);
-                }
-            }
+            // 纯色带、固定透明度（无渐变 / 梦幻感）
+            images.push(`linear-gradient(rgba(${r},${gg},${b},${BAND_ALPHA}), rgba(${r},${gg},${b},${BAND_ALPHA}))`);
+            const geo = bandGeometry(guides, levelIndex);
+            // 纵向满行高（100%）、顶对齐
+            sizes.push(`${geo.width} 100%`);
+            positions.push(`${geo.left.toFixed(2)}px top`);
         });
         decls.push(
             'background-origin:border-box',
             'background-repeat:no-repeat',
-            `background-image:${bandImages.concat(lineImages).join(', ')}`,
-            `background-size:${bandSizes.concat(lineSizes).join(', ')}`,
-            `background-position:${bandPositions.concat(linePositions).join(', ')}`
+            `background-image:${images.join(', ')}`,
+            `background-size:${sizes.join(', ')}`,
+            `background-position:${positions.join(', ')}`
         );
     }
 

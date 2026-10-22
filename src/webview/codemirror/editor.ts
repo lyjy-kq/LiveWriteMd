@@ -62,10 +62,14 @@ import { createThemeExtension } from './extensions/theme';
 import { markdownKeymap } from './extensions/keymap.js';
 import { codeBlockSelectionPlugin } from './extensions/livePreview/codeBlockSelection.js';
 import { createLivePreviewExtension } from './extensions/livePreview/index.js';
+// lineGutterGap 设置变化时，列表引导线装饰要按新横坐标重建
+import { tableRemeasureEffect } from './extensions/livePreview/state.js';
 import { gutterFold } from './extensions/gutterFold.js';
 import { listEnterExtension } from './extensions/listEnter.js';
 import { settingsState } from '../settingsState.js';
 import { searchMatchCount } from './extensions/searchMatchCount.js';
+// 搜索 / 替换面板：Ctrl+F / Ctrl+H 命令、中文词条与卡片式重设计
+import { searchPanelTheme, searchPanelKeymap, searchPanelPhrases } from './extensions/searchPanel.js';
 
 import type { ContentChangeCallback } from './types';
 import type { LiveWriteMdEditorSettings } from '../../shared/types.js';
@@ -133,7 +137,8 @@ function createLazyLanguageDescription(options: {
  * Uses direct imports instead of @codemirror/language-data's dynamic import()
  * which doesn't work in esbuild IIFE bundles.
  */
-const codeLanguages: readonly LanguageDescription[] = [
+// 导出给后续 mini-CM（导图节点内嵌编辑器）复用：与主编辑器同一套懒加载语言表
+export const codeLanguages: readonly LanguageDescription[] = [
     createLazyLanguageDescription({
         name: 'JavaScript',
         alias: ['js', 'jsx', 'ecmascript', 'node'],
@@ -332,6 +337,13 @@ export class CodeMirrorEditor {
 
     /** 编辑器正文字号缩放倍率，1 表示保持 VS Code 原始字号。 */
     private fontScale: number = 1;
+
+    /**
+     * 上一轮已生效的「正文与行号线距离」（px）。
+     * 初始 NaN：首次 applySettings 时装饰本来就是按 settingsState 构建的，
+     * 只记录值、不触发重测。
+     */
+    private lineGutterGap: number = Number.NaN;
 
     /** 编辑器正文缩放的最小倍率，避免缩得过小后无法阅读。 */
     private static readonly MIN_FONT_SCALE = 0.5;
@@ -539,15 +551,20 @@ export class CodeMirrorEditor {
             // History support (undo/redo)
             history(),
 
-            // Search support (Ctrl+F / Ctrl+H) with a top-anchored panel.
+            // Search support (Ctrl+F find / Ctrl+H replace) with a top-anchored panel.
             search({ top: true }),
             searchMatchCount,
+            // 搜索面板的卡片式视觉主题；中文文案通过 EditorState.phrases 注入。
+            // （快捷键在下面的 keymap.of 里，需排在 searchKeymap 前面优先命中。）
+            searchPanelTheme,
+            EditorState.phrases.of(searchPanelPhrases),
 
             // Keybindings
             listEnterExtension,
             keymap.of([
                 indentWithTab,
                 ...markdownKeymap,
+                ...searchPanelKeymap,
                 ...searchKeymap,
                 ...defaultKeymap,
                 ...historyKeymap,
@@ -1014,6 +1031,19 @@ export class CodeMirrorEditor {
         const maxWidth =
             settings.readableLineLength > 0 ? `${settings.readableLineLength}px` : '100%';
         editorEl.style.setProperty('--livewritemd-max-width', maxWidth);
+
+        // 正文与行号线距离：.cm-line 左内边距由 CSS 变量直接生效，
+        // 但列表引导线 / 色带的横坐标是装饰构建时写死的数值，
+        // 值变化时必须派发重测 effect、强制重建窗口装饰
+        if (
+            Number.isFinite(settings.lineGutterGap) &&
+            settings.lineGutterGap !== this.lineGutterGap
+        ) {
+            if (!Number.isNaN(this.lineGutterGap)) {
+                this.view.dispatch({ effects: tableRemeasureEffect.of(null) });
+            }
+            this.lineGutterGap = settings.lineGutterGap;
+        }
 
         this.applyFontScale();
     }

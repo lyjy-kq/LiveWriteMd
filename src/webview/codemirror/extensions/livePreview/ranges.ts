@@ -31,29 +31,29 @@ import { isTableLikeBlock } from './tableRender.js';
  *    tableRender 常驻渲染（不看聚焦范围），所以表格只会「格子里的文字」
  *    回到源码态，网格本身不会散架。
  *
- * 只读模式（Viewer）没有源码态，统一返回 {-1,-1}。
+ * 只读模式（Viewer）同样返回真实聚焦区间：viewer 允许「点击查看源码」，
+ * 与实时模式行为一致，只是不能编辑。各编辑型交互（行级强制展开、双击进源码
+ * 编辑等）在 lineForce.ts / widgets.ts 里有自己的 editable 守卫，不受影响。
  *
  * @param state - 编辑器状态
  * @returns 该按 Markdown 原文显示的区间
  */
 export function getSourceRange(state: EditorState): ILineRange {
-    if (!state.facet(EditorView.editable)) return { from: -1, to: -1 };
-
     const main = state.selection.main;
 
     // 拖拽展开行：鼠标移动超阈值后整行已展开，直接返回该行区间。
     // 优先级保持最高，与 mousedown 时记录锚点的逻辑（见 lineForce.ts）互不干扰
-    const pending = getPendingForceRange();
+    const pending = getPendingForceRange(state);
     if (pending) return { from: pending.from, to: pending.to };
 
     // 双击进过源码模式的块（表格 / 图片 / Mermaid）：选区只要还挨着它，就一直算源码区间
-    const sourceMode = getSourceModeRange();
+    const sourceMode = getSourceModeRange(state);
     if (sourceMode && main.from <= sourceMode.to && main.to >= sourceMode.from) {
         return { from: sourceMode.from, to: sourceMode.to };
     }
 
     // 双击钉住的行：选区与它相交期间一直算源码区间
-    const pinned = getPinnedForceRange();
+    const pinned = getPinnedForceRange(state);
     if (pinned && main.from <= pinned.to && main.to >= pinned.from) {
         return { from: pinned.from, to: pinned.to };
     }
@@ -110,7 +110,7 @@ export function getMarkdownBlockRange(state: EditorState): ILineRange {
     // 必须在这里先判一次，不能等走语法树时再看：光标常常正好停在块的边界上
     // （双击表格时光标就落在表首），resolveInner 会往前面那个节点上靠，
     // 走上去根本碰不到 Table 节点。
-    const sourceMode = getSourceModeRange();
+    const sourceMode = getSourceModeRange(state);
     if (sourceMode && pos >= sourceMode.from && pos <= sourceMode.to) {
         return { from: sourceMode.from, to: sourceMode.to };
     }

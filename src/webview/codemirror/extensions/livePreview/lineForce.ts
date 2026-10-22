@@ -244,7 +244,7 @@ class LineForceController {
         if (!view.state.selection.main.empty) return;
 
         // 同一行已经展开过（继续拖动）：不重复 dispatch
-        const prev = getPendingForceRange();
+        const prev = getPendingForceRange(view.state);
         if (prev && prev.from === start.lineFrom && prev.to === start.lineTo) return;
 
         this.view.dispatch({
@@ -269,7 +269,7 @@ class LineForceController {
         const view = this.view;
         // 视图已脱离 DOM（编辑器被销毁）：不能再 dispatch
         if (!view.dom.isConnected) return;
-        if (!getPendingForceRange()) return;
+        if (!getPendingForceRange(view.state)) return;
         view.dispatch({ effects: lineForceEffect.of({ pending: null }) });
     };
 
@@ -280,7 +280,7 @@ class LineForceController {
         this.dragStart = null;
         const view = this.view;
         if (!view.dom.isConnected) return;
-        if (!getPendingForceRange()) return;
+        if (!getPendingForceRange(view.state)) return;
         view.dispatch({ effects: lineForceEffect.of({ pending: null }) });
     };
 
@@ -313,7 +313,7 @@ class LineForceController {
         if (isInCodeBlock(view.state, pos)) return;
 
         const line = view.state.doc.lineAt(pos);
-        const prevPinned = getPinnedForceRange();
+        const prevPinned = getPinnedForceRange(view.state);
         // 再次双击同一行 → 取消钉住；双击别的行 → 钉住新行（旧行自然失焦退出，
         // 这里直接替换，规则与「选区离开即退出」一致）
         const sameLine =

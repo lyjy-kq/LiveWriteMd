@@ -14,6 +14,7 @@ import {
     SETTINGS_SCHEMA,
     getSettingItem,
     type SettingItem,
+    type SettingOption,
     type SettingValue,
 } from '../shared/settingsSchema.js';
 import { settingsState } from './settingsState.js';
@@ -86,6 +87,34 @@ const PANEL_STYLES = `
 .fms-close:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.2)); }
 
 .fms-body { flex: 1 1 auto; display: flex; min-height: 0; }
+
+/* 底部操作栏：应用按钮固定在左下角 */
+.fms-footer {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--vscode-editorGroup-border, rgba(128,128,128,0.18));
+}
+.fms-apply {
+    padding: 5px 20px;
+    border: none;
+    border-radius: 4px;
+    background: var(--vscode-button-background, #0e639c);
+    color: var(--vscode-button-foreground, #ffffff);
+    font-size: 12px;
+    cursor: pointer;
+}
+.fms-apply:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
+.fms-apply:active { transform: translateY(1px); }
+.fms-apply-hint {
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground, #999);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+.fms-apply-hint[data-show="true"] { opacity: 1; }
 
 .fms-nav {
     flex: 0 0 168px;
@@ -197,6 +226,18 @@ const PANEL_STYLES = `
 .fms-auto-tag {
     font-size: 10.5px;
     color: var(--vscode-descriptionForeground, #999);
+}
+
+/* 字体选择：输入框 + datalist + 「跟随」按钮 */
+.fms-font {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.fms-font .fms-text {
+    flex: 1;
+    min-width: 190px;
 }
 
 /* select / text */
@@ -448,6 +489,107 @@ function renderColor(item: SettingItem, ctx: ControlContext): HTMLElement {
     return wrap;
 }
 
+// =============================================================================
+// 字体列表（由扩展宿主枚举后下发）
+// =============================================================================
+
+/**
+ * 本机已安装字体。Webview 的浏览器不提供系统字体枚举接口，所以这里的数据
+ * 来自扩展宿主的 `systemFonts` 消息；消息还没到（或枚举失败）时为空数组，
+ * 下拉退回到 schema 里的常用字体。
+ */
+let systemFonts: string[] = [];
+
+/** 当前渲染出来的 datalist；字体列表晚到时就地填充，不重建面板。 */
+const fontListTargets = new Set<HTMLDataListElement>();
+
+/**
+ * 文本 / 字体输入框里「已经预览、还没写进 VS Code 配置」的值。
+ *
+ * 打字过程中每敲一个字符就写配置会不停触发 onDidChangeConfiguration，
+ * 所以输入时只更新 settingsState（画面实时变），失焦 / 回车或点「应用」
+ * 时才真正持久化。切换分组 / 关面板时这些值也一并提交，避免丢失。
+ */
+const pendingEdits = new Map<string, SettingValue>();
+
+/** 把字体名写进 datalist。 */
+function appendFontOptions(list: HTMLDataListElement, names: string[]): void {
+    for (const name of names) {
+        const opt = document.createElement('option');
+        opt.value = name;
+        list.appendChild(opt);
+    }
+}
+
+/** 填充 datalist：优先系统字体，没有则用 schema 候选兜底。 */
+function fillFontList(list: HTMLDataListElement, fallback?: SettingOption[]): void {
+    list.innerHTML = '';
+    if (systemFonts.length > 0) {
+        appendFontOptions(list, systemFonts);
+        return;
+    }
+    const names = (fallback ?? [])
+        .map((option) => option.value)
+        .filter((value) => value.length > 0);
+    appendFontOptions(list, names);
+}
+
+/**
+ * 字体选择控件：可输入的输入框 + datalist + 「跟随」重置。
+ *
+ * 用可输入的下拉而不是几百项的 `<select>`：输入几个字母即可筛选
+ * （比如打 "sim" 找宋体、打 "雅" 找微软雅黑），也允许直接输入枚举
+ * 不到的字体名。改动只在 change（回车 / 失焦 / 选中列表项）时提交，
+ * 避免每敲一个字符就写一次 VS Code 配置。
+ */
+function renderFont(item: SettingItem, ctx: ControlContext): HTMLElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'fms-font';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'fms-text';
+    input.value = settingsState.getString(item.key);
+    input.placeholder = item.placeholder ?? '输入字体名筛选，或展开列表选择';
+    input.spellcheck = false;
+
+    // datalist 用元素 id 关联；key 唯一，重建面板时旧节点已从 Set 里清掉
+    const listId = `fms-font-list-${item.key}`;
+    input.setAttribute('list', listId);
+    const list = document.createElement('datalist');
+    list.id = listId;
+    fillFontList(list, item.options);
+    fontListTargets.add(list);
+
+    // 输入过程中只做预览：字体栈 / @font-face 立刻更新，但不写 settings.json
+    input.addEventListener('input', () => {
+        const value = input.value.trim();
+        pendingEdits.set(item.key, value);
+        settingsState.set(item.key, value);
+    });
+    // 回车 / 失焦 / 从 datalist 选中 → 持久化
+    input.addEventListener('change', () => {
+        pendingEdits.delete(item.key);
+        ctx.commit(input.value.trim());
+    });
+
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'fms-reset';
+    reset.textContent = '跟随';
+    reset.title = '清空，改用默认字体';
+    reset.addEventListener('click', () => {
+        input.value = '';
+        pendingEdits.delete(item.key);
+        ctx.commit('');
+    });
+
+    wrap.appendChild(input);
+    wrap.appendChild(list);
+    wrap.appendChild(reset);
+    return wrap;
+}
+
 /** 下拉。 */
 function renderSelect(item: SettingItem, ctx: ControlContext): HTMLElement {
     const select = document.createElement('select');
@@ -470,7 +612,15 @@ function renderText(item: SettingItem, ctx: ControlContext): HTMLElement {
     input.className = 'fms-text';
     input.value = settingsState.getString(item.key);
     if (item.placeholder) input.placeholder = item.placeholder;
-    input.addEventListener('change', () => ctx.commit(input.value));
+    // 同样：输入时预览，失焦 / 回车 / 点「应用」时持久化
+    input.addEventListener('input', () => {
+        pendingEdits.set(item.key, input.value);
+        settingsState.set(item.key, input.value);
+    });
+    input.addEventListener('change', () => {
+        pendingEdits.delete(item.key);
+        ctx.commit(input.value);
+    });
     return input;
 }
 
@@ -482,6 +632,7 @@ function renderControl(item: SettingItem, ctx: ControlContext): HTMLElement {
         case 'color': return renderColor(item, ctx);
         case 'select': return renderSelect(item, ctx);
         case 'text': return renderText(item, ctx);
+        case 'font': return renderFont(item, ctx);
         default: return document.createElement('span');
     }
 }
@@ -491,9 +642,6 @@ function renderControl(item: SettingItem, ctx: ControlContext): HTMLElement {
 // =============================================================================
 
 class SettingsPanelImpl {
-    /** webview 内常驻启动按钮的元素 id。 */
-    private static readonly LAUNCHER_ID = 'livewritemd-settings-launcher';
-
     /** 根元素。 */
     private root: HTMLElement;
     /** 导航按钮容器。 */
@@ -504,6 +652,8 @@ class SettingsPanelImpl {
     private activeSection = SETTINGS_SCHEMA[0].id;
     /** 持久化回调。 */
     private onChange: SettingChangeHandler | null = null;
+    /** 「已应用」提示的定时器。 */
+    private applyHintTimer: number | null = null;
 
     constructor() {
         // 注入样式
@@ -524,12 +674,30 @@ class SettingsPanelImpl {
                     <div class="fms-nav"></div>
                     <div class="fms-content"></div>
                 </div>
+                <div class="fms-footer">
+                    <button class="fms-apply" type="button">应用</button>
+                    <span class="fms-apply-hint"></span>
+                </div>
             </div>
         `;
         document.body.appendChild(this.root);
 
         this.navEl = this.root.querySelector('.fms-nav')!;
         this.contentEl = this.root.querySelector('.fms-content')!;
+
+        // 底部「应用」：把输入框里尚未持久化的值写回配置，并完整重跑一遍 CSS；
+        // 顺便给一个短提示，避免用户不确定有没有生效。
+        const applyBtn = this.root.querySelector<HTMLButtonElement>('.fms-apply')!;
+        const applyHint = this.root.querySelector<HTMLElement>('.fms-apply-hint')!;
+        applyBtn.addEventListener('click', () => {
+            this.applyPending();
+            applyHint.textContent = '已应用';
+            applyHint.setAttribute('data-show', 'true');
+            if (this.applyHintTimer !== null) window.clearTimeout(this.applyHintTimer);
+            this.applyHintTimer = window.setTimeout(() => {
+                applyHint.setAttribute('data-show', 'false');
+            }, 1200);
+        });
 
         // 关闭交互
         this.root.querySelector('.fms-close')!.addEventListener('click', () => this.close());
@@ -542,46 +710,15 @@ class SettingsPanelImpl {
     }
 
     /**
-     * 把「设置」齿轮按钮挂到大纲面板底部的操作按钮组（#outline-actions），
-     * 与「展开全部 / 收起全部 / 标题编号 / 关闭大纲」等按钮排成一排。
+     * 注册设置改动的持久化回调。
      *
-     * 复用 .outline-action-btn 的样式，外观与同组按钮完全一致；按钮带
-     * data-outline-action="open-settings"，大纲操作组的点击处理不认识该动作会
-     * 直接忽略，避免误触大纲行为。
+     * 设置面板的打开入口统一收编到 VSCode 编辑器标题栏（openSettings 命令），
+     * webview 内不再挂启动按钮；这里只保存回调，供 open() 时提交改动使用。
      *
-     * 注意调用时机：必须在 OutlinePanel 创建（#outline-actions 已存在）之后调用。
-     *
-     * @param onChange - 设置改动的持久化回调，保存下来供打开面板时使用
+     * @param onChange - 设置改动的持久化回调
      */
-    mountLauncher(onChange?: SettingChangeHandler): void {
-        if (onChange) this.onChange = onChange;
-        const existing = document.getElementById(SettingsPanelImpl.LAUNCHER_ID);
-        if (existing) return;
-
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.id = SettingsPanelImpl.LAUNCHER_ID;
-        // 与大纲操作组按钮同款（28×28、边框、图标居中）
-        button.className = 'outline-action-btn';
-        button.setAttribute('data-outline-action', 'open-settings');
-        button.title = 'LiveWriteMD 设置';
-        button.setAttribute('aria-label', 'LiveWriteMD 设置');
-        button.innerHTML = `
-            <span class="outline-action-icon" aria-hidden="true">
-                <svg viewBox="0 0 16 16" style="width:15px;height:15px;fill:currentColor">
-                    <path d="M9.1 1.5l.5 1.6 1.3.7 1.6-.4.9 1.4-1.1 1.2v1.5l1.1 1.2-.9 1.4-1.6-.4-1.3.8-.5 1.5h-1.8l-.5-1.5-1.3-.8-1.6.4-.9-1.4 1.1-1.2V6L3 4.8l.9-1.4 1.6.4 1.3-.7.5-1.6h1.8zM8 9.4a1.4 1.4 0 100-2.8 1.4 1.4 0 000 2.8z"></path>
-                </svg>
-            </span>
-        `;
-        // 点击齿轮 → 打开设置面板（open 复用已保存的 onChange 持久化回调）
-        button.addEventListener('click', (event) => {
-            event.stopPropagation();
-            if (!this.isOpen) this.open();
-        });
-
-        // 挂到大纲操作按钮组；正常流程下该组已由 OutlinePanel 创建
-        const actionBar = document.getElementById('outline-actions');
-        (actionBar ?? document.body).appendChild(button);
+    registerChangeHandler(onChange: SettingChangeHandler): void {
+        this.onChange = onChange;
     }
 
     /** 构建左侧分组导航。 */
@@ -617,6 +754,9 @@ class SettingsPanelImpl {
         if (!section) return;
         this.contentEl.scrollTop = 0;
         this.contentEl.innerHTML = '';
+        // 旧 datalist 已随 innerHTML 一起销毁，同步清掉引用，避免字体列表
+        // 晚到时往已脱离文档的节点里填数据。
+        fontListTargets.clear();
 
         const title = document.createElement('div');
         title.className = 'fms-section-title';
@@ -670,8 +810,47 @@ class SettingsPanelImpl {
         (this.root.querySelector('.fms-window') as HTMLElement).focus();
     }
 
+    /**
+     * 收到扩展宿主枚举出的系统字体列表。
+     *
+     * 面板可能已经渲染好（先打开、字体列表后到），这里就地更新每个
+     * datalist 的选项，不重建面板，避免用户正在看的内容被重置。
+     *
+     * @param fonts 字体家族名（扩展侧已去重排序）
+     */
+    setSystemFonts(fonts: string[]): void {
+        const clean = (Array.isArray(fonts) ? fonts : [])
+            .filter((name): name is string => typeof name === 'string')
+            .map((name) => name.trim())
+            .filter((name) => name.length > 0);
+        if (clean.length === 0) return;
+        systemFonts = clean;
+        for (const list of fontListTargets) {
+            list.innerHTML = '';
+            appendFontOptions(list, systemFonts);
+        }
+    }
+
+    /**
+     * 提交所有「已预览未保存」的输入，并重跑一遍全部 CSS 变量。
+     *
+     * 正常失焦时 change 已经提交过，这里主要覆盖：
+     * - 用户打字后直接点「应用」；
+     * - 焦点还在输入框里时用 Esc 关闭面板。
+     */
+    private applyPending(): void {
+        for (const [key, value] of pendingEdits) {
+            settingsState.set(key, value);
+            this.onChange?.(key, value);
+        }
+        pendingEdits.clear();
+        settingsState.reapplyAll();
+    }
+
     /** 关闭面板。 */
     close(): void {
+        // 关面板前把没来得及提交的输入保存掉，避免「看着已经改了、重开又变回去」
+        if (pendingEdits.size > 0) this.applyPending();
         this.root.setAttribute('data-open', 'false');
     }
 

@@ -22,6 +22,31 @@ const CHECK_SVG =
     "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path d='M2.5 6.2 L4.8 8.5 L9.5 3.8' fill='none' stroke='white' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/></svg>\")";
 
 /**
+ * 语义色的主题化微调（标题 / 加粗 / 斜体 / 链接）。
+ *
+ * 和行内代码改用 textPreformat 主题色的思路一致：不再让固定的粉彩色
+ * 直接贴在任意主题背景上，而是保留原来的色相，只把颜色往当前主题的
+ * 正文色方向混一部分：
+ * - 深色主题的正文偏亮 → 语义色稍微提亮、降一点饱和，和正文处在同一亮度层（25%）；
+ * - 浅色主题的正文偏暗 → 同一色相自动压深，白底上不会发虚（32%）；
+ * - 黄色（h5）在浅色底上天然最难读，额外多压一点（42%），仍是黄 / 橄榄色系；
+ * - 只动明度 / 饱和度，不动色相：红仍是红、紫仍是紫、链接仍是绿色系。
+ *
+ * 用户自定义颜色不参与混合 —— 外层的 `var(--livewritemd-*-color, …)`
+ * 会直接覆盖整个 `color-mix()`。
+ *
+ * @param hue 原始语义色（深色主题下的基准色）
+ * @param light 是否浅色主题版本（决定主题变量缺失时的兜底正文色）
+ * @param lightAmount 浅色主题的混入比例（默认 32%，h5 单独调高）
+ * @returns 可用于 CSS 的颜色表达式
+ */
+function tone(hue: string, light = false, lightAmount = 32): string {
+    const amount = light ? lightAmount : 25;
+    const fallback = light ? '#24292e' : '#d4d4d4';
+    return `color-mix(in srgb, ${hue} ${100 - amount}%, var(--vscode-editor-foreground, ${fallback}) ${amount}%)`;
+}
+
+/**
  * Creates the base theme extension with all live preview CSS styles.
  */
 export function createBaseThemeStyles(): Extension {
@@ -51,39 +76,65 @@ export function createBaseThemeStyles(): Extension {
         '.cm-md-heading': {
             lineHeight: '1.6',
         },
+        // 字重走变量：默认 inherit（与正文同字重，只靠字号/颜色区分层级）。
+        // 设置里的「标题加粗」打开后，settingsState 会写入
+        // --livewritemd-heading-weight-1 = 700、--livewritemd-heading-weight = 600，
+        // 保留「一级标题比其余级别更重」的原设计。两个变量分开是因为
+        // 一个变量装不下两档字重；关掉时把两个变量一起删掉即可回到 inherit。
         '.cm-md-heading-1': {
             fontSize: 'var(--livewritemd-h1-size, 1.2em)',
-            fontWeight: '700',
+            fontWeight: 'var(--livewritemd-heading-weight-1, inherit)',
             letterSpacing: '-0.02em',
-            color: 'var(--livewritemd-h1-color, #eb8383)',
+            color: `var(--livewritemd-h1-color, ${tone('#eb8383')})`,
         },
         '.cm-md-heading-2': {
             fontSize: 'inherit',
-            fontWeight: '600',
+            fontWeight: 'var(--livewritemd-heading-weight, inherit)',
             letterSpacing: '-0.01em',
-            color: 'var(--livewritemd-h2-color, #ae9acb)',
+            color: `var(--livewritemd-h2-color, ${tone('#ae9acb')})`,
         },
         '.cm-md-heading-3': {
             fontSize: 'inherit',
-            fontWeight: '600',
-            color: 'var(--livewritemd-h3-color, #7db5cd)',
+            fontWeight: 'var(--livewritemd-heading-weight, inherit)',
+            color: `var(--livewritemd-h3-color, ${tone('#7db5cd')})`,
         },
         '.cm-md-heading-4': {
             fontSize: 'inherit',
-            fontWeight: '600',
-            color: 'var(--livewritemd-h4-color, #71a796)',
+            fontWeight: 'var(--livewritemd-heading-weight, inherit)',
+            color: `var(--livewritemd-h4-color, ${tone('#71a796')})`,
         },
         '.cm-md-heading-5': {
             fontSize: 'inherit',
-            fontWeight: '600',
-            color: 'var(--livewritemd-h5-color, #dcbf61)',
+            fontWeight: 'var(--livewritemd-heading-weight, inherit)',
+            color: `var(--livewritemd-h5-color, ${tone('#dcbf61')})`,
         },
         '.cm-md-heading-6': {
             fontSize: 'inherit',
-            fontWeight: '600',
-            color: 'var(--livewritemd-h6-color, #dda36a)',
+            fontWeight: 'var(--livewritemd-heading-weight, inherit)',
+            color: `var(--livewritemd-h6-color, ${tone('#dda36a')})`,
             textTransform: 'uppercase',
             letterSpacing: '0.05em',
+        },
+        // 浅色主题：同一色相，混入更暗的正文色（见 tone() 的说明）。
+        // 只加这 6 条覆盖，形状 / 字重 / 字号仍由上面的主规则负责。
+        '&light .cm-md-heading-1': {
+            color: `var(--livewritemd-h1-color, ${tone('#eb8383', true)})`,
+        },
+        '&light .cm-md-heading-2': {
+            color: `var(--livewritemd-h2-color, ${tone('#ae9acb', true)})`,
+        },
+        '&light .cm-md-heading-3': {
+            color: `var(--livewritemd-h3-color, ${tone('#7db5cd', true)})`,
+        },
+        '&light .cm-md-heading-4': {
+            color: `var(--livewritemd-h4-color, ${tone('#71a796', true)})`,
+        },
+        '&light .cm-md-heading-5': {
+            // 黄色系在白底上最吃亏，多混一点正文色，保证至少 3:1 的可读性
+            color: `var(--livewritemd-h5-color, ${tone('#dcbf61', true, 42)})`,
+        },
+        '&light .cm-md-heading-6': {
+            color: `var(--livewritemd-h6-color, ${tone('#dda36a', true)})`,
         },
 
         // =================================================================
@@ -94,16 +145,24 @@ export function createBaseThemeStyles(): Extension {
         // 行盒就可能被顶高零点几个像素，聚焦展开时又落回正文行高，
         // 于是「点一下，下面整块跟着上下跳一下」。盒子压到 1em 之后就永远躲在正文行盒里。
         '.cm-md-bold': {
-            fontWeight: '700',
+            // 默认 inherit（跟随正文字重），只有打开「加粗真加粗」时才由
+            // settingsState 写入 700；这样默认状态下加粗只靠颜色区分。
+            fontWeight: 'var(--livewritemd-bold-weight, inherit)',
             lineHeight: '1',
-            color: 'var(--livewritemd-bold-color, #d9a37a)',
+            color: `var(--livewritemd-bold-color, ${tone('#d9a37a')})`,
         },
         // 斜体默认只变色、不倾斜：合成斜体（italic）默认约 14°，斜得过头。
         // fontStyle 走变量，设置里开启「斜体真倾斜」时由应用层改为 italic。
         '.cm-md-italic': {
             fontStyle: 'var(--livewritemd-italic-style, normal)',
             lineHeight: '1',
-            color: 'var(--livewritemd-italic-color, #2bbac5)',
+            color: `var(--livewritemd-italic-color, ${tone('#2bbac5')})`,
+        },
+        '&light .cm-md-bold': {
+            color: `var(--livewritemd-bold-color, ${tone('#d9a37a', true)})`,
+        },
+        '&light .cm-md-italic': {
+            color: `var(--livewritemd-italic-color, ${tone('#2bbac5', true)})`,
         },
         '.cm-md-strikethrough': {
             textDecoration: 'line-through',
@@ -186,14 +245,25 @@ export function createBaseThemeStyles(): Extension {
             fontSize: 'var(--livewritemd-inline-code-scale, 0.95em)',
             lineHeight: '1',
             fontWeight: 'var(--livewritemd-font-weight, 400)',
-            backgroundColor: 'var(--livewritemd-inline-code-background, #f0ece0)',
+            // 底色 / 文字色优先跟随 VS Code 主题的 textPreformat 配色：
+            // - 主题定义了 --vscode-textPreformat-background /
+            //   --vscode-textPreformat-foreground 时直接用，换任何主题都协调；
+            // - 主题没定义时用中性半透明灰兜底（深浅两套各有一档），
+            //   不再出现「深色一块明显中灰、浅色几乎看不见」的偏差；
+            // - 用户在设置里自定义时，--livewritemd-inline-code-* 会覆盖主题色；
+            //   自定义底色在 settingsState 写入变量时已经掺过 50% 透明，
+            //   这里不再 mix，避免把主题色二次淡化；
+            // - 形状（padding / 圆角 / 行高）保持不变。
+            backgroundColor:
+                'var(--livewritemd-inline-code-background, var(--vscode-textPreformat-background, rgba(127, 127, 127, 0.16)))',
             padding: '2px 6px',
             borderRadius: '4px',
-            color: 'var(--livewritemd-inline-code-color, #f29a9a)',
+            color: 'var(--livewritemd-inline-code-color, var(--vscode-textPreformat-foreground, inherit))',
         },
         '&light .cm-md-code': {
-            backgroundColor: 'var(--livewritemd-inline-code-background, #eff1f3)',
-            color: 'var(--livewritemd-inline-code-color, #f29a9a)',
+            backgroundColor:
+                'var(--livewritemd-inline-code-background, var(--vscode-textPreformat-background, rgba(0, 0, 0, 0.055)))',
+            color: 'var(--livewritemd-inline-code-color, var(--vscode-textPreformat-foreground, inherit))',
         },
 
         // 被 widget 顶替掉的源码（行内公式、单元格复选框）：压 0 宽藏起来，
@@ -209,9 +279,9 @@ export function createBaseThemeStyles(): Extension {
         // Links
         // =================================================================
         '.cm-md-link, .cm-md-file-link': {
-            color: 'var(--livewritemd-link-color, #338122)',
+            color: `var(--livewritemd-link-color, ${tone('#338122')})`,
             textDecoration: 'underline',
-            textDecorationColor: 'var(--livewritemd-link-color, #338122)',
+            textDecorationColor: `var(--livewritemd-link-color, ${tone('#338122')})`,
             textDecorationSkipInk: 'auto',
             textUnderlineOffset: '3px',
             cursor: 'pointer',
@@ -221,8 +291,8 @@ export function createBaseThemeStyles(): Extension {
             opacity: '0.8',
         },
         '&light .cm-md-link, &light .cm-md-file-link': {
-            color: 'var(--livewritemd-link-color, #338122)',
-            textDecorationColor: 'var(--livewritemd-link-color, #338122)',
+            color: `var(--livewritemd-link-color, ${tone('#338122', true)})`,
+            textDecorationColor: `var(--livewritemd-link-color, ${tone('#338122', true)})`,
         },
 
         // =================================================================
@@ -1077,17 +1147,28 @@ export function createBaseThemeStyles(): Extension {
         },
 
         // =================================================================
-        // Bullet dot（圆心 = '-' 墨迹中心）
+        // Bullet dot（水平圆心 = '-' 中点，垂直圆心 = 行盒中心 + 用户微调）
         // =================================================================
-        // top 在 50% 上叠加 --cm-dot-y-correction：空 inline-block 的 middle
-        // 对齐点与 '-' 墨迹中心的亚像素差，由 BulletWidget 实测后写入，
-        // 不补偿圆点会系统性偏下（见 helpers.ts measureBulletYCorrection）
+        // top 由三部分叠加：
+        // - 50%：0 高 inline-block 的 middle 对齐点（见下，盒子无 in-flow 内容）；
+        // - --cm-dot-y-correction：middle 点与行盒中心的亚像素差，BulletWidget
+        //   实测写入，不补偿圆点会系统性偏下（见 helpers measureBulletYCorrection）；
+        // - --livewritemd-bullet-y-offset：设置面板里的「圆点垂直位置」用户微调。
         '.cm-md-bullet-dot': {
             position: 'absolute',
             left: 'var(--cm-mark-center, 0.62em)',
-            top: 'calc(50% + var(--cm-dot-y-correction, 0px))',
+            top:
+                'calc(50% + var(--cm-dot-y-correction, 0px) + ' +
+                'var(--livewritemd-bullet-y-offset, 0em))',
             width: '12px',
             height: '12px',
+            // 字号钉回正文那套：dot 内只有 SVG、无文字，设字号纯粹是为了让
+            // 上面 em 偏移的基准 == 正文字号；否则继承 .cm-md-bullet 的 1.1em，
+            // 用户的微调会被放大 1.1 倍
+            fontSize:
+                'calc(var(--livewritemd-editor-font-size, ' +
+                'var(--vscode-editor-font-size, 14px)) * ' +
+                'var(--livewritemd-font-scale, 1))',
             lineHeight: '1',
             transform: 'translate(-50%, -50%)',
         },
@@ -1134,6 +1215,62 @@ export function createBaseThemeStyles(): Extension {
             },
         '&light .cm-md-gutter-fold': {
             color: 'var(--livewritemd-fold-color, #0969da)',
+        },
+        // =================================================================
+        // Fold corner armor（折叠行矩形左缘的「两角铠甲」）
+        // =================================================================
+        // 折叠列表项 / 标题后，该行矩形**左上、左下**各长出一段内收 L 形角花，
+        // 像半个锁定框，表明这一行收拢了内容；颜色与折叠箭头同源。无底色无
+        // 文字，不碰正文。早先的整条背景色、行尾徽章、四角版用户均不满意，
+        // 最终只留左两角。
+        //
+        // 实现：一个 ::before 绝对定位铺满行矩形，用 **4 层线性渐变**（两角各
+        // 一条水平臂 + 一条垂直臂）拼出 2 个 L。
+        //
+        // 层叠口径与旧背景版一致：position:relative + isolation:isolate 建立
+        // 层叠上下文，z-index:-1 的伪元素绘于「列表色带背景之上、正文文字
+        // 之下」，角花不会盖住字。
+        '.cm-md-fold-armor': {
+            position: 'relative',
+            isolation: 'isolate',
+        },
+        '.cm-md-fold-armor::before': {
+            content: '""',
+            position: 'absolute',
+            // 角花整体内收 2px，不顶到矩形边，「内收」感
+            top: '2px',
+            bottom: '2px',
+            // 左缘抵消 .cm-line 的左 padding（lineGutterGap），角花贴到行矩形
+            // 最左缘
+            left: 'calc(2px - var(--livewritemd-line-padding-left, 0px))',
+            // 必须显式给宽：去掉 right 后绝对定位元素 shrink-to-fit，而背景
+            // 渐变不占布局空间，宽度会塌成 0、角花整条被裁掉
+            width: '10px',
+            zIndex: '-1',
+            pointerEvents: 'none',
+            backgroundRepeat: 'no-repeat',
+            // ::before 只画**左侧上下两角**：各一条水平臂 + 垂直臂，共 4 层
+            backgroundImage: [
+                'linear-gradient(to right, var(--livewritemd-fold-color, #4fc1ff) 10px, transparent 10px)',
+                'linear-gradient(to right, var(--livewritemd-fold-color, #4fc1ff) 10px, transparent 10px)',
+                'linear-gradient(to bottom, var(--livewritemd-fold-color, #4fc1ff) 10px, transparent 10px)',
+                'linear-gradient(to bottom, var(--livewritemd-fold-color, #4fc1ff) 10px, transparent 10px)',
+            ].join(','),
+            backgroundPosition: [
+                'left top', 'left bottom', 'left top', 'left bottom',
+            ].join(','),
+            backgroundSize: [
+                '10px 1.5px', '10px 1.5px', '1.5px 10px', '1.5px 10px',
+            ].join(','),
+        },
+        // 浅色主题：左侧角花 fallback 换 #0969da
+        '&light .cm-md-fold-armor::before': {
+            backgroundImage: [
+                'linear-gradient(to right, var(--livewritemd-fold-color, #0969da) 10px, transparent 10px)',
+                'linear-gradient(to right, var(--livewritemd-fold-color, #0969da) 10px, transparent 10px)',
+                'linear-gradient(to bottom, var(--livewritemd-fold-color, #0969da) 10px, transparent 10px)',
+                'linear-gradient(to bottom, var(--livewritemd-fold-color, #0969da) 10px, transparent 10px)',
+            ].join(','),
         },
         // =================================================================
         // Indent guide lines (for nested list items)
@@ -1221,9 +1358,19 @@ export function createBaseThemeStyles(): Extension {
             padding: '14px 18px 12px',
             backgroundColor: 'var(--vscode-textCodeBlock-background, rgba(128,128,128,0.08))',
             borderRadius: '8px',
+            // 等高设计：min-height（行数×行高）由 widget 内联写入，这里只做
+            // 纵向 flex 布局，键值网格超出时内部滚动而不是把卡片撑得比源码高
+            display: 'flex',
+            flexDirection: 'column',
+            boxSizing: 'border-box',
+            cursor: 'text',
         },
         '&light .cm-md-frontmatter': {
             backgroundColor: 'rgba(0, 0, 0, 0.03)',
+        },
+        // 折叠态：只剩一条标题栏，键值网格隐藏
+        '.cm-md-frontmatter.cm-md-frontmatter-collapsed .cm-md-frontmatter-grid': {
+            display: 'none',
         },
         '.cm-md-frontmatter-header': {
             display: 'flex',
@@ -1234,16 +1381,39 @@ export function createBaseThemeStyles(): Extension {
             color: 'var(--vscode-descriptionForeground, #888)',
             marginBottom: '10px',
             letterSpacing: '0.02em',
+            flex: '0 0 auto',
+        },
+        '.cm-md-frontmatter.cm-md-frontmatter-collapsed .cm-md-frontmatter-header': {
+            marginBottom: '0',
         },
         '.cm-md-frontmatter-header-icon': {
             fontSize: '0.95em',
             lineHeight: '1',
+        },
+        // 标题文字占满中间，折叠箭头推到最右
+        '.cm-md-frontmatter-header-text': {
+            flex: '1 1 auto',
+        },
+        '.cm-md-frontmatter-toggle': {
+            flex: '0 0 auto',
+            cursor: 'pointer',
+            padding: '0 4px',
+            borderRadius: '4px',
+            lineHeight: '1.4',
+            userSelect: 'none',
+        },
+        '.cm-md-frontmatter-toggle:hover': {
+            backgroundColor: 'rgba(128, 128, 128, 0.16)',
         },
         '.cm-md-frontmatter-grid': {
             display: 'grid',
             gridTemplateColumns: '20px auto 1fr',
             gap: '0',
             alignItems: 'baseline',
+            // 等高卡片内：网格吃剩余高度，键值多了内部滚动
+            flex: '1 1 auto',
+            minHeight: '0',
+            overflowY: 'auto',
         },
         '.cm-md-frontmatter-icon': {
             color: 'var(--vscode-descriptionForeground, #555)',

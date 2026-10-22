@@ -36,6 +36,7 @@ import type {
     SearchHistoryChangeMessage,
     SearchHistoryState,
     SettingsChangeMessage,
+    SystemFontsMessage,
 } from '../shared/types.js';
 import type { SettingValue } from '../shared/settingsSchema.js';
 import { MESSAGE_TYPES } from '../shared/messageTypes.js';
@@ -101,7 +102,7 @@ export interface IWebviewMessageCallbacks {
         documentUri: string,
         searchHistory: SearchHistoryState,
         settings?: LiveWriteMdEditorSettings,
-        mode?: 'live' | 'viewer' | 'source',
+        mode?: import('../shared/types.js').EditorMode,
         outlineWidth?: number,
         allSettings?: Record<string, SettingValue>
     ) => void;
@@ -117,6 +118,13 @@ export interface IWebviewMessageCallbacks {
      * The extension asks the webview to show its settings panel.
      */
     onOpenSettings: () => void;
+
+    /**
+     * Called when SYSTEM_FONTS message is received.
+     * Extension host has enumerated locally installed font families.
+     * 可选：导图独立面板等不显示设置面板的入口可以不实现。
+     */
+    onSystemFonts?: (fonts: string[]) => void;
 
     /**
      * Called when UPDATE message is received.
@@ -235,7 +243,7 @@ export class WebviewMessageSender {
      */
     public sendEditorAction(
         action: 'insertImage' | 'setMode' | 'exportAsHtml' | 'exportAsPdf' | 'downloadRemoteImages',
-        mode?: 'live' | 'viewer' | 'source'
+        mode?: import('../shared/types.js').EditorMode
     ): void {
         this.vscode.postMessage({
             type: 'editorAction',
@@ -388,6 +396,10 @@ export class WebviewMessageHandler {
                 this.callbacks.onOpenSettings();
                 break;
 
+            case MESSAGE_TYPES.SYSTEM_FONTS:
+                this.callbacks.onSystemFonts?.((message as SystemFontsMessage).fonts ?? []);
+                break;
+
             default:
                 // Unknown message type - silently ignore
                 // This provides forward compatibility if new message types
@@ -413,7 +425,7 @@ export class WebviewMessageHandler {
         documentUri: string;
         searchHistory: SearchHistoryState;
         settings?: LiveWriteMdEditorSettings;
-        mode?: 'live' | 'viewer' | 'source';
+        mode?: import('../shared/types.js').EditorMode;
         outlineWidth?: number;
         outlinePanelWidth?: number;
         allSettings?: Record<string, SettingValue>;

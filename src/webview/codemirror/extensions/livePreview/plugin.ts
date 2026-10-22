@@ -13,13 +13,13 @@ import { type EditorState, type Extension, type Transaction, RangeSet, StateFiel
 import { Decoration, type DecorationSet, EditorView } from '@codemirror/view';
 import type { SyntaxNode, Tree } from '@lezer/common';
 import { findFileLinkAtText, findFileLinkMatches } from '../../../../shared/fileLink.js';
+// 列表引导线横坐标要读「正文与行号线距离」设置（lineGutterGap）
+import { settingsState } from '../../../settingsState.js';
 
 import {
     blockquoteLevelDecos,
     boldMarkDeco,
     codeMarkDeco,
-    liveWriteMdDarkHighlight,
-    liveWriteMdLightHighlight,
     footnoteDefLineDeco,
     headingLineDecos,
     hideDeco,
@@ -28,20 +28,24 @@ import {
     hiddenSourceDeco,
     strikethroughMarkDeco,
 } from './decorations.js';
+import { ensureTokenColorCss, liveWriteMdTokenHighlight } from './tokenColors.js';
 import {
     extractFencedCodeContent,
     extractFencedCodeLanguage,
     extractSafeFontStyles,
+    createCodeBlockIndentStyle,
     createListIndentStyle,
     type IndentGuide,
     detectIndentUnit,
-    getListIndent,
-    LINE_PADDING_PX,
+    getCodeBlockIndentInfo,
+    parseListMarkerLine,
+    type ListMarkerInfo,
+    measureWhitespacePx,
     measureBaselineInset,
     measureIndentUnitPx,
-    measureLineHeightPx,
-    measureText,
-    parseFrontmatter,
+    measureEnvFromElement,
+    measureTextIn,
+    type MeasureEnv,
     splitMarkdownImageDestination,
 } from './helpers.js';
 import {
@@ -87,10 +91,11 @@ import {
     exitPinnedForceIfOutside,
     exitSourceModeIfOutside,
     foldToggleEffect,
-    foldedLines,
+    foldedLinesOf,
     isForcedSourceRange,
     isInSourceMode,
     lineForceEffect,
+    livePreviewInstanceField,
     mapForceRanges,
     patchLineForce,
     setSourceModeRange,
@@ -107,7 +112,6 @@ import {
     DetailsWidget,
     FootnoteDefWidget,
     FootnoteRefWidget,
-    FrontmatterWidget,
     HorizontalRuleWidget,
     ImageWidget,
     FontTextWidget,
@@ -866,9 +870,9 @@ function treeLikeIterateTextBlocks(
  * @param activeInlineNode - 光标所在的行内元素
  * @param taskMarkerPositions - 列表任务标记的位置集合（遍历时顺带填）
  */
-/** 某个列表项/标题是不是折叠着（key 是它所在行的行首位置）。 */
-function isFoldedOf(lineFrom: number): boolean {
-    return foldedLines.has(lineFrom);
+/** 某个列表项/标题是不是折叠着（key 是它所在行的行首位置；实例隔离）。 */
+function isFoldedOf(state: EditorState, lineFrom: number): boolean {
+    return foldedLinesOf(state).has(lineFrom);
 }
 
 /**
@@ -938,7 +942,12 @@ function applyTreeDecorations(
     tree: Tree,
     focusedRange: ILineRange,
     activeInlineNode: SyntaxNode | null,
-    taskMarkerPositions: Set<number>
+    taskMarkerPositions: Set<number>,
+    /**
+     * 量圆点宽度用的字体环境（窗口遍由 ViewPlugin 传入当前视图的正文样式）。
+     * block 遍在 EditorState.create 阶段跑、拿不到视图，传 null 走全局口径。
+     */
+    env: MeasureEnv | null = null
 ): void {
     // 本范围内所有公式源码区间：下面 enter 用它屏蔽其他修饰。
     // 两遍（block 整篇 / inline 窗口）各算一次，与 range 对齐。
@@ -971,11 +980,11 @@ function applyTreeDecorations(
                     extractFencedCodeLanguage(nodeRef.node, state) === 'mermaid';
                 const isFoldedItem =
                     name === 'ListItem' &&
-                    foldedLines.has(state.doc.lineAt(from).from);
+                    foldedLinesOf(state).has(state.doc.lineAt(from).from);
                 // 折叠的标题章节：需要在 ATXHeading 节点产出块隐藏
                 const isFoldedHeading =
                     name.startsWith('ATXHeading') &&
-                    foldedLines.has(state.doc.lineAt(from).from);
+                    foldedLinesOf(state).has(state.doc.lineAt(from).from);
                 // 缩进式代码块：要在 CodeBlock 节点铺 rainbow indent
                 const isIndentedCodeBlock = name === 'CodeBlock';
                 if (
@@ -1000,13 +1009,13 @@ function applyTreeDecorations(
             //
             // 双击进过源码模式的块，不管光标在不在里面，都摊开成源码渲染。
             // （它自己的单击/双击逻辑见 widgets.ts 里的 sourceModeEffect）
-            if (isWidgetBackedNode(nodeRef.node, state) && isInSourceMode(from, to)) {
+            if (isWidgetBackedNode(nodeRef.node, state) && isInSourceMode(state, from, to)) {
                 return;
             }
 
             // 表格进了源码模式：整块按源码显示，里面的行内元素一个都不处理
             // （不然加粗、公式还是渲染态，看着不像源码）
-            if (name === 'Table' && isInSourceMode(from, to)) {
+            if (name === 'Table' && isInSourceMode(state, from, to)) {
                 return false;
             }
 
@@ -1015,7 +1024,7 @@ function applyTreeDecorations(
                 // 也不许走渲染态：整行必须是源码，坐标和长度才能稳定
                 const canRenderInFocus =
                     state.selection.main.empty &&
-                    !isForcedSourceRange(from, to) &&
+                    !isForcedSourceRange(state, from, to) &&
                     isInlineRenderable(nodeRef.node) &&
                     !isWithinActiveInline(nodeRef.node, activeInlineNode);
                 // 表格 / 图片 / Mermaid：单击保持渲染态，只有双击进源码模式才显示原文
@@ -1026,17 +1035,13 @@ function applyTreeDecorations(
                     // 要铺 rainbow indent，同样不能因聚焦在块上而被跳过。
                     const isFoldedItemNode =
                         name === 'ListItem' &&
-                        isFoldedOf(state.doc.lineAt(from).from);
+                        isFoldedOf(state, state.doc.lineAt(from).from);
                     const isFoldedHeadingNode =
                         name.startsWith('ATXHeading') &&
-                        isFoldedOf(state.doc.lineAt(from).from);
-                    // ListMark 要被 BulletWidget 替换成圆点（即使 caret 在本行），
-                    // 否则聚焦一级项时圆点退回原始 "-"。
-                    const isListMarkNode = name === 'ListMark';
+                        isFoldedOf(state, state.doc.lineAt(from).from);
                     if (
                         !isFoldedItemNode &&
-                        !isFoldedHeadingNode &&
-                        !isListMarkNode
+                        !isFoldedHeadingNode
                     )
                         return;
                 }
@@ -1106,7 +1111,10 @@ function applyTreeDecorations(
                         } else {
                             decos.push(
                                 Decoration.replace({
-                                    widget: new BulletWidget(text),
+                                    // 圆点盒宽按「当前视图」的字体量：导图节点的
+                                    // mini-CM 与主编辑器是两套独立字体环境，
+                                    // 用错会让进编辑态时正文横跳（见 helpers.MeasureEnv）
+                                    widget: new BulletWidget(text, env),
                                 }).range(from, hideEnd)
                             );
                         }
@@ -1147,14 +1155,34 @@ function applyTreeDecorations(
                     const level = parseInt(name.replace('ATXHeading', ''));
                     const headingLine = state.doc.lineAt(from);
                     decos.push(headingLineDecos[level].range(headingLine.from));
-                    // 折叠态：章节内容整块藏掉（block 遍到达这里时产出）
+                    // 折叠态：行矩形左缘挂「两角铠甲」角花类（样式见 styles.ts
+                    // 的 .cm-md-fold-armor）。只在 inline 遍加，block 遍只负责章节隐藏
+                    if (
+                        mode === 'inline' &&
+                        foldedLinesOf(state).has(headingLine.from)
+                    ) {
+                        decos.push(
+                            Decoration.line({
+                                class: 'cm-md-fold-armor',
+                            }).range(headingLine.from)
+                        );
+                    }
+                    // 折叠态：章节内容整块藏掉（block 遍到达这里时产出）。
+                    //
+                    // 范围必须严格按「整行」取：首行隐藏行的行首 → 末行隐藏行
+                    // 的行尾。旧写法起点是标题行尾、终点是下一标题行首
+                    // (sectionEnd)，CodeMirror 会把 block widget 与端点相邻的
+                    // 行块融合 —— 实测下一同级标题会丢掉行号格与标题行装饰，
+                    // 只剩普通文字。sectionEnd 是下一标题行首，-1 即末隐藏行尾。
                     if (mode === 'block') {
                         const sectionEnd = headingSectionEnd(nodeRef.node);
-                        if (sectionEnd > headingLine.to) {
+                        const hideFrom = headingLine.to + 1;
+                        const hideTo = sectionEnd - 1;
+                        if (hideFrom <= hideTo) {
                             decos.push(
                                 Decoration.replace({ block: true }).range(
-                                    headingLine.to,
-                                    sectionEnd
+                                    hideFrom,
+                                    hideTo
                                 )
                             );
                         }
@@ -1217,13 +1245,14 @@ function applyTreeDecorations(
                         syntaxNode.getChild('OrderedList')
                     );
                     if (hasChildList) {
-                        const isFolded = isFoldedOf(itemLine.from);
+                        const isFolded = isFoldedOf(state, itemLine.from);
                         if (isFolded) {
                             if (mode === 'inline') {
+                                // 行矩形左缘挂「两角铠甲」角花类（见 styles.ts）
                                 decos.push(
-                                    Decoration.line({ class: 'cm-md-fold-collapsed-line' }).range(
-                                        itemLine.from
-                                    )
+                                    Decoration.line({
+                                        class: 'cm-md-fold-armor',
+                                    }).range(itemLine.from)
                                 );
                             }
                             // 折叠态：行首 ListMark（"- " / "1. "）整段隐藏。
@@ -1238,13 +1267,17 @@ function applyTreeDecorations(
                                     afterChar === ' ' ? listMark.to + 1 : listMark.to;
                                 decos.push(hideDeco.range(listMark.from, hideEnd));
                             }
-                            // Hide child lines：块级替换，只由 block 那一遍产出
+                            // Hide child lines：块级替换，只由 block 那一遍产出。
+                            // 起点取首个子行的行首 (itemLine.to + 1)，与标题
+                            // 折叠同口径：范围严格覆盖整行，避免 widget 与相邻
+                            // 行块融合、下一同级项丢行号 / 行装饰
                             if (mode === 'block') {
                                 const endLine = state.doc.lineAt(to);
-                                if (itemLine.to < endLine.to) {
+                                const hideFrom = itemLine.to + 1;
+                                if (hideFrom <= endLine.to) {
                                     decos.push(
                                         Decoration.replace({ block: true }).range(
-                                            itemLine.to,
+                                            hideFrom,
                                             endLine.to
                                         )
                                     );
@@ -1327,6 +1360,28 @@ function applyTreeDecorations(
                             }
                             if (ln === endLine.number) {
                                 classes.push('cm-md-codeblock-last');
+                            }
+                            if (ln > startLine.number && ln < endLine.number) {
+                                // Rainbow indent：行首空白的视觉列数（Tab 按
+                                // state.tabSize 的 tab-stop 算），样式函数据此
+                                // 把色带精确停在文字前。首/末行是围栏 ``` 行，不铺。
+                                const indentColumns = getCodeBlockIndentInfo(
+                                    line.text,
+                                    state.tabSize
+                                ).columns;
+                                // 一个缩进单位占几列：默认 indentUnit = 2 空格，
+                                // 色带按它轮换（每按一次 Tab 换一种颜色）。
+                                // indentUnit 允许配成 Tab，那时一个单位宽 = tabSize。
+                                const unitText = state.facet(indentUnit);
+                                const indentUnitColumns =
+                                    unitText.charCodeAt(0) === 9
+                                        ? state.tabSize * unitText.length
+                                        : unitText.length;
+                                classes.push('cm-md-codeblock-indent');
+                                attributes.style = createCodeBlockIndentStyle(
+                                    indentColumns,
+                                    indentUnitColumns
+                                );
                             }
                             decos.push(
                                 Decoration.line({
@@ -1588,45 +1643,11 @@ function buildBlockDecorations(state: EditorState): DecorationSet {
     const activeInlineNode = findActiveInlineNode(state, tree);
     // 表格 / 图片 / Mermaid 的源码模式：光标点去别处就自动退出。
     // 必须在下面的树遍历之前清掉，否则这一轮还会按「源码模式」渲染。
-    exitSourceModeIfOutside(state.selection.main.from, state.selection.main.to);
+    exitSourceModeIfOutside(state, state.selection.main.from, state.selection.main.to);
 
-    // === FRONTMATTER DETECTION ===
-    // Check if document starts with --- (YAML frontmatter)
-    let frontmatterEndLine = -1;
-    // frontmatter 在文档最开头：窗口没盖住开头就跳过（它是个替换 widget，
-    // 离开视口时靠 estimatedHeight 撑高度就够了，不必每轮都算）
-    if (state.doc.lines >= 2 && range.from === 0) {
-        const firstLine = state.doc.line(1);
-        if (firstLine.text.trim() === '---') {
-            for (let ln = 2; ln <= state.doc.lines; ln++) {
-                if (state.doc.line(ln).text.trim() === '---') {
-                    frontmatterEndLine = ln;
-                    break;
-                }
-            }
-            if (frontmatterEndLine > 0) {
-                const fmFrom = firstLine.from;
-                const fmTo = state.doc.line(frontmatterEndLine).to;
-                // Only render widget if frontmatter is not inside focused range
-                if (!(fmFrom < focusedRange.to && fmTo > focusedRange.from)) {
-                    const yamlText = state.doc.sliceString(
-                        state.doc.line(2).from,
-                        state.doc.line(frontmatterEndLine).from
-                    );
-                    const properties = parseFrontmatter(yamlText);
-                    if (properties.length > 0) {
-                        decos.push(
-                            Decoration.replace({
-                                widget: new FrontmatterWidget(properties),
-                                block: true,
-                            }).range(firstLine.from, fmTo)
-                        );
-                    }
-                }
-            }
-        }
-    }
-
+    // front matter（YAML 头）在 live 模式按普通文本显示，不再渲染元数据卡片；
+    // parseFrontmatter / FrontmatterWidget 保留在 helpers.ts / widgets.ts，
+    // 供导图的元数据节点复用（todo.md 任务 5 / 14）。
 
 
     // 会产出 **block 装饰** 的收集器只能待在这里（CM6 不允许 ViewPlugin 产出 block 装饰）：
@@ -1661,10 +1682,21 @@ function buildBlockDecorations(state: EditorState): DecorationSet {
  * @param composing - 是否处于输入法组合中（组合期间表格列宽冻结）
  * @returns 这部分的装饰集
  */
+/**
+ * 每个视图最近一轮窗口装饰是用什么字体环境量的。
+ *
+ * 校验「首屏那轮是否量错」用：视图首次构建时可能还没进文档 / 主题样式
+ * 尚未注入，计算样式不是最终正文那套（量出来的圆点偏窄、悬挂缩进偏小）。
+ * 挂载后用真实样式比一次，不一致就补一轮重建。
+ * WeakMap 按视图存，视图销毁自动回收。
+ */
+const viewBuildEnv = new WeakMap<EditorView, MeasureEnv | null>();
+
 function buildWindowDecorations(
     state: EditorState,
     range: ILineRange,
-    composing: boolean
+    composing: boolean,
+    view?: EditorView
 ): DecorationSet {
     const decos: Array<ReturnType<Decoration['range']>> = [];
     const tree = ensureSyntaxTree(state, state.doc.length, 100) ?? syntaxTree(state);
@@ -1682,6 +1714,12 @@ function buildWindowDecorations(
         },
     });
 
+    // 当前视图的正文字体：圆点 / 悬挂缩进都按它量，保证渲染态与源码态
+    // 的 `- ` 宽度一致（导图节点是独立 mini-CM，不能依赖全局 #editor）
+    const measureEnv = measureEnvFromElement(view?.contentDOM ?? null);
+    // 记下本视图这一轮用的字体环境；挂载后由 tableWidthBootstrap 与
+    // 真实计算样式比对，不一致就补一轮（首屏构建常常发生在样式就位之前）
+    if (view) viewBuildEnv.set(view, measureEnv);
     applyTreeDecorations(
         state,
         decos,
@@ -1690,7 +1728,8 @@ function buildWindowDecorations(
         tree,
         focusedRange,
         activeInlineNode,
-        taskMarkerPositions
+        taskMarkerPositions,
+        measureEnv
     );
     collectFootnoteDecorations(state, decos, range, focusedRange);
     collectHeadingFontDecorations(state, decos, range, focusedRange, tree);
@@ -1705,7 +1744,7 @@ function buildWindowDecorations(
     // mark/line/行内 widget 都不影响块结构，所以可以只算窗口。
     collectTableDecorations(state, decos, tree, range, composing);
     // 列表缩进：层级引导线 + 行首空白对齐（两种状态下长得一样）
-    collectListIndentDecorations(state, decos, range);
+    collectListIndentDecorations(state, decos, range, measureEnv);
     // 聚焦块处理：块级标记压 0 宽、行级样式补齐、光标所在的行内元素就地展开
     // 并整体缩放补偿宽度（详见 focusMarks.ts）
     collectFocusDecorations(
@@ -1716,7 +1755,9 @@ function buildWindowDecorations(
             to: Math.min(focusedRange.to, range.to),
         },
         tree,
-        activeInlineNode
+        activeInlineNode,
+        // 跨行宽度补偿按「当前视图」量折行宽度与字体（导图节点是独立 mini-CM）
+        view
     );
     return RangeSet.of(decos, true);
 }
@@ -1726,21 +1767,27 @@ function buildWindowDecorations(
  *
  * 两件事一起做：
  *
- * 1. **悬挂缩进**——行装饰给 `padding-left: 4px + 层级×缩进单位`、
- *    `text-indent: -层级×缩进单位`。首行被 text-indent 拉回原位、外观不变；
- *    一旦内容跨行，续行全部从 marker（`-`）所在列开始，与该层级 marker
- *    本身那一列对齐（需求一），不会退到行头，也不会压到更左边的竖线。
- * 2. **层级引导线**——行内背景画竖线（见 styles.ts 的 `.cm-md-indent`）：
- *    - 祖先那条后面还有更深的行（`full`）：铺满整行，把上一行的线接过来；
- *    - 祖先那条在本行已是最后后代（`tail`）：只画到圆点高度，末端渐隐收尾；
- *    - 自己那条（`own`）：从圆点中心往下垂，只在还有子级时出现；
- *      光杆条目没有自己的线。
+ * 1. **悬挂缩进**——行装饰给 `padding-left: 正文左内边距(lineGutterGap) + 缩进真实宽 + marker 区宽`、
+ *    `text-indent` 取负值。首行被 text-indent 拉回原位、外观不变；
+ *    一旦内容跨行，续行全部从该行正文内容列开始，
+ *    不会退到行头，也不会压到更左边的色带。
+ * 2. **层级色带**——行内背景按深度 0..当前层级逐级铺颜色块
+ *    （见 styles.ts 的 `.cm-md-indent`），每条色带都**满行高**：
+ *    它们是这一行真实占用的缩进背景，无论该层级后面是否还有兄弟 / 子级。
+ *    （旧实现给「收尾层级」画半高 tail，深层行中间出现一排半高断层，已废弃。）
  *
- * 各级线的横向位置按**该 marker 在它自己那一行的列**算（祖先 marker 在
- * 更早的行上！），三级及更深嵌套也能精确对齐；背景统一用 border-box 定位，
- * 不受本行悬挂 padding 影响。
+ * ## 层级口径：有序 / 无序 / 任务项完全统一
  *
- * 之所以不在主遍历里跟 ListItem 一起处理：主遍历会把**聚焦块整块跳过**，
+ * 层级**只由行首空白**（列数落到缩进单位网格）决定，与 marker 类型无关：
+ * - Lezer 对有序列表要求「缩进 ≥ marker 宽度（`1. ` = 3 列）」才建立嵌套，
+ *   2 空格的有序子项会被压平成兄弟、第三级起甚至变成上一行的 lazy 续行；
+ *   无序列表 2 空格即可嵌套——旧实现走语法树，于是有序只剩一条色带。
+ * - 现在按缩进栈逐级出色带；marker 类型只需提供**自己的 marker 区宽度**
+ *   （圆点 widget / `1.` 实测宽 / 任务复选框固定宽）。
+ *
+ * 背景统一用 border-box 定位，不受本行悬挂 padding 影响。
+ *
+ * 之所以不跟主遍历里的 ListItem 一起处理：主遍历会把**聚焦块整块跳过**，
  * 那样点进某一行时缩进会突然变样。这里按行扫全文，两种状态下结果完全一致。
  *
  * @param state - 当前编辑器状态
@@ -1753,13 +1800,52 @@ function buildWindowDecorations(
  * 改一处要同步另一处。
  */
 const TASK_MARK_PX = 20;
-/** 复选框中心到其左缘的距离（px）：框宽 16 的一半，与 styles 同源。 */
-const TASK_CHECK_CENTER = 8;
+
+/**
+ * 判断一行（非列表行）是否开启了新的块级结构。
+ *
+ * 列表项可以跨多个源码行（CommonMark 的 lazy continuation）：
+ *
+ * ```
+ * - 第一行
+ *   第二行（这行没有 marker）
+ * ```
+ *
+ * 第二行在解析时仍属于同一个 ListItem 的段落，视觉上应该继续带缩进色带。
+ * 但标题、围栏代码块、引用、分隔线、表格、HTML 块会打断段落 —— 遇到它们
+ * 必须结束「续行继承」，否则后面的正文会被误判成上一项的续行、凭空多出
+ * 一条色带。
+ *
+ * @param lineText - 整行原文
+ * @returns 是否是新块的第一行
+ */
+function startsNewBlock(lineText: string): boolean {
+    const text = lineText.replace(/^[ \t]+/, '');
+    // ATX 标题
+    if (/^#{1,6}(?:[ \t]|$)/.test(text)) return true;
+    // 围栏代码块：开、关都算结束（关掉之后也不该继续继承列表段落）
+    if (/^(?:```|~~~)/.test(text)) return true;
+    // 引用块
+    if (/^>/.test(text)) return true;
+    // 分隔线（`---` / `***` / `- - -`）
+    if (/^(?:[-*_][ \t]*){3,}$/.test(text)) return true;
+    // 表格行
+    if (/^\|/.test(text)) return true;
+    // HTML 块
+    if (/^<(?:!--|\/?[a-zA-Z])/.test(text)) return true;
+    return false;
+}
 
 function collectListIndentDecorations(
     state: EditorState,
     decos: Array<ReturnType<Decoration['range']>>,
-    range: ILineRange
+    range: ILineRange,
+    /**
+     * 量字用的字体环境。窗口遍由 ViewPlugin 传入当前视图的正文样式；
+     * 导图 mini-CM 与主编辑器字体环境互相独立，必须按自己的视图量，
+     * 否则圆点/缩进宽度和源码态的真实 `- ` 宽度对不上（文字横跳）。
+     */
+    env: MeasureEnv | null = null
 ): void {
     const win = windowLines(state, range);
 
@@ -1772,134 +1858,219 @@ function collectListIndentDecorations(
     }
     const unit = detectIndentUnit(sampleTexts);
     const unitPx = measureIndentUnitPx(unit);
-    // marker 自身一格的字宽：bullet 中心落半格、ordered 中心落一格
-    const charW = measureText('-', '400');
-    // 首个视觉行的半高：tail / own 线都以圆点中心(半行)为纵向分界
-    const halfPx = measureLineHeightPx() / 2;
+    // 行内坐标统一起点：正文与行号线距离（theme 给 .cm-line 的左内边距）
+    const linePadding = settingsState.getNumber('lineGutterGap');
+    // 当前「该显示源码」的区间（光标所在行 / 拖选行 / 钉住行）。
+    // 兜底 marker 落在其中时必须撤掉——否则深层 Tab 行点进去圆点不会变回 "-"。
+    const focusedRange = getSourceRange(state);
 
-    // 每行列表信息（非列表行 level=-1）
-    const levels: number[] = [];
-    const indentChars: number[] = [];
-    for (let ln = win.first; ln <= win.last; ln++) {
-        const text = state.doc.line(ln).text;
-        const info = getListIndent(text, unit);
-        levels.push(info.isList ? info.level : -1);
-        indentChars.push(info.chars);
+    // —— 行解析（统一口径：有序 / 无序 / 任务项都只认行首空白）——
+    // 带缓存：窗口外的补扫（祖先栈预填 / full-tail 判定）会重复取同一行
+    const parseCache = new Map<number, ListMarkerInfo | null>();
+    const getInfo = (ln: number): ListMarkerInfo | null => {
+        if (!parseCache.has(ln)) {
+            parseCache.set(ln, parseListMarkerLine(state.doc.line(ln).text));
+        }
+        return parseCache.get(ln)!;
+    };
+    // 行首空白落到单位网格得到的「名义层级」（与 getListIndent 同口径）；非列表行 -1
+    const rawLevelOf = (info: ListMarkerInfo | null): number => {
+        if (!info) return -1;
+        if (info.indentCols <= 0) return 0;
+        return Math.min(8, Math.max(1, Math.round(info.indentCols / unit)));
+    };
+
+    // —— 有效层级判定（规则已升级到对 n 个 Tab 生效）——
+    // 连按任意次 Tab（缩进从深度 D 跳到 D+n，中间缺 n-1 级）时，CommonMark 会
+    // 把该行判为上一项段落的 lazy 续行；本插件不沿用该判定——只要行首空白
+    // 匹配 marker，就按其名义层级渲染，所有缺失层级一律用单位网格上的虚拟
+    // 色带补齐（见下方 guide 构建）。早期实现先限 +1、后放宽到 +2，现已
+    // 完全放开（仍受深度上限 8 约束）。
+    /**
+     * 在给定栈上推进一行，返回有效层级。
+     * @returns 名义层级（含跳级，0..8）；非列表行返回 -1
+     */
+    const effectiveLevel = (info: ListMarkerInfo | null): number => rawLevelOf(info);
+    /** 按有效层级更新栈：本行占 L 档，清掉更深旧档。 */
+    const advanceStack = (ln: number, level: number, stk: number[]): void => {
+        stk[level] = ln;
+        for (let d = level + 1; d <= 8; d++) stk[d] = -1;
+    };
+
+    // —— 祖先栈预填：窗口起点之前各级 marker 所在行（每深度取最近一行）——
+    // 反向收集后**正向模拟**：跳过的虚拟层级无法被反向直接识别（要先知道它
+    // 前面的栈），正向走一遍 advanceStack 才能建立正确栈态。最多回看 120 行，
+    // 正常嵌套区很快就把 9 档填满。
+    const stack = new Array<number>(9).fill(-1);
+    {
+        const collected: Array<{ ln: number; info: ListMarkerInfo }> = [];
+        for (let ln = win.first - 1; ln >= 1 && collected.length < 120; ln--) {
+            const info = getInfo(ln);
+            if (info) collected.push({ ln, info });
+        }
+        const sim = new Array<number>(9).fill(-1);
+        for (let i = collected.length - 1; i >= 0; i--) {
+            const { ln, info } = collected[i];
+            const lv = effectiveLevel(info);
+            if (lv >= 0) {
+                advanceStack(ln, lv, sim);
+                // 窗口需要的是每档「最近一行」，正向遇到即覆盖
+                stack[lv] = ln;
+            }
+        }
+    }
+
+    // —— 窗口行预演：得到每行有效层级（正式产出装饰时复用）——
+    const winLevels: number[] = [];
+    {
+        const sim = [...stack];
+        for (let ln = win.first; ln <= win.last; ln++) {
+            const lv = effectiveLevel(getInfo(ln));
+            winLevels.push(lv);
+            if (lv >= 0) advanceStack(ln, lv, sim);
+        }
     }
 
     const tree = syntaxTree(state);
 
-    for (let ln = win.first; ln <= win.last; ln++) {
+    // 续行色带上下文：最近一个列表行生成的 guides。
+    //
+    // 列表项可以跨多个源码行（lazy continuation），续行没有 marker，
+    // 以前 ownLevel < 0 直接跳过 → 从第二行开始色带整段消失。
+    // 这里记住上一项的层级链，给同一段落内的续行补上同样的背景；
+    // 只补色带、不套悬挂缩进（续行的文字位置由它自己的行首空白决定，
+    // 再叠 padding / text-indent 会把已经对齐好的文字又推走）。
+    let continuation: { guides: IndentGuide[] } | null = null;
+
+    for (let i = 0; i < winLevels.length; i++) {
+        const ln = win.first + i;
+        const ownLevel = winLevels[i];
         const line = state.doc.line(ln);
-        const ownLevel = levels[ln - win.first];
-        if (ownLevel < 0) continue;
 
-        // 行首空白 → 定宽占位盒（用 mark：光标仍能走进缩进、改缩进）
-        const chars = indentChars[ln - win.first];
-        if (chars > 0 && unitPx > 0) {
-            decos.push(
-                Decoration.mark({
-                    class: 'cm-md-indent-space',
-                    attributes: { style: `width:${(ownLevel * unitPx).toFixed(2)}px` },
-                }).range(line.from, line.from + chars)
-            );
-        }
-
-        // 语法树：本行所属 ListItem 由外→内的各级 ListMark。
-        // 祖先 ListMark 位于**更早的行**，其横向列必须按它自己那行算。
-        let resolveNode = tree.resolveInner(line.to, -1);
-        const treeMarks: SyntaxNode[] = [];
-        for (let n = resolveNode; n; n = n.parent) {
-            if (n.name === 'ListItem') {
-                const lm = n.getChild('ListMark');
-                if (lm) treeMarks.push(lm);
+        // ownLevel < 0：非列表行。
+        // 空行 / 新块结束继承；同一段落里的续行沿用上一项的色带。
+        if (ownLevel < 0) {
+            if (line.text.trim() === '' || startsNewBlock(line.text)) {
+                continuation = null;
+                continue;
             }
-            if (n.name === 'Document') break;
-        }
-        // 外→内。为空（异常树）也照样加悬挂缩进，只是没有引导线
-        treeMarks.reverse();
-
-        // 行首 marker 区宽度（缩进之后、正文之前）：
-        // 续行对齐到「marker 区之后的内容列」——若对齐到 `-` 左缘，
-        // 圆点中心的竖线会穿过续行文字（实测的重叠缺陷）。
-        // - 任务项：复选框 16 + 右 gap 4（与 styles 同源）；
-        // - 圆点项：widget 盒宽 = marker+空格；
-        // - 有序项：可见 marker+空格 的实测宽。
-        const ownMark = treeMarks[treeMarks.length - 1];
-        let markSpace = 0;
-        if (ownMark) {
-            const listItemNode = ownMark.parent;
-            // TaskMarker 包在 Task 节点里，检测 Task 包装层
-            const isTask = !!listItemNode?.getChild('Task');
-            const markText = state.doc.sliceString(ownMark.from, ownMark.to);
-            const hasTrailingSpace =
-                state.doc.sliceString(ownMark.to, ownMark.to + 1) === ' ';
-            if (isTask) {
-                markSpace = TASK_MARK_PX;
-            } else {
-                markSpace =
-                    measureText(markText, '400') +
-                    (hasTrailingSpace ? measureText(' ', '400') : 0);
-            }
-        }
-        // hang = 缩进 + marker 区；padding 边沿即内容列
-        const hangPx = (unitPx > 0 ? ownLevel * unitPx : 0) + markSpace;
-
-        const guides: IndentGuide[] = [];
-        for (let i = 0; i < treeMarks.length; i++) {
-            const lm = treeMarks[i];
-            const isOwn = i === treeMarks.length - 1;
-            // ListMark 的父级 ListItem、再上一层即「本级 List 节点」
-            const lmItem = lm.parent;
-            const lmList = lmItem?.parent;
-            // marker 在**它自己那一行**的缩进档：祖先 marker 不在本行，
-            // 用 lm.from - line.from 会得到负数（三级嵌套会错位）
-            const markLineFrom = state.doc.lineAt(lm.from).from;
-            const indentL = Math.max(
-                0,
-                Math.round((lm.from - markLineFrom) / unit)
-            );
-            const isBullet = /[-+*]/.test(state.sliceDoc(lm.from, lm.to));
-            // 任务项的可见标记是复选框（'-' 已隐藏），线心取复选框中心；
-            // 其余：4px 行内边距 + 缩进档宽 + marker 中心偏移
-            const isTaskItem = !!lmItem?.getChild('Task');
-            const x = isTaskItem
-                ? LINE_PADDING_PX + indentL * unitPx + TASK_CHECK_CENTER
-                : LINE_PADDING_PX +
-                  indentL * unitPx +
-                  (isBullet ? charW / 2 : charW);
-            if (isOwn) {
-                // own 线只在**本项含子列表**时从圆点垂下；
-                // 兄弟项存在与否与此无关（旧文本扫描在此误判）
-                const ownHasChildren = !!(
-                    lmItem?.getChild('BulletList') ||
-                    lmItem?.getChild('OrderedList')
-                );
-                if (!ownHasChildren) continue;
-                guides.push({ x, kind: 'own' });
-            } else {
-                // 祖先线：本级 List 节点延伸过本行 → 满高连接；
-                // 恰在本行收尾 → tail（顶部起、末端渐隐）。
-                // 这样即使中间隔着更深的行，线也会连向后面的同级兄弟项。
-                const listContinues = !!lmList && lmList.to > line.to;
-                guides.push({ x, kind: listContinues ? 'full' : 'tail' });
-            }
-        }
-
-        const lineStyle = createListIndentStyle(
-            guides,
-            hangPx,
-            halfPx
-        );
-        // 根级光杆条目不挂任何行样式（无引导线、无悬挂缩进），跳过
-        if (lineStyle) {
+            if (!continuation) continue;
             decos.push(
                 Decoration.line({
                     class: 'cm-md-indent',
-                    attributes: { style: lineStyle },
+                    attributes: {
+                        style: createListIndentStyle(continuation.guides, 0),
+                    },
                 }).range(line.from)
             );
+            continue;
         }
+
+        const info = getInfo(ln);
+        if (!info) continue;
+
+        // 行首空白 → 定宽占位盒（用 mark：光标仍能走进缩进、改缩进）。
+        // 宽度按空白**真实像素**（5 空格等非网格缩进也量得准），与色带口径一致。
+        if (info.indentText.length > 0 && unitPx > 0) {
+            decos.push(
+                Decoration.mark({
+                    class: 'cm-md-indent-space',
+                    attributes: {
+                        style: `width:${measureWhitespacePx(info.indentText, env).toFixed(2)}px`,
+                    },
+                }).range(line.from, line.from + info.indentText.length)
+            );
+        }
+
+        // marker 区宽度（缩进之后、正文之前）：
+        // - 任务项：复选框 16 + 右 gap 4（TASK_MARK_PX，与 styles 同源）；
+        // - 其余项：marker 文本 + 分隔空白 的实测宽（`10.` 比 `1.` 宽也量得准）。
+        // 续行对齐到「marker 区之后的内容列」——对齐 `-` 左缘会让竖线穿过续行文字。
+        const leadWidth = (m: ListMarkerInfo): number =>
+            m.type === 'task'
+                ? TASK_MARK_PX
+                : measureTextIn(env, m.marker, '400') +
+                  (m.gap.length > 0 ? measureTextIn(env, m.gap, '400') : 0);
+        // hang = 缩进真实宽 + marker 区；padding 边沿即内容列。
+        // 用真实空白宽而非「层级×单位」：5 空格等非网格缩进的续行应对齐其真实内容列。
+        const hangPx =
+            (unitPx > 0 ? measureWhitespacePx(info.indentText, env) : 0) + leadWidth(info);
+
+        // 各级色带：深度 0（根级）→ ownLevel，共 ownLevel + 1 条，全部满行高。
+        // 层级链与 marker 类型无关——有序项 2 空格缩进照样逐级出色带，
+        // 这是与旧实现（走 Lezer 树、有序被压平只剩一条）的关键区别。
+        const guides: IndentGuide[] = [];
+        for (let d = 0; d <= ownLevel; d++) {
+            const isOwn = d === ownLevel;
+            // 该深度 marker 所在行：祖先栈里取；缺档（-1，连按多个 Tab
+            // 跳过的虚拟层级，可能连续缺多级）走网格补位。isOwn 时 ln 必然有效。
+            const markerLn = isOwn ? ln : stack[d];
+            let contentX: number;
+            if (markerLn >= 1) {
+                // 真实层级（祖先 / 本行）：右缘 = marker 行**真实缩进** +
+                // marker 区宽（不写死 d×单位：存在非网格缩进时真实位置才与
+                // DOM 文字一致）
+                const dInfo = getInfo(markerLn)!;
+                contentX =
+                    linePadding +
+                    measureWhitespacePx(dInfo.indentText, env) +
+                    leadWidth(dInfo);
+            } else {
+                // 虚拟层级（跳过的中间一级）：色带落在单位网格上，
+                // 右缘 = d 格 + 借当前行 marker 区宽——保证与前后色带
+                // 各差一个单位宽、不重叠不留缝
+                contentX = linePadding + d * unitPx + leadWidth(info);
+            }
+            guides.push({ contentX });
+        }
+
+        const lineStyle = createListIndentStyle(guides, hangPx);
+        decos.push(
+            Decoration.line({
+                class: 'cm-md-indent',
+                attributes: { style: lineStyle },
+            }).range(line.from)
+        );
+        // 后续没有 marker 的源码行按同一层级链补色带（见上方 continuation）
+        continuation = { guides };
+
+        // —— marker 装饰兜底 ——
+        // 两种情况在 Lezer 树里没有 ListMark 节点、主遍历不会上 marker 样式：
+        //   1. 有序子项只缩 2 空格（< `1. ` 的 3 列），第三级起是上一行 lazy 续行；
+        //   2. 连按多个 Tab 跳过层级，CommonMark 同样判为 lazy 段落。
+        // 这里按行首空白认出来补上，保证有序 / 无序、任意跳级视觉一致。
+        const markFrom = line.from + info.indentText.length;
+        const markTo = markFrom + info.marker.length;
+        // 树里该位置确有 ListMark（且左缘吻合）→ 主遍历已处理，跳过
+        const atMark = tree.resolveInner(markFrom, 1);
+        const covered = atMark.name === 'ListMark' && atMark.from === markFrom;
+        // marker 落在当前源码区间（光标在本行 / 拖选 / 钉住）→ 不补渲染态
+        // marker：让原始 "-" / "1." 直接露出来。正常 ListMark 由主遍历的
+        // 焦点跳过处理，兜底路径必须自己复刻这一判定，否则深层 Tab 行
+        // 点进去圆点不变文本（用户报的最后一个 bug）。
+        const inFocus = markFrom < focusedRange.to && markTo > focusedRange.from;
+        if (!covered && !inFocus) {
+            if (info.type === 'ordered') {
+                decos.push(
+                    Decoration.mark({ class: 'cm-md-ordmark' }).range(markFrom, markTo)
+                );
+            } else if (info.type === 'bullet') {
+                // 与主遍历一致：连 marker 后第一个分隔空白字符一起替换
+                // （BulletWidget 盒内自带空白）
+                const gapEnd = info.gap.length > 0 ? markTo + 1 : markTo;
+                decos.push(
+                    Decoration.replace({
+                        widget: new BulletWidget(info.marker, env),
+                    }).range(markFrom, gapEnd)
+                );
+            }
+            // task 的 lazy 行极罕见（任务项出现在 2 空格缩进的有序列表深处），
+            // 不补 checkbox，保持源码形态
+        }
+
+        // 更新祖先栈：本行占据 ownLevel 档，并清掉更深的旧档
+        stack[ownLevel] = ln;
+        for (let d = ownLevel + 1; d <= 8; d++) stack[d] = -1;
     }
 }
 
@@ -1937,7 +2108,7 @@ export const livePreviewPlugin = ViewPlugin.fromClass(
         constructor(view: EditorView) {
             this.window = renderRange(view);
             // 构建时不可能在输入法组合中，composing 传 false
-            this.decorations = buildWindowDecorations(view.state, this.window, false);
+            this.decorations = buildWindowDecorations(view.state, this.window, false, view);
         }
 
         update(update: ViewUpdate): void {
@@ -1958,7 +2129,8 @@ export const livePreviewPlugin = ViewPlugin.fromClass(
             this.decorations = buildWindowDecorations(
                 update.view.state,
                 next,
-                update.view.composing
+                update.view.composing,
+                update.view
             );
         }
     },
@@ -2019,9 +2191,12 @@ function hasMismeasuredBullets(view: EditorView): boolean {
             /* 取不到就退回按 '-' 比对 */
         }
 
-        // 此刻 getMeasureContext 因正文已进 DOM（fromContent 不匹配）
-        // 作废了旧的 body 缓存，量到的是正确的正文宽度
-        const targetWidth = measureText(marker, '400') + measureText(' ', '400');
+        // 按**当前视图**的正文样式量。不能只靠 getMeasureContext 的全局缓存：
+        // 导图节点的 mini-CM 是独立字体环境，页面上没有主编辑器时会退到
+        // body 的比例字体，量出的 `- ` 偏窄，圆点/正文就和源码态对不上。
+        const env = measureEnvFromElement(view.contentDOM);
+        const targetWidth =
+            measureTextIn(env, marker, '400') + measureTextIn(env, ' ', '400');
         if (targetWidth > 0 && Math.abs(currentWidth - targetWidth) > 0.5) {
             return true;
         }
@@ -2043,10 +2218,28 @@ export const tableWidthBootstrap = ViewPlugin.fromClass(
             let done = false;
             const correct = (): void => {
                 if (done || !view.dom.isConnected) return;
-                // 两类首屏补算共用这一个 effect：
-                // ① 表格列宽（见 hasUnmeasuredTables）；
-                // ② bullet / 缩进首次用 body 错字体量的宽度（见 hasMismeasuredBullets）
-                if (!hasUnmeasuredTables() && !hasMismeasuredBullets(view)) return;
+                // 首屏补算共用这一个 effect，三种情况：
+                // ① 首轮构建时视图还没进文档，所有按字体量的东西
+                //    （圆点宽度 / 悬挂缩进 / 表格列宽）都用了 body 界面字体
+                //    —— 见 viewsBuiltWithoutEnv；
+                // ② 表格列宽还没按可用宽度分配（见 hasUnmeasuredTables）；
+                // ③ bullet 宽度与当前正文口径不一致（见 hasMismeasuredBullets）。
+                // 首轮构建用的字体环境 vs 现在真实正文样式：不一致说明
+                // 那一轮在样式就位前量过（圆点偏窄 / 缩进偏小），必须重建
+                const builtEnv = viewBuildEnv.get(view) ?? null;
+                const currentEnv = measureEnvFromElement(view.contentDOM);
+                const envChanged =
+                    !!currentEnv &&
+                    (builtEnv === null ||
+                        builtEnv.size !== currentEnv.size ||
+                        builtEnv.family !== currentEnv.family);
+                if (
+                    !envChanged &&
+                    !hasUnmeasuredTables() &&
+                    !hasMismeasuredBullets(view)
+                ) {
+                    return;
+                }
                 done = true;
                 view.dispatch({ effects: tableRemeasureEffect.of(null) });
             };
@@ -2070,9 +2263,9 @@ export const livePreviewBlockDecorations = StateField.define<DecorationSet>({
         // 先落到共享状态里，下面的重算才会按新模式渲染。
         for (const effect of tr.effects) {
             if (effect.is(sourceModeEffect)) {
-                setSourceModeRange(effect.value);
+                setSourceModeRange(tr.state, effect.value);
             } else if (effect.is(lineForceEffect)) {
-                patchLineForce(effect.value);
+                patchLineForce(tr.state, effect.value);
             }
         }
         if (blockNeedsRebuild(tr)) return buildBlockDecorations(tr.state);
@@ -2097,9 +2290,9 @@ function blockNeedsRebuild(tr: Transaction): boolean {
 
     // 文档变化：先把行级强制区间映射到新坐标（StateField 一定会重建，
     // 但共享状态本身得保持准确）
-    if (tr.docChanged) mapForceRanges(tr.changes);
+    if (tr.docChanged) mapForceRanges(state, tr.changes);
     // 钉住行失去焦点：在这里清掉，下面 getSourceRange 才不会继续按钉住行算
-    const exitedPinned = exitPinnedForceIfOutside(newSel.from, newSel.to);
+    const exitedPinned = exitPinnedForceIfOutside(state, newSel.from, newSel.to);
 
     // 源码区间变了（拖选范围变了、光标换了块）就得重算
     const oldFocused = getSourceRange(startState);
@@ -2146,20 +2339,22 @@ function needsRebuild(update: ViewUpdate): boolean {
     // 先落到共享状态里，下面的 buildDecorations 才会按新模式渲染。
     for (const effect of update.transactions.flatMap((t) => t.effects)) {
         if (effect.is(sourceModeEffect)) {
-            setSourceModeRange(effect.value);
+            setSourceModeRange(update.state, effect.value);
         } else if (effect.is(lineForceEffect)) {
-            patchLineForce(effect.value);
+            patchLineForce(update.state, effect.value);
         }
     }
 
-    // 文档变化：把行级强制区间映射到新坐标。必须放在 viewportChanged 提前返回
-    // 之前，否则那一支不映射、共享状态会变陈旧
-    for (const t of update.transactions) {
-        if (t.docChanged) mapForceRanges(t.changes);
-    }
+    // 注意：这里**不能**再 mapForceRanges！
+    // 同一个事务的 StateField.update（blockNeedsRebuild）已经映射过一次，
+    // 共享状态里的区间此时是「新文档坐标」。再用同一份 tr.changes（它基于
+    // 旧文档）映射第二次，会把新坐标当旧坐标用，位置超出旧文档长度时
+    // CodeMirror 直接抛 RangeError: Position N is out of range for changeset
+    // of length M（导图节点编辑时文档一变长就能稳定复现）。
+    // 钉住区间的退出判断是幂等的，重复调用无害，保留。
     // 钉住行失去焦点：同样提前清掉，viewportChanged 那一支也得带着新状态重建
     const earlyNewSel = update.state.selection.main;
-    const exitedPinned = exitPinnedForceIfOutside(earlyNewSel.from, earlyNewSel.to);
+    const exitedPinned = exitPinnedForceIfOutside(update.state, earlyNewSel.from, earlyNewSel.to);
 
     if (update.viewportChanged) return true;
 
@@ -2169,7 +2364,7 @@ function needsRebuild(update: ViewUpdate): boolean {
     // 光标/选区离开源码模式的块就退出。必须每次更新都查一遍：
     // 「光标移出表格」本身可能不会让聚焦范围变化（源码模式下聚焦范围是整张表），
     // 不查的话表格会卡在源码模式里出不来。
-    const exitedSourceMode = exitSourceModeIfOutside(newSel.from, newSel.to);
+    const exitedSourceMode = exitSourceModeIfOutside(state, newSel.from, newSel.to);
 
     const oldFocused = getSourceRange(startState);
     const newFocused = getSourceRange(state);
@@ -2235,7 +2430,14 @@ function needsRebuild(update: ViewUpdate): boolean {
  * including the ViewPlugin, syntax highlighting, link handler, and base theme styles.
  */
 export function createLivePreviewExtension(): Extension[] {
+    // 共享 token 色表（CSS 变量）：代码块语法高亮与导图 mini-CM/静态渲染共用，
+    // 幂等注入，多实例调用无副作用
+    ensureTokenColorCss();
     return [
+        // 实例状态字段（任务 4）：源码模式 / 行级强制态 / 折叠行集合都收在这里，
+        // 同一套扩展挂多个 EditorView（主编辑器 + 导图 mini-CM）时互不串扰。
+        // 必须排最前：后续插件的读写都经 state.field(livePreviewInstanceField)
+        livePreviewInstanceField,
         scrollPreserverExtension,
         // block 装饰必须由 StateField 提供（CodeMirror 的硬限制）
         livePreviewBlockDecorations,
@@ -2258,8 +2460,9 @@ export function createLivePreviewExtension(): Extension[] {
         autoPairBrackets(),
         // 双击表格 → 整张表切源码模式（改结构时看源码更直接）
         tableSourceModeHandler(),
-        syntaxHighlighting(liveWriteMdDarkHighlight),
-        syntaxHighlighting(liveWriteMdLightHighlight),
+        // 单个 HighlightStyle：颜色全是 var(--lwm-tok-*) 引用，
+        // 深浅色随 body 的 vscode-light 类翻转（tokenColors.ts）
+        syntaxHighlighting(liveWriteMdTokenHighlight),
         // Click handler for links
         EditorView.domEventHandlers({
             mousedown(event: MouseEvent, view: EditorView) {
@@ -2429,5 +2632,48 @@ export function createLivePreviewExtension(): Extension[] {
             },
         }),
         createBaseThemeStyles(),
+    ];
+}
+
+/**
+ * 只读显示态的 live 扩展包（导图节点显示 CM 专用）。
+ *
+ * 与完整包**渲染完全一致**（block 装饰 / 窗口装饰 / 样式 / 高亮全保留），
+ * 但摘掉全部编辑交互插件 —— 它们各自带 window 监听器或测量钩子，
+ * 几十个节点实例同屏时是初始化成本与交互卡顿（每次 mousemove 要跑
+ * 几百个监听）的重要来源。链接/hr 点击跳转也不带（导图里链接不吃点击）。
+ */
+export function createLivePreviewDisplayExtension(): Extension[] {
+    ensureTokenColorCss();
+    return [
+        // 实例状态字段（装饰管线依赖，见 createLivePreviewExtension）
+        livePreviewInstanceField,
+        // block 装饰必须由 StateField 提供（CodeMirror 的硬限制）
+        livePreviewBlockDecorations,
+        // 挂载后补一次表格重建（首次构建时视图还没进 DOM，量不到可用宽度）
+        tableWidthBootstrap,
+        // 滚动容器宽度变化时主动重建：定宽列自己不会感知 scroller 变窄
+        tableResizePlugin,
+        livePreviewPlugin,
+        syntaxHighlighting(liveWriteMdTokenHighlight),
+        createBaseThemeStyles(),
+    ];
+}
+
+/**
+ * 编辑态追加的交互插件（导图节点「翻转」成编辑态时经 Compartment 注入）。
+ *
+ * 这些插件只跟「正在编辑」有关：拖选锚点补偿 / 双击钉住 / 表格框选 /
+ * 管道转义 / 组合态列宽 / 括号配对 / 双击表格切源码 —— 只读显示不需要。
+ */
+export function livePreviewEditAddons(): Extension[] {
+    return [
+        lineForcePlugin,
+        nativeAnchoredMouseSelection(),
+        tableCellSelection(),
+        tablePipeEscaper(),
+        tableCompositionHandler(),
+        autoPairBrackets(),
+        tableSourceModeHandler(),
     ];
 }

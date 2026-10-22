@@ -1317,7 +1317,7 @@ export function collectTableDecorations(
     );
     for (const block of visible) {
         // 双击进过源码模式的表格：整块按源码显示（管道线、对齐说明都露出来），不画格子
-        if (isInSourceMode(block.from, block.to)) continue;
+        if (isInSourceMode(state, block.from, block.to)) continue;
         const firstLine = state.doc.lineAt(block.from).number;
         const lastLine = state.doc.lineAt(block.to).number;
         const caretInside = caretLine >= firstLine && caretLine <= lastLine;

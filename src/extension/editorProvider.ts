@@ -30,6 +30,7 @@ import type {
     UpdateSettingMessage,
     WebviewToExtensionMessage,
     ThemeType,
+    EditorMode,
 } from '../shared/types.js';
 import { MESSAGE_TYPES } from '../shared/messageTypes.js';
 import { checkFileSize, openWithTextEditor } from './fileSizeChecker.js';
@@ -39,9 +40,11 @@ import { ConfigManager } from './configManager.js';
 import { exportMarkdownAsHtml } from './htmlExporter.js';
 import { exportMarkdownAsPdf } from './pdfExporter.js';
 import { handleSaveImage } from './imageSaveHandler.js';
+import { saveMindmapExport } from './mindmapExport.js';
 import { downloadRemoteImagesToAssets } from './remoteImageDownloadHandler.js';
 import { resolveFileLinkTarget } from './fileLinkResolver.js';
 import { getSavedSearchHistory, saveSearchHistory } from './searchHistoryStore.js';
+import { getSystemFonts } from './systemFonts.js';
 
 // =============================================================================
 // Constants
@@ -61,6 +64,12 @@ const OUTLINE_PANEL_WIDTH_STORAGE_KEY = 'liveWriteMd.outlineWidth';
  * 澶х翰闈㈡澘瀹藉害鐨勯粯璁ゅ€笺€? * 褰撳瓨鍌ㄧ己澶辨垨鍊奸潪娉曟椂浣跨敤銆? */
 const DEFAULT_OUTLINE_PANEL_WIDTH = 280;
 
+/**
+ * 「记住每个文件的模式」在 globalState 中的键前缀，后接文档 uri.toString()。
+ * 开启 rememberLastMode 后，打开文档优先恢复这里记录的上次模式。
+ */
+const EDITOR_MODE_STORAGE_PREFIX = 'liveWriteMd.editorMode.';
+
 // =============================================================================
 // Helper Functions
 // =============================================================================
@@ -70,7 +79,7 @@ const DEFAULT_OUTLINE_PANEL_WIDTH = 280;
  *
  * @returns 'light' or 'dark' based on the current VS Code theme
  */
-function getThemeType(): ThemeType {
+export function getThemeType(): ThemeType {
     const override = ConfigManager.getThemeOverride();
     if (override !== 'auto') {
         return override;
@@ -151,7 +160,7 @@ export class LiveWriteMdEditorProvider implements vscode.CustomTextEditorProvide
     /** Currently active webview panel info */
     private activePanelInfo: { panel: vscode.WebviewPanel; docUri: string } | null = null;
 
-    /** Editor mode per document: 'live' | 'viewer' | 'source' */
+    /** Editor mode per document: 'live' | 'viewer' | 'source' | 'mindmap' */
     private editorModeMap = new Map<string, string>();
 
     /**
@@ -165,12 +174,17 @@ export class LiveWriteMdEditorProvider implements vscode.CustomTextEditorProvide
      * Sets the editor mode for the active LiveWriteMD editor.
      * Cycles through: live 鈫?viewer 鈫?source 鈫?live
      *
-     * @param mode - The target mode ('live' | 'viewer' | 'source')
+     * @param mode - The target mode ('live' | 'viewer' | 'source' | 'mindmap')
      */
-    public setEditorMode(mode: 'live' | 'viewer' | 'source'): void {
+    public setEditorMode(mode: EditorMode): void {
         if (!this.activePanelInfo) return;
         const { panel, docUri } = this.activePanelInfo;
         this.editorModeMap.set(docUri, mode);
+
+        // rememberLastMode：把该文档的模式写入 globalState，下次打开优先恢复
+        if (ConfigManager.getRememberLastMode()) {
+            void this.context.globalState.update(EDITOR_MODE_STORAGE_PREFIX + docUri, mode);
+        }
 
         panel.webview.postMessage({
             type: MESSAGE_TYPES.EDITOR_MODE,
@@ -179,6 +193,67 @@ export class LiveWriteMdEditorProvider implements vscode.CustomTextEditorProvide
 
         vscode.commands.executeCommand('setContext', 'liveWriteMd.editorMode', mode);
         Logger.info(`Editor mode set to '${mode}' for: ${docUri}`);
+    }
+
+    /**
+     * 标题栏单按钮循环切换：live -> viewer -> source -> mindmap -> live。
+     *
+     * @returns void
+     */
+    public cycleEditorMode(): void {
+        if (!this.activePanelInfo) return;
+        const order: EditorMode[] = ['live', 'viewer', 'source', 'mindmap'];
+        const current = (this.editorModeMap.get(this.activePanelInfo.docUri) ??
+            'live') as EditorMode;
+        const next = order[(order.indexOf(current) + 1) % order.length];
+        this.setEditorMode(next);
+    }
+
+    /**
+     * 标题栏按钮 A：实时模式 ⇄ 导图模式互切。
+     *
+     * 导图模式下点击返回实时模式；其余任何文本模式（live/viewer/source）
+     * 下点击进入导图模式。
+     *
+     * @returns void
+     */
+    public toggleMindmapMode(): void {
+        if (!this.activePanelInfo) return;
+        const current = (this.editorModeMap.get(this.activePanelInfo.docUri) ??
+            'live') as EditorMode;
+        this.setEditorMode(current === 'mindmap' ? 'live' : 'mindmap');
+    }
+
+    /**
+     * 标题栏按钮 B：文本模式三态循环 live -> viewer -> source -> live。
+     *
+     * 导图模式下不可用（package.json 里用 when 子句禁用），这里仍兜底：
+     * 处于导图模式时不动。
+     *
+     * @returns void
+     */
+    public cycleTextMode(): void {
+        if (!this.activePanelInfo) return;
+        const order: EditorMode[] = ['live', 'viewer', 'source'];
+        const current = (this.editorModeMap.get(this.activePanelInfo.docUri) ??
+            'live') as EditorMode;
+        if (current === 'mindmap') return;
+        const next = order[(order.indexOf(current) + 1) % order.length];
+        this.setEditorMode(next);
+    }
+
+    /**
+     * 获取当前激活的 LiveWriteMD 文档 uri（独立导图面板命令复用）。
+     *
+     * @returns 文档 uri；没有激活的 LiveWriteMD 编辑器时返回 null
+     */
+    public getActiveDocumentUri(): vscode.Uri | null {
+        if (!this.activePanelInfo) return null;
+        try {
+            return vscode.Uri.parse(this.activePanelInfo.docUri);
+        } catch {
+            return null;
+        }
     }
 
     /**
@@ -212,7 +287,28 @@ export class LiveWriteMdEditorProvider implements vscode.CustomTextEditorProvide
         }
         const { panel, docUri } = this.activePanelInfo;
         panel.webview.postMessage({ type: MESSAGE_TYPES.OPEN_SETTINGS });
+        // 字体下拉需要完整系统字体列表；面板每次打开补发一次，防止
+        // READY 时那次消息因为时序问题没赶上（枚举结果有缓存，不会重复扫描）。
+        this.sendSystemFonts(panel);
         Logger.info(`Settings panel opened for: ${docUri}`);
+    }
+
+    /**
+     * 把本机字体列表发给 Webview 的设置面板。
+     *
+     * 枚举在扩展宿主做（webview 拿不到系统字体），失败时返回空数组，
+     * 此时不发消息，面板继续用 schema 里的常用字体兜底。
+     *
+     * @param panel 目标 webview 面板
+     */
+    private sendSystemFonts(panel: vscode.WebviewPanel): void {
+        void getSystemFonts().then((fonts) => {
+            if (fonts.length === 0) return;
+            void panel.webview.postMessage({
+                type: MESSAGE_TYPES.SYSTEM_FONTS,
+                fonts,
+            });
+        });
     }
 
     /**
@@ -639,10 +735,15 @@ export class LiveWriteMdEditorProvider implements vscode.CustomTextEditorProvide
         // Panel Tracking for Editor Mode
         // =================================================================
         const docUriStr = document.uri.toString();
+        // 初始模式：rememberLastMode 开启时优先恢复该文档上次使用的模式
         const defaultMode = ConfigManager.getDefaultMode();
-        this.editorModeMap.set(docUriStr, defaultMode);
+        const rememberedMode = ConfigManager.getRememberLastMode()
+            ? this.context.globalState.get<EditorMode>(EDITOR_MODE_STORAGE_PREFIX + docUriStr)
+            : undefined;
+        const initialMode = rememberedMode ?? defaultMode;
+        this.editorModeMap.set(docUriStr, initialMode);
         this.activePanelInfo = { panel: webviewPanel, docUri: docUriStr };
-        vscode.commands.executeCommand('setContext', 'liveWriteMd.editorMode', defaultMode);
+        vscode.commands.executeCommand('setContext', 'liveWriteMd.editorMode', initialMode);
 
         webviewPanel.onDidChangeViewState(() => {
             if (webviewPanel.active) {
@@ -761,6 +862,12 @@ export class LiveWriteMdEditorProvider implements vscode.CustomTextEditorProvide
                 const outlineWidth = getSavedOutlinePanelWidth(this.context);
                 const searchHistory = getSavedSearchHistory(this.context);
 
+                // initialMode 是 resolveCustomTextEditor 内的局部变量，本方法作用域取不到；
+                // 面板创建时已把初始模式写入 editorModeMap，缺失时回落到默认模式。
+                const initialMode =
+                    (this.editorModeMap.get(document.uri.toString()) as EditorMode | undefined) ??
+                    ConfigManager.getDefaultMode();
+
                 const initDelivered = await webviewPanel.webview.postMessage({
                     type: MESSAGE_TYPES.INIT,
                     content: initContent,
@@ -770,12 +877,14 @@ export class LiveWriteMdEditorProvider implements vscode.CustomTextEditorProvide
                     searchHistory,
                     settings: ConfigManager.getEditorSettings(),
                     allSettings: ConfigManager.getAllSettings(),
-                    mode: ConfigManager.getDefaultMode(),
+                    mode: initialMode,
                     outlineWidth,
                 });
                 Logger.info(
-                    `INIT postMessage completed: delivered=${initDelivered}, mode=${ConfigManager.getDefaultMode()}, documentBaseUri=${docDirWebviewUri}`
+                    `INIT postMessage completed: delivered=${initDelivered}, mode=${initialMode}, documentBaseUri=${docDirWebviewUri}`
                 );
+                // 字体列表不阻塞 INIT；枚举完成后单独补一条消息，面板打开时就有数据
+                this.sendSystemFonts(webviewPanel);
                 break;
             }
 
@@ -861,6 +970,14 @@ export class LiveWriteMdEditorProvider implements vscode.CustomTextEditorProvide
                         );
                     }
                 }
+                break;
+            }
+
+            // 导图导出（迭代 N3）：webview 渲染好的 PNG/SVG/PDF 存盘
+            case 'saveMindmapExport' as typeof MESSAGE_TYPES.READY: {
+                await saveMindmapExport(
+                    message as unknown as Parameters<typeof saveMindmapExport>[0]
+                );
                 break;
             }
 

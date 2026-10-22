@@ -12,26 +12,24 @@ import { EditorView, WidgetType } from '@codemirror/view';
 import {
     applySafeFontStyles,
     LINE_PADDING_PX,
+    measureBulletWidth,
     measureBulletYCorrection,
-    measureText,
+    measureTextIn,
+    type MeasureEnv,
     renderInlineMarkdown,
     resolvePreviewImageUrl,
 } from './helpers.js';
 import {
     copyToClipboard,
-    foldedLines,
+    foldedLinesOf,
     foldToggleEffect,
-    getMermaidTheme,
     sourceModeEffect,
     mermaidHeightCache,
-    mermaidInitialized,
-    mermaidRenderPromises,
     mermaidSvgCache,
-    setMermaidInitialized,
-    rememberMermaidSvg,
     rememberWidgetHeight,
     widgetHeightCache,
 } from './state.js';
+import { renderMermaidSvg } from './mermaidRender.js';
 import {
     createMediaResizeGroup,
     createPreviewActionGroup,
@@ -125,10 +123,11 @@ export class HorizontalRuleWidget extends WidgetType {
  * 圆点顶掉源码里的 `- `（标记符 + 一个空格），盒子按实测宽度定宽、
  * 把正文顶到原位；圆点是 SVG circle：
  * - 水平圆心落在 `-` 的中点（CSS 变量 --cm-mark-center = markerWidth/2）；
- * - 垂直方向不能靠 `vertical-align:middle` 隐式命中 —— 空 inline-block 的
- *   middle 对齐点与 `-` 墨迹中心有亚像素差（圆点偏下），构造时把实测
- *   差值写进 --cm-dot-y-correction，dot 用 top: calc(50% + 修正) 补偿，
- *   圆心才精确落在横线墨迹中心（见 helpers.ts 的 measureBulletYCorrection）。
+ * - 垂直圆心定位在**行盒中心**（距行顶 lineHeight/2）。不能靠
+ *   `vertical-align:middle` 隐式命中 —— 空 inline-block 的 middle 对齐点
+ *   与行盒中心有亚像素差，构造时把实测差值写进 --cm-dot-y-correction，
+ *   dot 用 top: calc(50% + 修正) 补偿（见 helpers.ts 的
+ *   measureBulletYCorrection）。
  *
  * 折叠交互已移到行号位置（见 gutterFold.ts）：点圆点/行内容一律
  * 进入文本模式，看到源码 `-`。
@@ -139,11 +138,20 @@ export class BulletWidget extends WidgetType {
     /** 圆点垂直修正量（px，负=向上挪），见 measureBulletYCorrection */
     private readonly yCorrection: number;
 
-    constructor(private marker = '-') {
+    /**
+     * @param marker - 源码标记符（`-` / `*` / `+`）
+     * @param env - 量字用的字体环境（导图节点传自己的 mini-CM 字体；
+     *              主编辑器不传则走全局正文口径）。渲染态圆点必须精确
+     *              顶掉源码里的 `- `，字体不对就会让进编辑态时正文横跳。
+     */
+    constructor(
+        private marker = '-',
+        env: MeasureEnv | null = null
+    ) {
         super();
-        this.markerWidth = measureText(this.marker, '400');
-        this.width = this.markerWidth + measureText(' ', '400');
-        this.yCorrection = measureBulletYCorrection(this.marker);
+        this.markerWidth = measureTextIn(env, this.marker, '400');
+        this.width = measureBulletWidth(this.marker, env);
+        this.yCorrection = measureBulletYCorrection(this.marker, env);
     }
 
     toDOM(): HTMLElement {
@@ -239,20 +247,35 @@ export class FontTextWidget extends WidgetType {
 // Frontmatter Widget
 // =============================================================================
 
+/** 元数据卡片的折叠状态（模块级：一篇文档只有一处 front matter）。 */
+let frontmatterCollapsed = false;
+
 /**
- * Widget that renders YAML frontmatter as an Obsidian-style properties panel.
+ * 渲染 YAML frontmatter 的元数据卡片（折叠条 + 键值表）。
+ *
+ * 关键设计——**展开态高度 = 源码行数 × 行高**：卡片用 min-height 占住与
+ * 源码 YAML（含两行 `---`）完全相等的高度，于是点击卡片进入源码态时
+ * 是等高替换：元素开头不动、后面的文字位置不动、不额外占行；失焦后
+ * 卡片恢复。键值少时卡片下方留白，键值多时网格内部滚动。
  */
 export class FrontmatterWidget extends WidgetType {
     private cacheKey: string;
-    constructor(private properties: FrontmatterProperty[]) {
+    constructor(
+        private properties: FrontmatterProperty[],
+        /** front matter 整块（含两行 ---）占的源码行数，用于等高 */
+        private sourceLineCount: number,
+        /** front matter 起点（点击卡片时光标落这里，从而显出源码） */
+        private sourceFrom: number
+    ) {
         super();
-        this.cacheKey = 'fm-' + JSON.stringify(properties);
+        this.cacheKey = 'fm-' + sourceLineCount + '-' + JSON.stringify(properties);
     }
     get estimatedHeight(): number {
         return widgetHeightCache.get(this.cacheKey) || 100;
     }
 
     eq(other: FrontmatterWidget): boolean {
+        if (this.sourceLineCount !== other.sourceLineCount) return false;
         if (this.properties.length !== other.properties.length) return false;
         return this.properties.every(
             (p, i) => p.key === other.properties[i].key && p.value === other.properties[i].value
@@ -263,9 +286,20 @@ export class FrontmatterWidget extends WidgetType {
         return false;
     }
 
+    /** 展开态的等高 min-height（折叠时撤掉，只留一条标题栏）。 */
+    private expandedMinHeight(): string {
+        return `calc(${this.sourceLineCount} * var(--livewritemd-line-height, 1.7em))`;
+    }
+
     toDOM(view: EditorView): HTMLElement {
         const wrapper = document.createElement('div');
         wrapper.className = 'cm-md-frontmatter';
+        wrapper.title = '点击进入源码';
+        if (!frontmatterCollapsed) {
+            wrapper.style.minHeight = this.expandedMinHeight();
+        } else {
+            wrapper.classList.add('cm-md-frontmatter-collapsed');
+        }
 
         // Header
         const header = document.createElement('div');
@@ -275,7 +309,24 @@ export class FrontmatterWidget extends WidgetType {
         headerIcon.textContent = '\u{1F4C4}'; // 📄
         header.appendChild(headerIcon);
         const headerText = document.createElement('span');
-        headerText.textContent = '\u30D7\u30ED\u30D1\u30C6\u30A3'; // プロパティ
+        headerText.className = 'cm-md-frontmatter-header-text';
+        headerText.textContent = `\u5143\u6570\u636E \u00B7 ${this.properties.length} \u9879`;
+        header.appendChild(headerText);
+        // \u6298\u53E0\u7BAD\u5934\uFF1A\u53EA\u6536\u8D77\u952E\u503C\u8868\uFF08\u5361\u7247\u9AD8\u5EA6\u968F\u4E4B\u53D8\u4E3A\u4E00\u6761\u6807\u9898\u680F\uFF09\uFF0C
+        // \u4E0E\u300C\u70B9\u8FDB\u6E90\u7801\u300D\u662F\u4E24\u56DE\u4E8B\uFF0C\u6240\u4EE5\u963B\u6B62\u5192\u6CE1\u3002
+        const toggle = document.createElement('span');
+        toggle.className = 'cm-md-frontmatter-toggle';
+        toggle.textContent = frontmatterCollapsed ? '\u25B8' : '\u25BE';
+        toggle.title = frontmatterCollapsed ? '\u5C55\u5F00\u5143\u6570\u636E' : '\u6536\u8D77\u5143\u6570\u636E';
+        toggle.addEventListener('click', (event) => {
+            event.stopPropagation();
+            frontmatterCollapsed = !frontmatterCollapsed;
+            wrapper.classList.toggle('cm-md-frontmatter-collapsed', frontmatterCollapsed);
+            wrapper.style.minHeight = frontmatterCollapsed ? '' : this.expandedMinHeight();
+            toggle.textContent = frontmatterCollapsed ? '\u25B8' : '\u25BE';
+            toggle.title = frontmatterCollapsed ? '\u5C55\u5F00\u5143\u6570\u636E' : '\u6536\u8D77\u5143\u6570\u636E';
+        });
+        header.appendChild(toggle); // プロパティ
         header.appendChild(headerText);
         wrapper.appendChild(header);
 
@@ -304,6 +355,16 @@ export class FrontmatterWidget extends WidgetType {
         }
 
         wrapper.appendChild(grid);
+
+        // 点击卡片任意处（除折叠箭头）→ 光标落进 front matter 区间，
+        // 聚焦区间与之相交后本 widget 不再挂载，源码 YAML 原样显出——
+        // 等高替换，不位移。失焦（光标移走）后自动恢复卡片。
+        wrapper.addEventListener('mousedown', (event) => {
+            event.preventDefault();
+            view.dispatch({ selection: { anchor: this.sourceFrom } });
+            view.focus();
+        });
+
         // Measure height after mount and notify CM6 to update line height map
         if (typeof ResizeObserver !== 'undefined') {
             const ro = new ResizeObserver((entries) => {
@@ -369,10 +430,12 @@ export class GutterFoldWidget extends WidgetType {
             const lineFrom = view.state.doc.lineAt(
                 view.posAtDOM(root, 0)
             ).from;
-            if (foldedLines.has(lineFrom)) {
-                foldedLines.delete(lineFrom);
+            // 折叠集合按编辑器实例隔离（任务 4）：mini-CM 与主编辑器互不串扰
+            const folded = foldedLinesOf(view.state);
+            if (folded.has(lineFrom)) {
+                folded.delete(lineFrom);
             } else {
-                foldedLines.add(lineFrom);
+                folded.add(lineFrom);
             }
             view.dispatch({ effects: foldToggleEffect.of(null) });
         });
@@ -974,80 +1037,31 @@ export class MermaidWidget extends WidgetType {
         range.to = range.from + next.length;
     }
 
-    private static renderCounter = 0;
-
     private async renderAsync(container: HTMLElement, view: EditorView): Promise<void> {
         try {
-            // If the same source is already being rendered, wait for it
-            const inflight = mermaidRenderPromises.get(this.source);
-            if (inflight) {
-                const svg = await inflight;
-                container.innerHTML = svg;
-                container.classList.add('cm-md-mermaid-rendered');
-                return;
-            }
+            // 渲染本体已抽去 mermaidRender.ts（导图 mermaid 媒体节点共用）：
+            // 动态 import / 初始化 / inflight 去重 / SVG 缓存都在那边
+            const svg = await renderMermaidSvg(this.source);
+            container.innerHTML = svg;
+            container.classList.add('cm-md-mermaid-rendered');
 
-            const mermaid = await import('mermaid');
-            if (!mermaidInitialized) {
-                const isDark = getMermaidTheme() === 'dark';
-                mermaid.default.initialize({
-                    startOnLoad: false,
-                    securityLevel: 'strict',
-                    theme: isDark ? 'dark' : 'default',
-                    themeVariables: isDark
-                        ? {
-                              primaryColor: '#1f2020',
-                              primaryBorderColor: '#555',
-                              primaryTextColor: '#d4d4d4',
-                              lineColor: '#666',
-                              secondaryColor: '#2a2d35',
-                              tertiaryColor: '#30353f',
-                          }
-                        : {
-                              primaryColor: '#ffffff',
-                              primaryBorderColor: '#d0d7de',
-                              primaryTextColor: '#24292e',
-                              lineColor: '#656d76',
-                              secondaryColor: '#f6f8fa',
-                              tertiaryColor: '#eff1f3',
-                          },
-                });
-                setMermaidInitialized(true);
-            }
-
-            // Use unique ID to prevent Mermaid render collisions
-            const uniqueId = `mermaid-${MermaidWidget.renderCounter++}`;
-            const promise = mermaid.default.render(uniqueId, this.source).then(({ svg }) => {
-                rememberMermaidSvg(this.source, svg);
-                return svg;
-            });
-            mermaidRenderPromises.set(this.source, promise);
-
-            try {
-                const svg = await promise;
-                container.innerHTML = svg;
-                container.classList.add('cm-md-mermaid-rendered');
-
-                // Track actual rendered height via ResizeObserver (more reliable than getBoundingClientRect at render time)
-                const src = this.source;
-                if (typeof ResizeObserver !== 'undefined') {
-                    const ro = new ResizeObserver((entries) => {
-                        for (const entry of entries) {
-                            const h =
-                                entry.borderBoxSize?.[0]?.blockSize || entry.contentRect.height;
-                            if (h > 0) {
-                                mermaidHeightCache.set(src, h);
-                                ro.disconnect();
-                            }
+            // Track actual rendered height via ResizeObserver (more reliable than getBoundingClientRect at render time)
+            const src = this.source;
+            if (typeof ResizeObserver !== 'undefined') {
+                const ro = new ResizeObserver((entries) => {
+                    for (const entry of entries) {
+                        const h =
+                            entry.borderBoxSize?.[0]?.blockSize || entry.contentRect.height;
+                        if (h > 0) {
+                            mermaidHeightCache.set(src, h);
+                            ro.disconnect();
                         }
-                        view.requestMeasure();
-                    });
-                    requestAnimationFrame(() => {
-                        if (container.isConnected) ro.observe(container);
-                    });
-                }
-            } finally {
-                mermaidRenderPromises.delete(this.source);
+                    }
+                    view.requestMeasure();
+                });
+                requestAnimationFrame(() => {
+                    if (container.isConnected) ro.observe(container);
+                });
             }
         } catch (error) {
             container.innerHTML = '';

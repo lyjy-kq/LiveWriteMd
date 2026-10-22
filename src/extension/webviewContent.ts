@@ -96,7 +96,7 @@ body {
     height: 100%;
     background-color: var(--vscode-editor-background, #272b33);
     color: var(--vscode-editor-foreground, #d4d4d4);
-    font-family: var(--vscode-editor-font-family, "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+    font-family: var(--livewritemd-editor-font-family, var(--vscode-editor-font-family, "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace));
     font-size: var(--vscode-editor-font-size, 14px);
     overflow: hidden;
 }
@@ -118,6 +118,16 @@ body {
 #editor {
     width: 100%;
     height: 100%;
+}
+
+/* 导图容器：与 #editor 互斥，mindmap 模式下由 webview 切换 hidden */
+#mindmap {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+}
+#mindmap[hidden] {
+    display: none !important;
 }
 
 #boot-status {
@@ -161,7 +171,7 @@ body {
    整体居中，而不是正文贴着左边、右边空一大片。 */
 #editor .cm-content {
     max-width: var(--livewritemd-max-width, 900px);
-    padding: 24px 32px !important;
+    padding: 0 !important;
     /* 右侧剩余空间由正文吃掉，把正文推到中间。 */
     margin-right: auto;
 }
@@ -224,7 +234,7 @@ body {
     overflow: hidden;
     background: var(--vscode-editor-background, #272b33);
     color: var(--vscode-editor-foreground, #d4d4d4);
-    font-family: var(--vscode-editor-font-family, "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+    font-family: var(--livewritemd-editor-font-family, var(--vscode-editor-font-family, "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace));
     font-size: var(--vscode-editor-font-size, 14px);
     box-sizing: border-box;
     display: flex;
@@ -469,11 +479,6 @@ body {
 
 .outline-actions:empty {
     display: none;
-}
-
-/* 展开/收起靠左，关闭按钮靠右，三个按钮不会挤在一起。 */
-.outline-action-btn[data-outline-action="close-outline"] {
-    margin-left: auto;
 }
 
 .outline-action-btn {
@@ -722,6 +727,9 @@ export function getHtmlForWebview(
     <style>:root {
         --livewritemd-font-weight: ${fontWeight};
         --livewritemd-line-height: ${lineHeight};
+        /* 基础行高（未乘行间距倍数）：webview 侧 --livewritemd-line-height 会被
+           lineHeightScale 设置覆盖，换算时必须以这个不被覆盖的副本为基准。 */
+        --livewritemd-line-height-base: ${lineHeight};
         --livewritemd-font-scale: 1;
         --livewritemd-editor-font-size: var(--vscode-editor-font-size, 14px);
         --livewritemd-outline-width: ${safeOutlineWidth}px;
@@ -738,6 +746,7 @@ ${styles}
                 <span class="boot-status-detail">如果这里长时间不消失，说明 webview.js 可能没有加载或没有收到 INIT，请查看 LiveWriteMD 输出。</span>
             </div>
             <div id="editor"></div>
+            <div id="mindmap" hidden></div>
         </div>
         <div id="outline-resizer" role="separator" aria-orientation="vertical" aria-label="Resize outline panel"></div>
         <aside id="outline-pane" aria-label="Markdown outline">
@@ -749,6 +758,52 @@ ${styles}
         </aside>
     </div>
     <script type="module" src="${scriptUriString}"></script>
+</body>
+</html>`;
+}
+
+/**
+ * 生成独立导图面板（WebviewPanel）的 HTML（设计文档 §3.2）。
+ *
+ * 面板是轻量入口：只挂一个填满视口的 #mindmap 容器与 mindmapPanel.js，
+ * 不加载 CodeMirror / 大纲 / 标题栏等编辑器外壳；CSP 与主编辑器一致。
+ *
+ * @param webview - 面板对应的 Webview 实例
+ * @param extensionUri - 扩展根目录 URI
+ * @returns 面板 HTML 字符串
+ */
+export function getMindmapPanelHtml(
+    webview: vscode.Webview,
+    extensionUri: vscode.Uri
+): string {
+    const scriptUri = webview.asWebviewUri(
+        vscode.Uri.joinPath(extensionUri, 'dist', 'mindmapPanel.js')
+    );
+    const csp = getContentSecurityPolicy(webview, '');
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="${csp}">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LiveWriteMD Mind Map</title>
+    <style>
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: var(--vscode-editor-background, #272b33);
+        }
+        /* mindmapStyles.ts 里的 #mindmap 规则为 absolute inset:0，这里提供定位上下文 */
+        body { position: relative; }
+    </style>
+</head>
+<body>
+    <div id="mindmap"></div>
+    <script type="module" src="${scriptUri.toString()}"></script>
 </body>
 </html>`;
 }

@@ -7,6 +7,7 @@
  */
 
 import * as esbuild from 'esbuild';
+import { runWebviewBuild } from './scripts/build-webview.mjs';
 
 /**
  * Build options shared by the extension and webview bundles.
@@ -53,24 +54,9 @@ async function buildExtension(shouldWatch) {
  * @returns {Promise<esbuild.BuildContext | esbuild.BuildResult>} The build handle or result.
  */
 async function buildWebview(shouldWatch) {
-    const options = {
-        ...createCommonOptions(),
-        entryPoints: ['src/webview/main.ts'],
-        outfile: 'dist/webview.js',
-        format: 'iife',
-        platform: 'browser',
-        loader: {
-            '.css': 'text',
-        },
-    };
-
-    if (shouldWatch) {
-        const context = await esbuild.context(options);
-        await context.watch();
-        return context;
-    }
-
-    return esbuild.build(options);
+    // webview 是双入口（主编辑器 + 独立导图面板），配置统一在
+    // scripts/build-webview.mjs 维护，避免 watch / 一次性构建漂移。
+    return runWebviewBuild(shouldWatch);
 }
 
 /**

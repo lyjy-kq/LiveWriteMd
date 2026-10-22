@@ -115,20 +115,40 @@ export interface IOpenWrapContext {
  * `EditorView.lineWrapping` 就是往 contentDOM 挂这个类（@codemirror/view 源码），
  * editor.ts 的 lineWrappingCompartment 一关它就没了。
  *
+ * **必须传 view 的场合**：导图节点的 mini-CM。以前这里写死
+ * `document.querySelector('#editor .cm-content')`，只有在主编辑器里才拿得到
+ * 环境；导图里要么找不到 `#editor`、要么找到的是隐藏的主编辑器（clientWidth 为 0），
+ * 于是跨行补偿整条被关掉，点开跨行加粗就退化成单行算法 —— 行数会 ±1、
+ * 后面的文字被推走。传入调用方自己的 view 后，宽度与字体都按**这个编辑器**
+ * 的真实 DOM 取，mini-CM 也能保住行数与后缀位置。
+ *
+ * @param viewOverride - 调用方的编辑器视图；不传时按主编辑器 `#editor` 取（旧路径）
  * @returns 排版环境；任何前提不满足时返回 null，调用方全部回退单行算法
  */
-export function createOpenWrapContext(): IOpenWrapContext | null {
-    const contentEl = document.querySelector('#editor .cm-content');
+export function createOpenWrapContext(viewOverride?: EditorView): IOpenWrapContext | null {
+    const contentEl = viewOverride
+        ? viewOverride.contentDOM
+        : document.querySelector('#editor .cm-content');
     if (!contentEl || !contentEl.classList.contains('cm-lineWrapping')) return null;
-    const measure = getMeasureContext();
+    // 字体环境：给 view 时从该视图自己的正文量（导图节点的字体/字号可以与主编辑器不同）
+    const measure = viewOverride
+        ? measureContextFromContent(contentEl)
+        : getMeasureContext();
     if (!measure) return null;
-    // 折行宽度 = 正文文字区宽度 − 8。availableTableWidth() 已经扣掉了行号栏、
-    // 行宽上限和 .cm-content 的左右内边距；这里再扣 .cm-line 的 padding: 0 4px
-    // （theme.ts 里写的 0 4px，左右共 8px——改那边的话这里要跟着改）。
-    const width = availableTableWidth() - 8;
-    if (!(width > 100)) return null;
-    const view = EditorView.findFromDOM(contentEl as HTMLElement);
+    const view = viewOverride ?? EditorView.findFromDOM(contentEl as HTMLElement);
     if (!view) return null;
+    // 折行宽度：
+    // - 主编辑器走原来的 availableTableWidth（扣行号栏、行宽上限、正文内边距），
+    //   再扣 .cm-line 的 padding: 0 4px（左右共 8px）。改 theme.ts 那边要跟着改。
+    // - 指定了 view 时，宽度按该视图的正文盒现量。**用布局像素**（offset/client），
+    //   不用 getBoundingClientRect：mini-CM 挂在画布的世界层里，可能被 CSS
+    //   transform 缩放，rect 是缩放后的屏幕像素，而折行模拟容器挂在 body 上
+    //   （未缩放），两边混用会让模拟出的行数整体偏少。
+    const width = viewOverride
+        ? contentLayoutWidth(contentEl)
+        : availableTableWidth() - 8;
+    // 主编辑器的可用宽度要求至少 100px；节点单元格可能更窄，放宽到 40px
+    if (!(width > (viewOverride ? 40 : 100))) return null;
     return {
         width,
         size: measure.size,
@@ -138,6 +158,55 @@ export function createOpenWrapContext(): IOpenWrapContext | null {
         canvas: measure.ctx,
         view,
     };
+}
+
+/**
+ * 按给定正文元素现量一套字体环境（canvas + 字号 + 字体族 + 字重）。
+ *
+ * 与 helpers.getMeasureContext 的区别：不查 `#editor`、不共享缓存 ——
+ * 导图里每个节点都是独立的 mini-CM，缓存按主编辑器字体存会在多个视图间串味。
+ * 调用频率与重建频率一致（点开一个元素一次），成本可以忽略。
+ *
+ * @param contentEl - 该视图的 `.cm-content`
+ * @returns 字体环境；拿不到 canvas 时返回 null
+ */
+function measureContextFromContent(
+    contentEl: HTMLElement
+): { ctx: CanvasRenderingContext2D; size: number; family: string; codeFamily: string; weight: string } | null {
+    const cs = getComputedStyle(contentEl);
+    const size = Number.parseFloat(cs.fontSize) || 14;
+    const family = cs.fontFamily || 'monospace';
+    const weight = cs.fontWeight || '400';
+    // 行内代码在渲染态换等宽字体，量它的宽度得用同一套字体。
+    // 优先量本视图里真实存在的代码元素，没有就退回 CSS 变量。
+    const codeSample = contentEl.querySelector('.cm-md-code');
+    const codeFamily = codeSample
+        ? getComputedStyle(codeSample).fontFamily
+        : (getComputedStyle(document.documentElement)
+              .getPropertyValue('--vscode-editor-font-family')
+              .trim() || 'monospace');
+    const ctx = document.createElement('canvas').getContext('2d');
+    if (!ctx) return null;
+    ctx.font = `${size}px ${family}`;
+    return { ctx, size, family, codeFamily, weight };
+}
+
+/**
+ * 量的正文盒**布局像素**宽度（不含 padding）。
+ *
+ * 用 clientWidth 而不是 getBoundingClientRect：后者会被祖先的 CSS transform
+ * 缩放（导图世界层），而折行模拟容器挂在 body 上未缩放，必须同一坐标帧。
+ *
+ * @param contentEl - 视图的 `.cm-content`
+ * @returns 文字区宽度（px）；量不到返回 0
+ */
+function contentLayoutWidth(contentEl: HTMLElement): number {
+    const cs = getComputedStyle(contentEl);
+    const inner =
+        contentEl.clientWidth -
+        (Number.parseFloat(cs.paddingLeft) || 0) -
+        (Number.parseFloat(cs.paddingRight) || 0);
+    return inner > 0 ? inner : 0;
 }
 
 /** 一个逻辑行的几何：以行 border-box 左缘为原点 */
@@ -187,9 +256,37 @@ function measureLineGeometry(
         (Number.parseFloat(cs.paddingLeft) || 0) + (Number.parseFloat(cs.borderLeftWidth) || 0);
     const insetR =
         (Number.parseFloat(cs.paddingRight) || 0) + (Number.parseFloat(cs.borderRightWidth) || 0);
-    const width = lineEl.getBoundingClientRect().width - insetL - insetR;
-    // hang 由调用方（computeOpenScalesWrapped）按文档缩进补算后写入
-    return width > 50 ? { insetL, insetR, width, hang: 0 } : null;
+    // 行盒宽度必须换算成**布局像素**：getBoundingClientRect 会被祖先 transform
+    // 缩放（导图世界层），折行模拟容器挂在 body 上未缩放。用 rect / scale 还原，
+    // 比 offsetWidth 多保留小数；主编辑器没有缩放时 factor = 1，行为不变。
+    const width = layoutWidthOf(lineEl, ctx.view.scaleX) - insetL - insetR;
+    // 悬挂缩进：**直接读真实行的 text-indent**，不要只按文档缩进猜。
+    // 列表行的悬挂缩进是 `padding-left: marker 列宽 + text-indent: -marker 列宽`，
+    // 顶格列表（level 0）也一样有这一对（getListIndent 只算「嵌套层级」，
+    // 对顶格行返回 level 0）。只按层级算会让模拟器把首行也缩进一个 marker 列宽，
+    // 首行少排一个字符 → 末行右端偏出一整字，行数也跟着 ±1。
+    const textIndent = Number.parseFloat(cs.textIndent) || 0;
+    // 调用方仍可用文档缩进兜底（计算样式尚未应用时 text-indent 会是 0）
+    return width > 50 ? { insetL, insetR, width, hang: Math.max(0, -textIndent) } : null;
+}
+
+/**
+ * 取元素未被 CSS transform 缩放时的布局宽度（px）。
+ *
+ * getBoundingClientRect 返回屏幕像素，会被祖先 transform 缩放（导图世界层
+ * 的 zoom）；折行模拟容器挂在 body 上、未缩放。必须把 rect 除以视图自己
+ * 算出的缩放系数，两边才在同一坐标帧里。
+ *
+ * 用 `view.scaleX` 而不是 `rect.width / offsetWidth`：offsetWidth 取整，
+ * 窄单元格上会丢掉半像素，行数正好卡在边界时会选错字号档位。
+ *
+ * @param el - 待测元素
+ * @param scale - 视图的横向缩放系数（未缩放时为 1）
+ * @returns 布局像素宽度
+ */
+function layoutWidthOf(el: Element, scale: number): number {
+    const width = el.getBoundingClientRect().width;
+    return scale > 0 ? width / scale : width;
 }
 
 /**
@@ -223,12 +320,15 @@ function measureRenderedEndDist(
     );
     const lineEl = startEl?.closest('.cm-line');
     if (!renderedEl || !lineEl) return null;
-    // 原点 = 行 border-box 左缘（不加 padding）；模拟块以同一位置为原点
+    // 原点 = 行 border-box 左缘（不加 padding）；模拟块以同一位置为原点。
+    // 两个 rect 都是屏幕像素，统一除以视图缩放系数还原成布局像素
+    // （主编辑器 scaleX = 1，行为不变）。
+    const scale = ctx.view.scaleX > 0 ? ctx.view.scaleX : 1;
     const lineLeft = lineEl.getBoundingClientRect().left;
     const rects = renderedEl.getClientRects();
     if (rects.length === 0) return null;
     // 渲染元素是纯文本 span，矩形数 = 视觉行数
-    return { dist: rects[rects.length - 1].right - lineLeft, lines: rects.length };
+    return { dist: (rects[rects.length - 1].right - lineLeft) / scale, lines: rects.length };
 }
 
 /**
@@ -656,10 +756,16 @@ export function computeOpenScalesWrapped(
             // 真实行几何（引用带 border、内容窄）；量不到放弃
             const geom = measureLineGeometry(ctx, info.from);
             if (!geom) return;
-            geom.hang = hangPx;
+            // text-indent 优先（真实行的悬挂缩进）；样式还没应用出来时才用文档缩进兜底
+            if (geom.hang <= 0 && hangPx > 0) geom.hang = hangPx;
 
-            // 真实渲染几何：快照只读一次，避免多遍 build 读到源码态
-            const snapshotKey = `${line.from}:${info.from - line.from}:${contentText.length}`;
+            // 真实渲染几何：快照只读一次，避免多遍 build 读到源码态。
+            // key 必须带上折行宽度与字体：同一个 Map 现在服务主编辑器和
+            // 各个导图 mini-CM（每个节点文档都从第 1 行开始，line.from 恒为 0），
+            // 只按位置/长度做 key 会把别的视图的读数拿来用。
+            const snapshotKey =
+                `${ctx.width.toFixed(1)}|${ctx.size}|${ctx.family}|` +
+                `${line.from}:${info.from - line.from}:${contentText.length}|${line.text}`;
             let rendered = renderedSnapshot.get(snapshotKey);
             if (!rendered) {
                 const measured = measureRenderedEndDist(ctx, info);

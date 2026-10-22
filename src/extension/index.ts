@@ -20,6 +20,7 @@
 import * as vscode from 'vscode';
 
 import { LiveWriteMdEditorProvider, VIEW_TYPE } from './editorProvider.js';
+import { MindmapPanelManager } from './mindmapPanelManager.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './configManager.js';
 import { exportMarkdownAsHtml } from './htmlExporter.js';
@@ -38,6 +39,11 @@ const COMMAND_ENTER_VIEWER = 'liveWriteMd.enterViewerMode';
 const COMMAND_EXIT_VIEWER = 'liveWriteMd.exitViewerMode';
 const COMMAND_ENTER_SOURCE = 'liveWriteMd.enterSourceMode';
 const COMMAND_ENTER_LIVE = 'liveWriteMd.enterLiveMode';
+const COMMAND_ENTER_MINDMAP = 'liveWriteMd.enterMindmapMode';
+const COMMAND_CYCLE_EDITOR_MODE = 'liveWriteMd.cycleEditorMode';
+const COMMAND_TOGGLE_MINDMAP_MODE = 'liveWriteMd.toggleMindmapMode';
+const COMMAND_CYCLE_TEXT_MODE = 'liveWriteMd.cycleTextMode';
+const COMMAND_OPEN_MINDMAP_PANEL = 'liveWriteMd.openMindmapPanel';
 const COMMAND_EXPORT_HTML = 'liveWriteMd.exportAsHtml';
 const COMMAND_EXPORT_PDF = 'liveWriteMd.exportAsPdf';
 const COMMAND_TOGGLE_OUTLINE = 'liveWriteMd.toggleOutline';
@@ -124,6 +130,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // Register the CustomTextEditorProvider
     const provider = new LiveWriteMdEditorProvider(context);
+    // 独立导图面板管理器（每文档一个 WebviewPanel，与 customEditor 广播同步）
+    const mindmapPanelManager = new MindmapPanelManager(context);
+    context.subscriptions.push(mindmapPanelManager);
     const providerRegistration = vscode.window.registerCustomEditorProvider(VIEW_TYPE, provider, {
         // WebviewPanelOptions
         webviewOptions: {
@@ -160,7 +169,79 @@ export function activate(context: vscode.ExtensionContext): void {
         provider.setEditorMode('live')
     );
     context.subscriptions.push(enterLiveCommand);
+
+    const enterMindmapCommand = vscode.commands.registerCommand(COMMAND_ENTER_MINDMAP, () =>
+        provider.setEditorMode('mindmap')
+    );
+    context.subscriptions.push(enterMindmapCommand);
+
+    // 标题栏「单按钮循环」形态：live -> viewer -> source -> mindmap -> live
+    const cycleEditorModeCommand = vscode.commands.registerCommand(
+        COMMAND_CYCLE_EDITOR_MODE,
+        () => provider.cycleEditorMode()
+    );
+    context.subscriptions.push(cycleEditorModeCommand);
+
+    // 标题栏按钮 A：实时 ⇄ 导图互切
+    const toggleMindmapModeCommand = vscode.commands.registerCommand(
+        COMMAND_TOGGLE_MINDMAP_MODE,
+        () => provider.toggleMindmapMode()
+    );
+    context.subscriptions.push(toggleMindmapModeCommand);
+
+    // 标题栏按钮 B：文本模式三态循环 live -> viewer -> source（导图下禁用）
+    const cycleTextModeCommand = vscode.commands.registerCommand(
+        COMMAND_CYCLE_TEXT_MODE,
+        () => provider.cycleTextMode()
+    );
+    context.subscriptions.push(cycleTextModeCommand);
+
+    // modeSwitcher 形态（cycle / buttons）通过 context key 控制标题栏按钮显隐，
+    // package.json 里 editor/title 的 when 子句读这个 key。
+    const syncModeSwitcherContext = (): void => {
+        void vscode.commands.executeCommand(
+            'setContext',
+            'liveWriteMd.modeSwitcher',
+            ConfigManager.getModeSwitcher()
+        );
+    };
+    syncModeSwitcherContext();
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration((event) => {
+            if (event.affectsConfiguration('liveWriteMd.modeSwitcher')) {
+                syncModeSwitcherContext();
+            }
+        })
+    );
     Logger.debug('Registered editor mode commands');
+
+    // 在侧边打开当前 Markdown 文档的独立导图面板
+    const openMindmapPanelCommand = vscode.commands.registerCommand(
+        COMMAND_OPEN_MINDMAP_PANEL,
+        async (commandUri?: vscode.Uri) => {
+            let targetUri: vscode.Uri | null = commandUri instanceof vscode.Uri ? commandUri : null;
+            // 优先取当前激活的 LiveWriteMD customEditor 文档
+            if (!targetUri) {
+                targetUri = provider.getActiveDocumentUri();
+            }
+            // 其次取活动文本编辑器（资源管理器右键 / 命令面板场景）
+            if (!targetUri) {
+                const activeDocument = vscode.window.activeTextEditor?.document;
+                if (activeDocument && /\.(md|markdown)$/i.test(activeDocument.uri.fsPath)) {
+                    targetUri = activeDocument.uri;
+                }
+            }
+            if (!targetUri) {
+                await vscode.window.showWarningMessage(
+                    'LiveWriteMD: 请先打开一个 Markdown 文件，再打开导图面板。'
+                );
+                return;
+            }
+            await mindmapPanelManager.open(targetUri);
+        }
+    );
+    context.subscriptions.push(openMindmapPanelCommand);
+    Logger.debug(`Registered command: ${COMMAND_OPEN_MINDMAP_PANEL}`);
 
     // Register noop command to prevent VS Code's undo/redo from conflicting with CM6's history
     context.subscriptions.push(

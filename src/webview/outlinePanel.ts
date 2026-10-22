@@ -98,9 +98,6 @@ export class OutlinePanel {
     /** 当前大纲是否可见。 */
     private outlineVisible = true;
 
-    /** 大纲收起时右下角用于重新展开的浮动按钮。 */
-    private readonly reopenButtonEl: HTMLButtonElement;
-
     /** 褰撳墠 Markdown 鏍囬鏍戙€?*/
     private nodes: OutlineNode[] = [];
 
@@ -138,12 +135,6 @@ export class OutlinePanel {
     private hoveredClientY = 0;
 
     /** 鍏佽鐨勬渶灏忓搴︺€?*/
-    /** 收起后右下角“展开大纲”浮动按钮的元素 ID。 */
-    private static readonly REOPEN_BUTTON_ID = 'livewritemd-outline-reopen';
-
-    /** 浮动按钮样式表的元素 ID，用于避免重复注入。 */
-    private static readonly REOPEN_BUTTON_STYLE_ID = 'livewritemd-outline-reopen-style';
-
     private static readonly MIN_WIDTH = 220;
 
     /** 鍏佽鐨勬渶澶у搴︺€?*/
@@ -188,11 +179,10 @@ export class OutlinePanel {
         this.actionBarEl = this.resolveActionBarElement();
         this.expandAllButtonEl = this.resolveActionButton('expand-all', '\u5c55\u5f00\u5168\u90e8');
         this.collapseAllButtonEl = this.resolveActionButton('collapse-all', '\u6536\u8d77\u5168\u90e8');
-        // 关闭按钮固定放在操作栏最右侧，用户不用再翻右键菜单才能收起大纲。
+        // 操作栏只保留大纲自身相关的按钮；「关闭大纲」与「设置」入口统一收编到
+        // VSCode 编辑器标题栏（toggleOutline / openSettings），这里不再重复提供。
         this.addNumberingButtonEl = this.resolveActionButton('add-numbering', '标题编号');
         this.removeNumberingButtonEl = this.resolveActionButton('remove-numbering', '取消编号');
-        this.resolveActionButton('close-outline', '关闭大纲');
-        this.reopenButtonEl = this.resolveReopenButton();
         this.tooltipEl = this.resolveTooltipElement();
 
         this.applyWidth(this.width);
@@ -442,9 +432,6 @@ export class OutlinePanel {
             this.expandAll();
         } else if (action === 'collapse-all') {
             this.collapseAll();
-        } else if (action === 'close-outline') {
-            // 收起大纲面板，重新打开可以走编辑器标题栏按钮或正文右键菜单。
-            this.setVisible(false);
         }
     };
 
@@ -495,8 +482,6 @@ export class OutlinePanel {
         }
 
         this.outlineVisible = nextVisible;
-        // 收起时把重新展开的入口留在右下角，展开时再把它藏起来。
-        this.reopenButtonEl.hidden = nextVisible;
 
         if (nextVisible) {
             this.panelEl.hidden = false;
@@ -950,105 +935,6 @@ export class OutlinePanel {
     }
 
     /**
-     * 解析或创建大纲收起后右下角的“展开大纲”浮动按钮。
-     *
-     * 按钮固定挂在 body 上而不是面板内部，因为面板收起时整体 display:none，
-     * 挂在里面就跟着一起消失了。
-     *
-     * @returns 浮动按钮元素
-     */
-    private resolveReopenButton(): HTMLButtonElement {
-        this.ensureReopenButtonStyles();
-
-        const existing = document.getElementById(OutlinePanel.REOPEN_BUTTON_ID);
-        if (existing instanceof HTMLButtonElement) {
-            return existing;
-        }
-
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.id = OutlinePanel.REOPEN_BUTTON_ID;
-        button.className = 'outline-reopen-btn';
-        button.title = '展开大纲';
-        button.setAttribute('aria-label', '展开大纲');
-        // 默认大纲是展开的，所以初始状态先藏起来，由 setVisible 接管。
-        button.hidden = true;
-        button.innerHTML = `
-            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-                <path d="M1.8 3h1.7v1.7H1.8zM5.3 3.25h8.9v1.2H5.3zM1.8 7.15h1.7v1.7H1.8zM5.3 7.4h8.9v1.2H5.3zM1.8 11.3h1.7v1.7H1.8zM5.3 11.55h8.9v1.2H5.3z"></path>
-            </svg>
-        `;
-        button.addEventListener('click', () => this.setVisible(true));
-
-        document.body.appendChild(button);
-        return button;
-    }
-
-    /**
-     * 注入“展开大纲”浮动按钮的样式。
-     *
-     * 样式放在这个模块里而不是 webviewContent 的内联 CSS 里，是为了让它和创建按钮的
-     * 代码始终在同一个 bundle 中。两处分属扩展进程和 webview 脚本，一旦扩展宿主没
-     * 重启而 webview 脚本更新了，就会出现“按钮建出来了但没有定位样式”的情况——
-     * 按钮会被 body 的 overflow:hidden 挤到视口外，看起来像功能没生效。
-     *
-     * @returns void
-     */
-    private ensureReopenButtonStyles(): void {
-        if (document.getElementById(OutlinePanel.REOPEN_BUTTON_STYLE_ID)) {
-            return;
-        }
-
-        const style = document.createElement('style');
-        style.id = OutlinePanel.REOPEN_BUTTON_STYLE_ID;
-        style.textContent = `
-.outline-reopen-btn {
-    position: fixed;
-    right: 16px;
-    bottom: 16px;
-    z-index: 100;
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    border: 1px solid rgba(127, 127, 127, 0.28);
-    border-radius: 6px;
-    background: var(--vscode-editor-background, #272b33);
-    color: var(--vscode-editor-foreground, #d4d4d4);
-    cursor: pointer;
-    opacity: 0.5;
-    transition: opacity 0.15s ease, background-color 0.15s ease;
-}
-
-.outline-reopen-btn[hidden] {
-    display: none !important;
-}
-
-.outline-reopen-btn:hover {
-    opacity: 1;
-    background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.16));
-}
-
-.outline-reopen-btn:focus-visible {
-    opacity: 1;
-    outline: 1px solid var(--vscode-focusBorder, #007acc);
-    outline-offset: 1px;
-}
-
-.outline-reopen-btn svg {
-    width: 16px;
-    height: 16px;
-    fill: currentColor;
-    display: block;
-    pointer-events: none;
-}
-        `;
-        document.head.appendChild(style);
-    }
-
-    /**
      * 生成底部操作按钮所使用的 SVG 图标。
      *
      * @param action - 按钮动作标识
@@ -1077,11 +963,10 @@ export class OutlinePanel {
             `;
         }
 
-        // 关闭按钮用叉号，展开/收起用加减号，保证三个按钮一眼可区分。
+        // 展开/收起用加减号，两个按钮一眼可区分。
         const glyphPaths: Record<string, string> = {
             'collapse-all': 'M3.5 8h9',
             'expand-all': 'M3.5 8h9M8 3.5v9',
-            'close-outline': 'M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6',
         };
         const path = glyphPaths[action] ?? glyphPaths['expand-all'];
         return `

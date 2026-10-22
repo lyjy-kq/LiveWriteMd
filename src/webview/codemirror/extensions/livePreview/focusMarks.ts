@@ -66,6 +66,7 @@
 import type { EditorState } from '@codemirror/state';
 import type { SyntaxNode, Tree } from '@lezer/common';
 import { Decoration } from '@codemirror/view';
+import type { EditorView } from '@codemirror/view';
 import {
     blockquoteLevelDecos,
     headingLineDecos,
@@ -295,6 +296,8 @@ function collectSourceModeInlineNodes(tree: Tree, focusedRange: ILineRange): Syn
  * @param focusedRange - 当前聚焦（正在编辑）的区间；from < 0 表示只读模式
  * @param tree - 当前语法树
  * @param activeNode - 光标所在的行内元素（由 findActiveInlineNode 算出）
+ * @param view - 当前编辑器视图；跨行宽度补偿要按**这个视图**的折行宽度/字体量
+ *              （导图节点的 mini-CM 与主编辑器是两套 DOM），不传时退回主编辑器
  * @returns void，结果直接 push 进 decos
  */
 export function collectFocusDecorations(
@@ -302,9 +305,11 @@ export function collectFocusDecorations(
     decos: RangeDecoration[],
     focusedRange: ILineRange,
     tree: Tree,
-    activeNode: SyntaxNode | null
+    activeNode: SyntaxNode | null,
+    view?: EditorView
 ): void {
-    // 只读模式（Viewer）没有聚焦块，全部交给渲染态处理
+    // 只读模式（Viewer）也走完整聚焦展开：ranges.ts 的 editable 总闸放开后，
+    // viewer 下 focusedRange 同样是真实区间，行为与实时模式一致（只是不能编辑）。
     if (focusedRange.from < 0 || focusedRange.from >= focusedRange.to) return;
 
     // 选区左右端点：空选区时两者都等于光标位置
@@ -315,15 +320,27 @@ export function collectFocusDecorations(
     /**
      * 块级标记要不要展开显示。
      *
-     * 用「严格包含」而不是「挨着就展开」：点击正文时落点几乎总在标记边缘上，
-     * 用闭区间会导致一点击就展开、整行跳动。
+     * 空选区（点击）用「严格包含」而不是「挨着就展开」：点击正文时落点几乎总在
+     * 标记边缘上，用闭区间会导致一点击就展开、整行跳动。
+     *
+     * 非空选区（拖选）放宽为「选区碰到标记所在行就展开」：拖选的起点几乎总在
+     * 第一行标记**之后**（点在文字上），严格判据下第一行的行首标记（> 等）会
+     * 被漏掉、其余行却都显示——拖选语义是「这几行回到源码态」，行碰上了就该显。
      *
      * 但落在行级强制区间（mousedown 待选 / 双击钉住）时一律展开：
      * 标记要是继续压 0 宽，等拖选真正开始（选区变非空）才露面，整行会
      * 再跳一次 —— 展开必须在 mousedown 的同一时刻完成，坐标才始终一致。
      */
-    const isBlockMarkExposed = (from: number, to: number): boolean =>
-        (selFrom < to && from < selTo) || isForcedSourceRange(from, to);
+    const isBlockMarkExposed = (from: number, to: number): boolean => {
+        if (isForcedSourceRange(state, from, to)) return true;
+        if (!selection.empty) {
+            // 拖选：标记所在行与选区相交（含端点）即展开
+            const markLine = state.doc.lineAt(from);
+            return selFrom <= markLine.to && markLine.from <= selTo;
+        }
+        // 点击：严格开区间相交，防止落点蹭到标记边缘就整行跳动
+        return selFrom < to && from < selTo;
+    };
 
     /**
      * 把一个块级标记区间加进装饰：展开态用正常字号，否则压 0 宽。
@@ -444,7 +461,9 @@ export function collectFocusDecorations(
         // 行数风险由各批模拟的「行数守恒」直接验证兜住，不再事先排除
         const canWrap = (item: { node: SyntaxNode }) => openWrapEligible(state, item.node);
         const candidates = opened.filter((item) => item.scaled && canWrap(item));
-        const wrapCtx = candidates.length > 0 ? createOpenWrapContext() : null;
+        // 传入当前视图：mini-CM 的折行宽度/字体与主编辑器不同，
+        // 写死 #editor 会让导图里的跨行补偿整条失效（行数 ±1、后缀被推走）
+        const wrapCtx = candidates.length > 0 ? createOpenWrapContext(view) : null;
         const fallbackInfos: OpenElementInfo[] = [];
         const wrappedInfos: OpenElementInfo[] = [];
         for (const item of opened) {
@@ -497,7 +516,7 @@ export function collectFocusDecorations(
     // 全句的修饰符。判据放在 activeNode 之前，否则只会展开光标所在的那一个。
     const forcedInFocus =
         focusedRange.from < focusedRange.to &&
-        isForcedSourceRange(focusedRange.from, focusedRange.to);
+        isForcedSourceRange(state, focusedRange.from, focusedRange.to);
 
     if (forcedInFocus || !selection.empty) {
         // ① 拖选（非空选区）/ 强制行：**整块**都会退回源码（plugin.ts 那一侧

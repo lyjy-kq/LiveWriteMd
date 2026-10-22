@@ -40,9 +40,47 @@
             }
         },
         {
-            // F5（.vscode/launch.json 的 preLaunchTask）跑的就是这个：
-            // 走 scripts/dev.ps1 的 build 模式 —— 只构建 dist/，
-            // 不起扩展开发宿主窗口、也不打 vsix，正好当启动前的准备动作。
+            // 扩展调试 F5 的前置任务（.vscode/launch.json 里 node attach 配置）。
+            //
+            // 走 scripts/dev.ps1 的 debug 模式：构建 dist → 用 code CLI 在当前 VS Code
+            // 实例里打开开发宿主窗口（复用默认 profile，主题/字号和日常窗口一致）
+            // → 轮询等 Node inspector 端口（9229）真正监听 → 退出。
+            // 任务退出后，launch.json 的 node attach 才去连 9229，所以不会连空。
+            //
+            // 为什么不用内置的 extensionHost launch：js-debug 自动 attach 扩展宿主
+            // 的路径在 VS Code 1.138 上会随机把宿主打崩（退出码 134），
+            // 详见 launch.json 里的注释和 microsoft/vscode#336233。
+            "label": "LiveWriteMD: dev host (dev.ps1)",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}/scripts/dev.ps1",
+                "-Mode",
+                "debug",
+                // 启动就在开发宿主里打开这个目录验收（原来写在 launch.json args 里，
+                // 现在窗口由 dev.ps1 用 CLI 拉起，所以挪到这里）。想换验收对象就改这个路径。
+                "-File",
+                "C:/Users/pc/Desktop/code/work/edu-科研"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            // 空数组 = 不扫描输出里的报错（同下面的 build 任务），避免 F5 卡在弹窗上
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared",
+                "clear": true
+            }
+        },
+        {
+            // 只构建 dist/ 的任务（不起窗口、不出包）。
+            // 注意：扩展调试的 F5 现在用的是上面的 dev host 任务（里面已经先构建了），
+            // 这个任务留给「手动构建」或其它需要只构建的场景。
             // 这里刻意不直接写 npm/esbuild 命令，把构建逻辑收在脚本一处，
             // 避免以后脚本改了、任务里还留着一份对不上的旧命令。
             "label": "LiveWriteMD: build (dev.ps1)",

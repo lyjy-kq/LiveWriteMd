@@ -7,8 +7,10 @@
  */
 
 import { Decoration } from '@codemirror/view';
-import { HighlightStyle } from '@codemirror/language';
-import { tags } from '@lezer/highlight';
+
+// 语法高亮色表已抽去 tokenColors.ts（共享 token 色表，CSS 变量驱动）：
+// liveWriteMdDarkHighlight / liveWriteMdLightHighlight 由单个
+// liveWriteMdTokenHighlight 替代，深浅色随 CSS 变量翻转。
 
 // =============================================================================
 // Pre-built Decorations
@@ -101,113 +103,3 @@ export const hiddenLineDeco = Decoration.line({ class: 'cm-md-hidden-line' });
  * 「这一行除了图片没有别的文字」，再挂这个 class 走 text-align: center。
  */
 export const imageLineDeco = Decoration.line({ class: 'cm-md-image-line' });
-
-// =============================================================================
-// Syntax Highlight Styles
-// =============================================================================
-        // { tag: tags.keyword, color: '#c586c0' },
-        // { tag: tags.controlKeyword, color: '#c586c0' },
-        // { tag: tags.operatorKeyword, color: '#c586c0' },
-        // { tag: tags.definitionKeyword, color: '#c586c0' },
-        // { tag: tags.moduleKeyword, color: '#c586c0' },
-        // { tag: tags.operator, color: '#d4d4d4' },
-        // { tag: tags.punctuation, color: '#d4d4d4' },
-        // { tag: tags.bracket, color: '#ffd700' },
-        // { tag: tags.string, color: '#ce9178' },
-        // { tag: tags.number, color: '#b5cea8' },
-        // { tag: tags.bool, color: '#569cd6' },
-        // { tag: tags.null, color: '#569cd6' },
-        // { tag: tags.comment, color: '#c9d1d9' },
-        // { tag: tags.lineComment, color: '#c9d1d9' },
-        // { tag: tags.blockComment, color: '#c9d1d9' },
-        // { tag: tags.docComment, color: '#c9d1d9' },
-        // { tag: tags.variableName, color: '#9cdcfe' },
-        // { tag: tags.definition(tags.variableName), color: '#4fc1ff' },
-        // { tag: tags.function(tags.variableName), color: '#dcdcaa' },
-        // { tag: tags.typeName, color: '#4ec9b0' },
-        // { tag: tags.className, color: '#4ec9b0' },
-        // { tag: tags.propertyName, color: '#9cdcfe' },
-        // { tag: tags.function(tags.propertyName), color: '#dcdcaa' },
-        // { tag: tags.attributeName, color: '#9cdcfe' },
-        // { tag: tags.tagName, color: '#569cd6' },
-        // { tag: tags.angleBracket, color: '#808080' },
-        // { tag: tags.regexp, color: '#d16969' },
-        // { tag: tags.self, color: '#569cd6' },
-        // { tag: tags.meta, color: '#d4d4d4' },
-/**
- * Dark theme highlight style for code syntax within Markdown fenced blocks.
- */
-export const liveWriteMdDarkHighlight = HighlightStyle.define(
-    [
-        { tag: tags.keyword, color: '#af00db' },
-        { tag: tags.controlKeyword, color: '#af00db' },
-        { tag: tags.operatorKeyword, color: '#af00db' },
-        { tag: tags.definitionKeyword, color: '#af00db' },
-        { tag: tags.moduleKeyword, color: '#af00db' },
-        // 深色主题下标点/操作符必须是浅色：此 HighlightStyle 全局生效，
-        // 正文 markdown 的 ListMark（"-"）也带 punctuation tag，黑色会看不见
-        { tag: tags.operator, color: '#d4d4d4' },
-        { tag: tags.punctuation, color: '#d4d4d4' },
-        { tag: tags.bracket, color: '#d4d4d4' },
-        { tag: tags.string, color: '#ce9178' },
-        { tag: tags.number, color: '#b5cea8' },
-        { tag: tags.bool, color: '#569cd6' },
-        { tag: tags.null, color: '#569cd6' },
-        { tag: tags.comment, color: '#6a9955' },
-        { tag: tags.lineComment, color: '#6a9955' },
-        { tag: tags.blockComment, color: '#6a9955' },
-        { tag: tags.docComment, color: '#6a9955' },
-        { tag: tags.variableName, color: '#9cdcfe' },
-        { tag: tags.definition(tags.variableName), color: '#4fc1ff' },
-        { tag: tags.function(tags.variableName), color: '#dcdcaa' },
-        { tag: tags.typeName, color: '#4ec9b0' },
-        { tag: tags.className, color: '#4ec9b0' },
-        { tag: tags.propertyName, color: '#9cdcfe' },
-        { tag: tags.function(tags.propertyName), color: '#dcdcaa' },
-        { tag: tags.attributeName, color: '#9cdcfe' },
-        { tag: tags.tagName, color: '#569cd6' },
-        { tag: tags.angleBracket, color: '#808080' },
-        { tag: tags.regexp, color: '#d16969' },
-        { tag: tags.self, color: '#569cd6' },
-        { tag: tags.meta, color: '#d4d4d4' },
-    ],
-    { themeType: 'dark' }
-);
-
-/**
- * Light theme highlight style for code syntax within Markdown fenced blocks.
- */
-export const liveWriteMdLightHighlight = HighlightStyle.define(
-    [
-        { tag: tags.keyword, color: '#af00db' },
-        { tag: tags.controlKeyword, color: '#af00db' },
-        { tag: tags.operatorKeyword, color: '#af00db' },
-        { tag: tags.definitionKeyword, color: '#af00db' },
-        { tag: tags.moduleKeyword, color: '#af00db' },
-        { tag: tags.operator, color: '#000000' },
-        { tag: tags.punctuation, color: '#000000' },
-        { tag: tags.bracket, color: '#0431fa' },
-        { tag: tags.string, color: '#a31515' },
-        { tag: tags.number, color: '#098658' },
-        { tag: tags.bool, color: '#0000ff' },
-        { tag: tags.null, color: '#0000ff' },
-        { tag: tags.comment, color: '#5f6a79' },
-        { tag: tags.lineComment, color: '#5f6a79' },
-        { tag: tags.blockComment, color: '#5f6a79' },
-        { tag: tags.docComment, color: '#5f6a79' },
-        { tag: tags.variableName, color: '#001080' },
-        { tag: tags.definition(tags.variableName), color: '#0070c1' },
-        { tag: tags.function(tags.variableName), color: '#795e26' },
-        { tag: tags.typeName, color: '#267f99' },
-        { tag: tags.className, color: '#267f99' },
-        { tag: tags.propertyName, color: '#001080' },
-        { tag: tags.function(tags.propertyName), color: '#795e26' },
-        { tag: tags.attributeName, color: '#e50000' },
-        { tag: tags.tagName, color: '#800000' },
-        { tag: tags.angleBracket, color: '#800000' },
-        { tag: tags.regexp, color: '#811f3f' },
-        { tag: tags.self, color: '#0000ff' },
-        { tag: tags.meta, color: '#000000' },
-    ],
-    { themeType: 'light' }
-);

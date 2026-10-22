@@ -7,19 +7,25 @@
 
 import type { TableCommand } from './codemirror/extensions/livePreview/tableCommands.js';
 
+// 编辑器模式联合类型集中定义在 shared/types，webview 与扩展共用一份。
+import type { EditorMode as SharedEditorMode } from '../shared/types.js';
+
 /**
  * 支持的编辑器模式类型。
  */
-export type EditorMode = 'live' | 'viewer' | 'source';
+export type EditorMode = SharedEditorMode;
 
-/** 菜单里所有可能的动作名（编辑器模式 + 各种命令 + 表格增删行列）。 */
+/**
+ * 菜单里所有可能的动作名（各种命令 + 表格增删行列）。
+ *
+ * 模式切换和大纲开关已从右键菜单移除，统一收编到 VSCode 编辑器标题栏，
+ * 这里的菜单只保留正文编辑相关的动作。
+ */
 type MenuAction =
-    | EditorMode
     | 'insert-image'
     | 'export-as-html'
     | 'export-as-pdf'
     | 'download-remote-images'
-    | 'toggle-outline'
     | TableCommand;
 
 /**
@@ -36,22 +42,14 @@ function isTableCommand(action: MenuAction): action is TableCommand {
  * 正文右键菜单需要调用的外部动作。
  */
 export interface EditorContextMenuActions {
-    /** 读取当前编辑器模式，用于更新菜单的禁用状态。 */
-    getCurrentMode: () => EditorMode;
     /** 触发插入图片操作。 */
     onInsertImage: () => void;
-    /** 切换编辑器模式。 */
-    onChangeMode: (mode: EditorMode) => void;
     /** 触发导出 HTML 操作。 */
     onExportAsHtml: () => void;
     /** 触发导出 PDF 操作。 */
     onExportAsPdf: () => void;
     /** 触发下载正文网络图片到本地操作。 */
     onDownloadRemoteImages: () => void;
-    /** 切换大纲显示状态。 */
-    onToggleOutline: () => void;
-    /** 读取当前大纲是否显示。 */
-    isOutlineVisible: () => boolean;
     /**
      * 右键位置是不是落在表格单元格里。
      *
@@ -63,8 +61,12 @@ export interface EditorContextMenuActions {
     onTableCommand?: (command: TableCommand) => void;
 }
 
-/** 表格那一组菜单项：动作名 → 文案。 */
-const TABLE_MENU_ITEMS: Array<{ action: TableCommand; label: string }> = [
+/**
+ * 表格那一组菜单项：动作名 → 文案。
+ *
+ * 导出给导图复用（导图节点里的表格右键菜单与 live 模式保持一致）。
+ */
+export const TABLE_MENU_ITEMS: Array<{ action: TableCommand; label: string }> = [
     { action: 'row-above', label: '向上插入行' },
     { action: 'row-below', label: '向下插入行' },
     { action: 'col-left', label: '向左插入列' },
@@ -149,41 +151,27 @@ export class EditorContextMenu {
         menu.setAttribute('role', 'menu');
         menu.setAttribute('aria-hidden', 'true');
 
+        // 菜单只保留正文编辑相关动作；模式切换与大纲开关在编辑器标题栏。
         const insertButton = this.createMenuButton('insert-image', '插入图片');
         const downloadButton = this.createMenuButton(
             'download-remote-images',
             '下载网络图片到本地'
         );
-        const outlineButton = this.createMenuButton('toggle-outline', '隐藏大纲');
-        const liveButton = this.createMenuButton('live', '切换到实时预览');
-        const viewerButton = this.createMenuButton('viewer', '切换到查看模式');
-        const sourceButton = this.createMenuButton('source', '切换到源码模式');
         const exportButton = this.createMenuButton('export-as-html', 'Export as HTML');
         const exportPdfButton = this.createMenuButton('export-as-pdf', '导出为 PDF');
 
-        const firstSeparator = document.createElement('div');
-        firstSeparator.className = 'livewritemd-editor-context-menu-separator';
-        const secondSeparator = document.createElement('div');
-        secondSeparator.className = 'livewritemd-editor-context-menu-separator';
+        const separator = document.createElement('div');
+        separator.className = 'livewritemd-editor-context-menu-separator';
 
         menu.appendChild(insertButton);
         menu.appendChild(downloadButton);
-        menu.appendChild(outlineButton);
-        menu.appendChild(firstSeparator);
-        menu.appendChild(liveButton);
-        menu.appendChild(viewerButton);
-        menu.appendChild(sourceButton);
-        menu.appendChild(secondSeparator);
+        menu.appendChild(separator);
         menu.appendChild(exportButton);
         menu.appendChild(exportPdfButton);
 
         document.body.appendChild(menu);
         this.buttons.set('insert-image', insertButton);
         this.buttons.set('download-remote-images', downloadButton);
-        this.buttons.set('toggle-outline', outlineButton);
-        this.buttons.set('live', liveButton);
-        this.buttons.set('viewer', viewerButton);
-        this.buttons.set('source', sourceButton);
         this.buttons.set('export-as-html', exportButton);
         this.buttons.set('export-as-pdf', exportPdfButton);
 
@@ -427,13 +415,6 @@ export class EditorContextMenu {
             this.actions.onExportAsPdf();
             return;
         }
-
-        if (action === 'toggle-outline') {
-            this.actions.onToggleOutline();
-            return;
-        }
-
-        this.actions.onChangeMode(action);
     };
 
     /**
@@ -444,8 +425,6 @@ export class EditorContextMenu {
      * @returns void
      */
     private openAt(clientX: number, clientY: number): void {
-        this.updateModeState();
-        this.updateOutlineState();
         this.isOpen = true;
 
         this.menuEl.style.display = 'block';
@@ -460,39 +439,6 @@ export class EditorContextMenu {
         this.menuEl.style.top = `${Math.min(clientY, maxTop)}px`;
         this.menuEl.style.visibility = 'visible';
         this.menuEl.setAttribute('aria-hidden', 'false');
-    }
-
-    /**
-     * 更新菜单中模式项的禁用状态。
-     *
-     * @returns void
-     */
-    private updateModeState(): void {
-        const currentMode = this.actions.getCurrentMode();
-        for (const [key, button] of this.buttons) {
-            if (key === 'insert-image' || key === 'toggle-outline' || isTableCommand(key)) {
-                continue;
-            }
-            if (key === 'download-remote-images' || key === 'export-as-html' || key === 'export-as-pdf') {
-                continue;
-            }
-            button.disabled = key === currentMode;
-            button.dataset.active = key === currentMode ? 'true' : 'false';
-        }
-    }
-
-    /**
-     * 更新大纲切换按钮文案。
-     *
-     * @returns void
-     */
-    private updateOutlineState(): void {
-        const button = this.buttons.get('toggle-outline');
-        if (!button) {
-            return;
-        }
-
-        button.textContent = this.actions.isOutlineVisible() ? '隐藏大纲' : '打开大纲';
     }
 
     /**

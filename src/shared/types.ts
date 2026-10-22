@@ -30,6 +30,8 @@ export interface BaseMessage {
 export interface LiveWriteMdEditorSettings {
     /** 是否显示行号。 */
     lineNumbers: boolean;
+    /** 正文行最左缘与行号竖线的距离，单位像素，最低为 0。 */
+    lineGutterGap: number;
     /** 是否开启自动换行。 */
     wordWrap: boolean;
     /** 可读行宽，单位像素，0 表示不限制。 */
@@ -48,6 +50,14 @@ export interface LiveWriteMdEditorSettings {
 export type ThemeType = 'light' | 'dark';
 
 /**
+ * 编辑器模式：实时预览 / 只读阅读 / 源码 / 思维导图。
+ *
+ * 四种模式并列；mindmap 模式下 webview 隐藏 CodeMirror、显示导图容器，
+ * 但 CodeMirror 实例不销毁（撤销栈 / 光标 / 滚动位置保留）。
+ */
+export type EditorMode = 'live' | 'viewer' | 'source' | 'mindmap';
+
+/**
  * 初始化消息。
  */
 export interface InitMessage extends BaseMessage {
@@ -63,6 +73,8 @@ export interface InitMessage extends BaseMessage {
     settings?: LiveWriteMdEditorSettings;
     /** 全部设置（含颜色、个性化项），供 settingsState 注入 CSS 变量与运行时读取。 */
     allSettings?: Record<string, SettingValue>;
+    /** 初始编辑器模式；缺省按实时模式处理。 */
+    mode?: EditorMode;
     /** 初始右侧大纲宽度，单位像素。 */
     outlineWidth?: number;
     /** 兼容旧版本字段名。 */
@@ -115,11 +127,25 @@ export interface SettingsChangeMessage extends BaseMessage {
 }
 
 /**
+ * 系统字体列表消息（扩展 -> Webview）。
+ *
+ * Webview 自己拿不到本机已安装字体，由扩展宿主枚举后下发，
+ * 设置面板的「英文字体 / 中文字体」用它渲染可选列表。
+ */
+export interface SystemFontsMessage extends BaseMessage {
+    /** 消息类型。 */
+    type: 'systemFonts';
+    /** 已安装字体家族名（已去重排序）。 */
+    fonts: string[];
+}
+
+/**
  * 扩展 -> Webview 的消息联合类型。
  */
 export type ExtensionToWebviewMessage =
     | InitMessage
     | UpdateMessage
+    | SystemFontsMessage
     | ThemeChangeMessage
     | SettingsChangeMessage
     | ImageSavedMessage
@@ -166,7 +192,7 @@ export interface EditorActionMessage extends BaseMessage {
     /** 动作类型。 */
     action: 'insertImage' | 'setMode' | 'exportAsHtml' | 'exportAsPdf' | 'downloadRemoteImages';
     /** 目标模式，仅在切换模式时使用。 */
-    mode?: 'live' | 'viewer' | 'source';
+    mode?: EditorMode;
 }
 
 /**

@@ -88,6 +88,12 @@ export const MESSAGE_TYPES = {
     SETTINGS_CHANGE: 'settingsChange',
 
     /**
+     * 系统已安装字体列表消息类型。
+     * 扩展宿主枚举本机字体后下发给设置面板做字体选择；Webview 自身拿不到系统字体。
+     */
+    SYSTEM_FONTS: 'systemFonts',
+
+    /**
      * 命令执行消息类型。
      * 扩展侧通过该消息触发 Webview 中的命令。
      */

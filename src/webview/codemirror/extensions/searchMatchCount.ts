@@ -95,14 +95,17 @@ export const searchMatchCount: Extension = ViewPlugin.fromClass(
             }
 
             if (total === 0) {
-                this.countEl.textContent = 'No results';
+                // 无匹配：红色提示（颜色由主题里的 -none 类提供）
+                this.countEl.textContent = '无结果';
                 this.countEl.classList.add('cm-search-match-count-none');
             } else {
                 this.countEl.classList.remove('cm-search-match-count-none');
                 if (currentIndex > 0) {
+                    // 光标正好落在某个匹配上：显示「当前/总数」
                     this.countEl.textContent = `${currentIndex}/${total}`;
                 } else {
-                    this.countEl.textContent = `${total} results`;
+                    // 有匹配但当前选区不在匹配上：只显示总数
+                    this.countEl.textContent = `${total} 个结果`;
                 }
             }
         }

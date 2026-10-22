@@ -31,31 +31,45 @@
             "preLaunchTask": "LiveWriteMD: browser dev server"
         },
         {
+            // 扩展调试的 F5 配置。
+            //
+            // 为什么不用内置的 extensionHost launch（原来的写法）：
+            // VS Code 1.138 里，js-debug 自动 attach 扩展宿主的那条路径会随机把
+            // 扩展宿主进程打崩（Windows 退出码 134，SIGABRT），表现就是 F5 拉起的
+            // 窗口闪退几次才稳定。上游 issue：microsoft/vscode#336233。
+            // 该 issue 里验证稳定的两条路：Ctrl+F5（不挂调试器）和
+            // 「CLI 起宿主 + node attach」。这里用的是后者，保留断点能力。
+            //
+            // F5 流程：
+            //   1. preLaunchTask 跑 dev.ps1 -Mode debug：构建 dist，用 code CLI
+            //      在当前 VS Code 实例里打开开发宿主窗口（复用默认 profile，
+            //      主题/字号等用户设置和日常窗口一致），并等它的 Node inspector
+            //      端口开始监听后才退出；
+            //   2. 本配置再 node attach 到 127.0.0.1:9229。
+            // 任务退出是「端口就绪」的信号，所以 attach 不会连早了连空。
             "name": "Launch LiveWriteMD Extension",
-            "type": "extensionHost",
-            "request": "launch",
-            "runtimeExecutable": "${execPath}",
-            "args": [
-                "--extensionDevelopmentPath=${workspaceFolder}",
-                "--disable-extensions",
-                "--user-data-dir=${workspaceFolder}/.vscode/.livewritemd-dev-userdata",
-                "--extensions-dir=${workspaceFolder}/.vscode/.livewritemd-dev-extensions",
-                // 启动就在开发宿主里打开这个文件，省得每次 F5 完还要手动去点开验收。
-                // 等价于 dev.ps1 -Mode debug 的 -File 参数（build 模式不拉窗口，所以那个参数
-                // 挂在这边没意义，真正开文件的是这一行）。想换验收对象就改这个路径，
-                // 路径里有中文和全角括号都没事，用正斜杠是为了不用写 // 转义。
-                "C:/Users/pc/Desktop/code/lyjy-obsidianlike-md-forvscode/test"
-            ],
+            "type": "node",
+            "request": "attach",
+            // 明确写 IPv4：1.139 有过 attach 走 localhost 解析到 ::1、
+            // 而 inspector 只监听 127.0.0.1 导致连不上的问题。
+            "address": "127.0.0.1",
+            "port": 9229,
+            // 只 attach 一次。宿主 reload 后重新按 F5 即可（会重新跑前置任务）。
+            "restart": false,
+            // 连接超时（毫秒）。前置任务已经把端口等出来了，这里只是兜底。
+            "timeout": 60000,
             "outFiles": [
                 "${workspaceFolder}/dist/**/*.js"
             ],
-            // 按 F5 前先跑 scripts/dev.ps1 -Mode build（任务定义见 .vscode/tasks.json）。
-            // 原来写的 "pnpm: build" 在本机跑不起来：pnpm 没授权 esbuild 的构建脚本，
-            // 会直接 ERR_PNPM_IGNORED_BUILDS；脚本里默认用的 npm 是能用的。
-            "preLaunchTask": "LiveWriteMD: build (dev.ps1)",
+            "sourceMaps": true,
+            "resolveSourceMapLocations": [
+                "${workspaceFolder}/**",
+                "!**/node_modules/**"
+            ],
             "skipFiles": [
                 "<node_internals>/**"
             ],
+            "preLaunchTask": "LiveWriteMD: dev host (dev.ps1)",
             "trace": false
         },
         {

@@ -105,6 +105,9 @@ export class ConfigManager {
     /** Default value for line numbers */
     private static readonly DEFAULT_LINE_NUMBERS = true;
 
+    /** Default distance (px) between body text left edge and the line-number rule */
+    private static readonly DEFAULT_LINE_GUTTER_GAP = 4;
+
     /** Default value for word wrap */
     private static readonly DEFAULT_WORD_WRAP = true;
 
@@ -118,7 +121,7 @@ export class ConfigManager {
     private static readonly DEFAULT_THEME: 'auto' | 'dark' | 'light' = 'auto';
 
     /** Default value for default editor mode */
-    private static readonly DEFAULT_MODE: 'live' | 'source' | 'viewer' = 'live';
+    private static readonly DEFAULT_MODE: 'live' | 'source' | 'viewer' | 'mindmap' = 'live';
 
     /**
      * Default value for image save folder name.
@@ -257,6 +260,22 @@ export class ConfigManager {
     }
 
     /**
+     * Retrieves the gap between body text and the line-number rule.
+     *
+     * Configuration Key: liveWriteMd.lineGutterGap
+     * Default: 4 (minimum 0)
+     *
+     * @returns Gap in pixels
+     */
+    static getLineGutterGap(): number {
+        const value = vscode.workspace
+            .getConfiguration(this.CONFIG_SECTION)
+            .get<number>('lineGutterGap', this.DEFAULT_LINE_GUTTER_GAP);
+        // 该值允许为 0，只在 undefined 时退回默认
+        return value ?? this.DEFAULT_LINE_GUTTER_GAP;
+    }
+
+    /**
      * Retrieves the readable line length setting.
      *
      * Configuration Key: liveWriteMd.readableLineLength
@@ -311,10 +330,38 @@ export class ConfigManager {
      *
      * @returns 'live', 'source', or 'viewer'
      */
-    static getDefaultMode(): 'live' | 'source' | 'viewer' {
+    static getDefaultMode(): 'live' | 'source' | 'viewer' | 'mindmap' {
         return vscode.workspace
             .getConfiguration(this.CONFIG_SECTION)
-            .get<'live' | 'source' | 'viewer'>('defaultMode', this.DEFAULT_MODE);
+            .get<'live' | 'source' | 'viewer' | 'mindmap'>('defaultMode', this.DEFAULT_MODE);
+    }
+
+    /**
+     * Retrieves the "remember last mode per file" setting.
+     *
+     * Configuration Key: liveWriteMd.rememberLastMode
+     * Default: true
+     *
+     * @returns true 时打开文件优先恢复上次使用的模式
+     */
+    static getRememberLastMode(): boolean {
+        return vscode.workspace
+            .getConfiguration(this.CONFIG_SECTION)
+            .get<boolean>('rememberLastMode', true);
+    }
+
+    /**
+     * Retrieves the editor title mode switcher style.
+     *
+     * Configuration Key: liveWriteMd.modeSwitcher
+     * Default: 'cycle'
+     *
+     * @returns 'cycle'（单按钮循环）或 'buttons'（多按钮直达）
+     */
+    static getModeSwitcher(): 'cycle' | 'buttons' {
+        return vscode.workspace
+            .getConfiguration(this.CONFIG_SECTION)
+            .get<'cycle' | 'buttons'>('modeSwitcher', 'cycle');
     }
 
     /**
@@ -347,6 +394,7 @@ export class ConfigManager {
     static getEditorSettings(): LiveWriteMdEditorSettings {
         return {
             lineNumbers: this.getLineNumbers(),
+            lineGutterGap: this.getLineGutterGap(),
             wordWrap: this.getWordWrap(),
             readableLineLength: this.getReadableLineLength(),
             fontScale: this.getFontScale(),

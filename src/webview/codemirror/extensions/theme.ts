@@ -78,11 +78,15 @@ export const lightTheme: Extension = EditorView.theme(
     {
         // Root editor container — LiveWriteMD独自カラー
         '&': {
-            backgroundColor: 'var(--vscode-editor-background, #1e1e1e)',
-            color: 'var(--vscode-editor-foreground, #d4d4d4)',
+            // 浅色主题的兜底值要和主题一致：原来错用了深色的 #1e1e1e / #d4d4d4，
+            // 一旦 VS Code 变量缺失会变成「白底配浅字」；正文色本身仍跟随主题。
+            backgroundColor: 'var(--vscode-editor-background, #ffffff)',
+            color: 'var(--vscode-editor-foreground, #24292e)',
             height: '100%',
+            // 中英文字体设置合成到 --livewritemd-editor-font-family；
+            // 未设置时逐层回退，和改造前完全一致。代码块不走这条规则。
             fontFamily:
-                'var(--vscode-editor-font-family, "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace)',
+                'var(--livewritemd-editor-font-family, var(--vscode-editor-font-family, "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace))',
         },
 
         // Content area (main editing region)
@@ -208,73 +212,9 @@ export const lightTheme: Extension = EditorView.theme(
             boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
         },
 
-        // Panels (like search panel)
-        '.cm-panels': {
-            backgroundColor: 'var(--vscode-editorWidget-background, var(--vscode-editor-background, #1e1e1e))',
-            color: 'var(--vscode-editor-foreground, #d4d4d4)',
-            borderBottom: '1px solid #c8c8c8',
-            padding: '4px 8px',
-            fontFamily:
-                'var(--vscode-editor-font-family, "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace)',
-            fontSize: 'var(--vscode-editor-font-size, 13px)',
-        },
-        '.cm-panels .cm-button': {
-            backgroundColor: '#007acc',
-            color: '#ffffff',
-            border: 'none',
-            borderRadius: '2px',
-            padding: '2px 8px',
-            cursor: 'pointer',
-            fontSize: '12px',
-        },
-        '.cm-panels .cm-button:hover': {
-            backgroundColor: '#0062a3',
-        },
-        '.cm-panels .cm-textfield': {
-            backgroundColor: 'var(--vscode-input-background, var(--vscode-editor-background, #1e1e1e))',
-            color: 'var(--vscode-input-foreground, var(--vscode-editor-foreground, #d4d4d4))',
-            border: '1px solid #cecece',
-            borderRadius: '2px',
-            padding: '3px 6px',
-            fontSize: 'var(--vscode-editor-font-size, 13px)',
-            outline: 'none',
-        },
-        '.cm-panels .cm-textfield:focus': {
-            borderColor: '#007fd4',
-        },
-        '.cm-panels label': {
-            fontSize: '12px',
-            marginLeft: '4px',
-        },
-        // Search panel layout
-        '.cm-search': {
-            position: 'relative' as any,
-            paddingRight: '28px',
-        },
-        '.cm-search button[name="close"]': {
-            position: 'absolute' as any,
-            top: '4px',
-            right: '4px',
-            backgroundColor: 'transparent',
-            color: 'inherit',
-            fontSize: '22px',
-            padding: '4px 8px',
-            borderRadius: '4px',
-            cursor: 'pointer',
-            lineHeight: '1',
-        },
-        '.cm-search button[name="close"]:hover': {
-            backgroundColor: 'rgba(0, 0, 0, 0.12)',
-        },
-        '.cm-search-match-count': {
-            fontSize: '12px',
-            color: '#717171',
-            marginLeft: '8px',
-            whiteSpace: 'nowrap' as any,
-        },
-        '.cm-search-match-count-none': {
-            color: '#e51400',
-        },
+        // 搜索 / 替换面板（.cm-panels / .cm-search / 输入框 / 按钮 / 计数）
+        // 的样式统一在 searchPanel.ts 中按 VS Code 主题变量定义，深浅色共用，
+        // 这里不再重复，避免硬编码颜色与卡片主题打架。
 
         // Markdown 语义颜色（源码编辑态）
         '.cm-line .tok-heading, .cm-line .tok-heading1': {
@@ -297,7 +237,9 @@ export const lightTheme: Extension = EditorView.theme(
         },
         '.cm-line .tok-strong, .cm-line .tok-strongEmphasis': {
             color: '#d9a37a',
-            fontWeight: 'inherit',
+            // 和实时模式的「加粗真加粗」共用同一个变量：默认 inherit（不加粗），
+            // 打开设置后才写入 700，两种模式表现一致。
+            fontWeight: 'var(--livewritemd-bold-weight, inherit)',
         },
         '.cm-line .tok-emphasis': {
             color: '#2bbac5',
@@ -311,8 +253,11 @@ export const lightTheme: Extension = EditorView.theme(
             color: '#f29a9a',
         },
 
+        // 左内边距 = 正文与行号竖线的距离（设置项 lineGutterGap），
+        // 右侧 4px 保持原有视觉留白
         '.cm-line': {
-            padding: '0 4px',
+            paddingLeft: 'var(--livewritemd-line-padding-left, 4px)',
+            paddingRight: '4px',
         },
     },
     { dark: false }
@@ -348,8 +293,10 @@ export const darkTheme: Extension = EditorView.theme(
             backgroundColor: 'var(--vscode-editor-background, #1e1e1e)',
             color: 'var(--vscode-editor-foreground, #d4d4d4)',
             height: '100%',
+            // 中英文字体设置合成到 --livewritemd-editor-font-family；
+            // 未设置时逐层回退，和改造前完全一致。代码块不走这条规则。
             fontFamily:
-                'var(--vscode-editor-font-family, "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace)',
+                'var(--livewritemd-editor-font-family, var(--vscode-editor-font-family, "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace))',
         },
 
         // Content area (main editing region)
@@ -464,75 +411,9 @@ export const darkTheme: Extension = EditorView.theme(
             boxShadow: '0 2px 8px rgba(0, 0, 0, 0.36)',
         },
 
-        // Panels (like search panel)
-        '.cm-panels': {
-            backgroundColor: 'var(--vscode-editorWidget-background, var(--vscode-editor-background, #1e1e1e))',
-            color: 'var(--vscode-editor-foreground, #d4d4d4)',
-            borderBottom: '1px solid #454545',
-            padding: '4px 8px',
-            fontFamily:
-                'var(--vscode-editor-font-family, "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace)',
-            fontSize: 'var(--vscode-editor-font-size, 13px)',
-        },
-        '.cm-panels .cm-button': {
-            backgroundColor: '#0e639c',
-            color: '#ffffff',
-            border: 'none',
-            borderRadius: '2px',
-            padding: '2px 8px',
-            cursor: 'pointer',
-            fontSize: '12px',
-        },
-        '.cm-panels .cm-button:hover': {
-            backgroundColor: '#1177bb',
-        },
-        '.cm-panels .cm-textfield': {
-            backgroundColor: 'var(--vscode-input-background, var(--vscode-editor-background, #1e1e1e))',
-            color: 'var(--vscode-input-foreground, var(--vscode-editor-foreground, #d4d4d4))',
-            border: '1px solid #3c3c3c',
-            borderRadius: '2px',
-            padding: '3px 6px',
-            fontSize: 'var(--vscode-editor-font-size, 13px)',
-            outline: 'none',
-        },
-        '.cm-panels .cm-textfield:focus': {
-            borderColor: '#007fd4',
-        },
-        '.cm-panels label': {
-            fontSize: '12px',
-            marginLeft: '4px',
-        },
-        // Search panel layout
-        '.cm-search': {
-            position: 'relative' as any,
-            paddingRight: '28px',
-        },
-        '.cm-search button[name="close"]': {
-            position: 'absolute' as any,
-            top: '4px',
-            right: '4px',
-            backgroundColor: 'rgba(255, 255, 255, 0.08)',
-            color: 'inherit',
-            fontSize: '22px',
-            fontWeight: 'bold',
-            padding: '4px 8px',
-            borderRadius: '4px',
-            cursor: 'pointer',
-            lineHeight: '1',
-        },
-        '.cm-search button[name="close"]:hover': {
-            backgroundColor: 'rgba(255, 255, 255, 0.2)',
-            color: '#ffffff',
-        },
-        '.cm-search-match-count': {
-            fontSize: '12px',
-            color: '#989898',
-            marginLeft: '8px',
-            whiteSpace: 'nowrap' as any,
-        },
-        '.cm-search-match-count-none': {
-            color: '#f48771',
-        },
+        // 搜索 / 替换面板（.cm-panels / .cm-search / 输入框 / 按钮 / 计数）
+        // 的样式统一在 searchPanel.ts 中按 VS Code 主题变量定义，深浅色共用，
+        // 这里不再重复，避免硬编码颜色与卡片主题打架。
 
         // Markdown 语义颜色（源码编辑态）
         '.cm-line .tok-heading, .cm-line .tok-heading1': {
@@ -555,7 +436,9 @@ export const darkTheme: Extension = EditorView.theme(
         },
         '.cm-line .tok-strong, .cm-line .tok-strongEmphasis': {
             color: '#d9a37a',
-            fontWeight: 'inherit',
+            // 和实时模式的「加粗真加粗」共用同一个变量：默认 inherit（不加粗），
+            // 打开设置后才写入 700，两种模式表现一致。
+            fontWeight: 'var(--livewritemd-bold-weight, inherit)',
         },
         '.cm-line .tok-emphasis': {
             color: '#2bbac5',
@@ -569,8 +452,11 @@ export const darkTheme: Extension = EditorView.theme(
             color: '#f29a9a',
         },
 
+        // 左内边距 = 正文与行号竖线的距离（设置项 lineGutterGap），
+        // 右侧 4px 保持原有视觉留白
         '.cm-line': {
-            padding: '0 4px',
+            paddingLeft: 'var(--livewritemd-line-padding-left, 4px)',
+            paddingRight: '4px',
         },
     },
     { dark: true }

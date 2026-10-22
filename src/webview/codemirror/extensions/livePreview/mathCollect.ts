@@ -149,7 +149,7 @@ export function collectMathDecorations(
      * 块级公式（整行 `$$x$$`、多行 `$$`）不走这里，它们的展开粒度仍是行 / 整块。
      */
     const isInlineMathOpen = (mathFrom: number, mathTo: number): boolean => {
-        if (isForcedSourceRange(mathFrom, mathTo)) return true;
+        if (isForcedSourceRange(state, mathFrom, mathTo)) return true;
         if (sel.empty) return sel.head > mathFrom && sel.head < mathTo;
         return mathFrom < focusedRange.to && mathTo > focusedRange.from;
     };
@@ -522,7 +522,7 @@ export function collectCodeSpanMathDecorations(
             const sel = state.selection.main;
             // 行级强制区间（待选 / 钉住）覆盖本行时同样回原文，
             // 否则整行都源码了、反引号里还套着一个公式 widget，看着不像源码
-            if ((sel.from < to && sel.to > from) || isForcedSourceRange(from, to)) return false;
+            if ((sel.from < to && sel.to > from) || isForcedSourceRange(state, from, to)) return false;
 
             // 节点区间是连**反引号一起**的，先把开头/结尾那两串反引号掐掉，
             // 拿到的才是「内容」的准确区间（点击定位、压 0 宽都按它来）。

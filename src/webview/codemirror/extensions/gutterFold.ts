@@ -21,7 +21,7 @@ import { EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
 import { syntaxTree } from '@codemirror/language';
 import type { Extension } from '@codemirror/state';
 import type { SyntaxNode } from '@lezer/common';
-import { foldedLines, foldToggleEffect } from './livePreview/state';
+import { foldedLinesOf, foldToggleEffect } from './livePreview/state';
 
 /** 标题章节结束位置（与 livePreview/plugin.ts 的 headingSectionEnd 同逻辑）。 */
 function headingSectionEnd(heading: SyntaxNode): number {
@@ -109,12 +109,19 @@ function syncGutter(view: EditorView): void {
         gutter.querySelectorAll<HTMLElement>('.cm-gutterElement')
     );
     const cells = allCells.filter((el) => el.style.visibility !== 'hidden');
-    const blocks = view.viewportLineBlocks;
+    // 关键：viewportLineBlocks 里混着「块级 widget 占位块」（折叠后章节替换
+    // 产生的 BlockInfo，type === BlockType.WidgetRange = 3），但 lineNumbers
+    // 不会给 widget 渲染行号格。必须只保留真实文本行 (type === 0)，否则一旦
+    // 已有折叠，cells 与 blocks 数量错位、索引整体后移 —— 连续折叠第二个时
+    // 拿到的行首偏 1，foldedLines 存入错误位置，折叠静默失效。
+    const lineBlocks = view.viewportLineBlocks.filter((b) => b.type === 0);
     cells.forEach((cell, i) => {
-        const block = blocks[i];
+        const block = lineBlocks[i];
         if (!block) return;
+        // 行首直接记在 cell 上：点击时读取，彻底不依赖索引对齐
+        cell.dataset.foldPos = String(block.from);
         const foldable = linePosIsFoldable(view, block.from);
-        const folded = foldedLines.has(block.from);
+        const folded = foldedLinesOf(view.state).has(block.from);
         if (foldable) {
             cell.classList.add('cm-md-foldable-line');
             cell.classList.toggle('is-folded', folded);
@@ -126,25 +133,53 @@ function syncGutter(view: EditorView): void {
     });
 }
 
-/** 点击箭头切换折叠（gutter 上的事件委托）。 */
-function onGutterMouseDown(view: EditorView, event: MouseEvent): void {
+/** 若事件点中的是折叠箭头，返回它所在的行号格，否则 null。 */
+function arrowCellFromEvent(event: Event): HTMLElement | null {
     const arrow = (event.target as HTMLElement | null)?.closest(
         '.cm-md-gutter-fold'
     );
-    if (!arrow) return;
-    // 用箭头所在行号格反查文档行（data 记录行首）
-    const cell = arrow.closest('.cm-gutterElement') as HTMLElement;
-    const idx = Array.from(
-        cell.parentElement?.querySelectorAll('.cm-gutterElement') ?? []
-    ).filter((el) => (el as HTMLElement).style.visibility !== 'hidden').indexOf(cell);
-    const block = view.viewportLineBlocks[idx];
-    if (!block) return;
+    if (!arrow) return null;
+    return arrow.closest('.cm-gutterElement') as HTMLElement;
+}
+
+/**
+ * mousedown：**只拦截默认行为**，不切换折叠。
+ *
+ * 必须 preventDefault / stopPropagation：
+ * - 阻止 CodeMirror 把这次 mousedown 当「设置选区」处理（点行号不应移光标）；
+ * - 阻止编辑器因点到不可编辑的 gutter 而失焦。
+ *
+ * 不能在这里切换状态 + dispatch：CodeMirror 在 mousedown 事件处理中途会把
+ * dispatch 的 DOM 更新（measure + 应用装饰）推迟到 mouseup，表现为「点完
+ * 不刷新，要再动焦点才更新」。真正的切换放到 onArrowClick。
+ */
+function onArrowMouseDown(view: EditorView, event: MouseEvent): void {
+    void view;
+    if (!arrowCellFromEvent(event)) return;
     event.preventDefault();
     event.stopPropagation();
-    if (foldedLines.has(block.from)) {
-        foldedLines.delete(block.from);
+}
+
+/**
+ * click：真正切换折叠并立即重建。
+ *
+ * click 在 mousedown + mouseup 之后触发，已离开 CodeMirror 的 mousedown
+ * 抑制窗口，这次 dispatch 会同步完成 measure 与 DOM 更新，外观立刻刷新。
+ */
+function onArrowClick(view: EditorView, event: MouseEvent): void {
+    const cell = arrowCellFromEvent(event);
+    if (!cell) return;
+    // 行首直接读 cell 上的记录（syncGutter 写入），不靠 cells/blocks 索引对齐
+    const lineFrom = Number(cell.dataset.foldPos);
+    if (!Number.isInteger(lineFrom)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    // 折叠集合按编辑器实例隔离（任务 4）：主编辑器与导图 mini-CM 各自一份
+    const foldedSet = foldedLinesOf(view.state);
+    if (foldedSet.has(lineFrom)) {
+        foldedSet.delete(lineFrom);
     } else {
-        foldedLines.add(block.from);
+        foldedSet.add(lineFrom);
     }
     // 必须带 foldToggleEffect：block StateField 靠它感知折叠集变化、重算子行隐藏
     view.dispatch({ effects: foldToggleEffect.of(null) });
@@ -152,16 +187,55 @@ function onGutterMouseDown(view: EditorView, event: MouseEvent): void {
 
 export const gutterFold = ViewPlugin.fromClass(
     class {
-        constructor(view: EditorView) {
-            view.dom
-                .querySelector('.cm-lineNumbers')
-                ?.addEventListener('mousedown', (e) =>
-                    onGutterMouseDown(view, e as MouseEvent)
-                );
+        /** 当前挂上监听器的行号 gutter 元素。 */
+        private gutterEl: Element | null = null;
+
+        /**
+         * 为什么必须持有这个稳定引用（2026-10-10 修复）：
+         *
+         * 本插件在 editor.ts 里放在 **Compartment** 中，INIT 后 applySettings
+         * 会 reconfigure 一次 `[lineNumbers(), gutterFold]`。reconfigure 时
+         * CodeMirror 会**重建 `.cm-lineNumbers` DOM 元素**，但同一个插件对象
+         * 对应的插件实例被保留、构造函数不再执行 —— 旧监听器就此挂在已经
+         * 脱离文档的旧 gutter 上：箭头照常被 syncGutter 画出来，点击却完全
+         * 没反应。因此每次 update 都要比对 gutter 元素身份，元素一换就把
+         * 监听器迁移过去。
+         */
+        // 两个稳定监听引用：mousedown 只拦截默认行为，click 才切换折叠。
+        // 必须是箭头函数以绑定 this；迁移 / 销毁时靠同一引用才能摘除。
+        private readonly onMouseDown = (e: Event): void =>
+            onArrowMouseDown(this.view, e as MouseEvent);
+        private readonly onClick = (e: Event): void =>
+            onArrowClick(this.view, e as MouseEvent);
+
+        constructor(private readonly view: EditorView) {
+            this.attachGutter();
             syncGutter(view);
         }
+
+        /** 把监听器挂到当前的 .cm-lineNumbers 上；元素变了就整体迁移。 */
+        private attachGutter(): void {
+            const gutter = this.view.dom.querySelector('.cm-lineNumbers');
+            if (gutter === this.gutterEl) return;
+            // 先从旧元素摘除两个监听，避免残留在脱离文档的节点上
+            this.gutterEl?.removeEventListener('mousedown', this.onMouseDown);
+            this.gutterEl?.removeEventListener('click', this.onClick);
+            this.gutterEl = gutter;
+            gutter?.addEventListener('mousedown', this.onMouseDown);
+            gutter?.addEventListener('click', this.onClick);
+        }
+
         update(update: ViewUpdate): void {
+            // 必须在 syncGutter 之前迁移监听：reconfigure 当次更新就会换元素
+            this.attachGutter();
             syncGutter(update.view);
+        }
+
+        /** 插件被移除（关掉行号 / 视图销毁）时清理两个监听。 */
+        destroy(): void {
+            this.gutterEl?.removeEventListener('mousedown', this.onMouseDown);
+            this.gutterEl?.removeEventListener('click', this.onClick);
+            this.gutterEl = null;
         }
     }
 );
