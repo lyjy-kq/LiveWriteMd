@@ -103,6 +103,7 @@ import {
     tableRemeasureEffect,
 } from './state.js';
 import { lineForcePlugin, nativeAnchoredMouseSelection } from './lineForce.js';
+import { tableHoverControls } from './tableHoverControls.js';
 import { createBaseThemeStyles } from './styles.js';
 import type { ILineRange } from './types.js';
 import {
@@ -2445,6 +2446,8 @@ export function createLivePreviewExtension(): Extension[] {
         tableWidthBootstrap,
         // 滚动容器宽度变化时主动重建：定宽列自己不会感知 scroller 变窄
         tableResizePlugin,
+        // 表格边缘「+」：悬停右边框/下边框加列/加行（live 与导图节点共用）
+        tableHoverControls,
         livePreviewPlugin,
         // mousedown 记录起点、移动超阈值整行展开、双击钉住（见 lineForce.ts）
         lineForcePlugin,
@@ -2654,6 +2657,9 @@ export function createLivePreviewDisplayExtension(): Extension[] {
         tableWidthBootstrap,
         // 滚动容器宽度变化时主动重建：定宽列自己不会感知 scroller 变窄
         tableResizePlugin,
+        // 表格边缘「+」：悬停右边框/下边框加列/加行（导图只读显示态，
+        // 命令经 tableEditBridge 临时放开可编辑性执行）
+        tableHoverControls,
         livePreviewPlugin,
         syntaxHighlighting(liveWriteMdTokenHighlight),
         createBaseThemeStyles(),

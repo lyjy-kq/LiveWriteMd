@@ -922,6 +922,24 @@ export class CodeMirrorEditor {
     }
 
     /**
+     * 当前视口**垂直中点**所在的正文行号（1 开始）。
+     *
+     * live → 导图切换时用：扩展侧只下发模式，不带位置；导图要从
+     * 「用户正在看的这一屏中间」开始，就得在编辑器还可见时量出来
+     * （容器一旦 hidden，clientHeight 就是 0，后面再量已经晚了）。
+     *
+     * @returns 行号；编辑器未创建或不可见时返回 null
+     */
+    getViewportMiddleLine(): number | null {
+        if (!this.view) return null;
+        const scroller = this.view.scrollDOM;
+        const height = scroller.clientHeight;
+        if (height <= 0) return null;
+        const block = this.view.lineBlockAtHeight(scroller.scrollTop + height / 2);
+        return this.view.state.doc.lineAt(block.from).number;
+    }
+
+    /**
      * 将编辑器滚动到指定行。
      *
      * 该方法用于大纲面板点击标题后的跳转定位。

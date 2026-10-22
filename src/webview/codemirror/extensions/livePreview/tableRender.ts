@@ -104,11 +104,31 @@ const CELL_OVERHEAD = CELL_PAD_X * 2 + CELL_BORDER_PX * 2 + COL_WIDTH_SLACK;
 const MAX_SACRIFICE_LINES = 3;
 
 /** 单元格 / 缝隙 / 行 / 分隔行的类名。 */
-const CELL_CLASS = 'cm-md-tcell';
+export const CELL_CLASS = 'cm-md-tcell';
 /** 被框选到的格子。整格上高亮，和只涂文字的原生选区区分开。 */
-const CELL_SELECTED_CLASS = 'cm-md-tcell-selected';
+export const CELL_SELECTED_CLASS = 'cm-md-tcell-selected';
+/**
+ * 每行**最后一列**的格子（含行尾补出来的空格子）。
+ *
+ * 悬停加列按钮（tableHoverControls）只在这一列上生效：鼠标靠近它的
+ * 右边框时显示「+」，点一下在表格右侧加一列。
+ */
+export const CELL_LAST_CLASS = 'cm-md-tcell-end';
+/**
+ * 每行**第一列**的格子。
+ *
+ * 所有格子都用 marginLeft:-1px 把相邻边框叠成一条；第一格也左移 1px 后，
+ * 左边框就落到行盒外面，表格看起来没有左边。给第一格单独去掉负边距
+ * （用类名而不是 :first-child —— 格子里前面还有压 0 宽的管道线 span）。
+ */
+export const CELL_FIRST_CLASS = 'cm-md-tcell-start';
 const GAP_CLASS = 'cm-md-tgap';
-const ROW_CLASS = 'cm-md-table-row';
+export const ROW_CLASS = 'cm-md-table-row';
+/**
+ * 表格的最后一个数据行。悬停它的下边框时显示「+」，点击在下方加一行。
+ * （分隔行是折叠的，不算视觉上的行。）
+ */
+export const ROW_LAST_CLASS = 'cm-md-table-last-row';
 const HEADER_CLASS = 'cm-md-table-header';
 /** 偶数数据行：配合 --livewritemd-table-stripe-background 画斑马纹。 */
 const STRIPE_CLASS = 'cm-md-table-stripe';
@@ -1332,8 +1352,12 @@ export function collectTableDecorations(
 
         // 数据行序号：只统计非表头行，用于决定偶数行是否加斑马纹 class
         let dataRowOrdinal = 0;
+        // 行序号：用来认「最后一行」（悬停加行按钮只在这一行生效）
+        let rowOrdinal = 0;
         for (const row of block.rows) {
             const { line, isHeader } = row;
+            const isLastRow = rowOrdinal === block.rows.length - 1;
+            rowOrdinal++;
             // 整行就是一个 flex 容器：格子是它的 flex item，一行里所有格子高度自动拉平。
             // 表格总宽由表格自己的行内宽度（列宽之和）决定，这里不用再写样式。
 
@@ -1343,6 +1367,7 @@ export function collectTableDecorations(
                 dataRowOrdinal++;
                 if (dataRowOrdinal % 2 === 0) rowClass += ` ${STRIPE_CLASS}`;
             }
+            if (isLastRow) rowClass += ` ${ROW_LAST_CLASS}`;
             decos.push(
                 Decoration.line({
                     class: rowClass,
@@ -1376,9 +1401,14 @@ export function collectTableDecorations(
                 const style = align ? `width:${width}px; text-align:${align}` : `width:${width}px`;
                 // 被选区**完整盖住**的格子多一个类名：整格上高亮，而不是只把文字涂蓝。
                 // 只盖住一半的格子不加 —— 那时用户选的是格子里的几个字（见 coversCell）
-                const cls = selection && coversCell(selection, cell)
-                    ? `${CELL_CLASS} ${CELL_SELECTED_CLASS}`
-                    : CELL_CLASS;
+                // 最后一列（含行尾补齐的空格子）再带一个 end 类名，
+                // 供「悬停右边框加列」定位。
+                const isLastCol = col === block.colCount - 1;
+                const cls =
+                    `${CELL_CLASS}` +
+                    (selection && coversCell(selection, cell) ? ` ${CELL_SELECTED_CLASS}` : '') +
+                    (col === 0 ? ` ${CELL_FIRST_CLASS}` : '') +
+                    (isLastCol ? ` ${CELL_LAST_CLASS}` : '');
 
                 // cell.to 处是不是可以「借」的空白字符（空格/Tab，且不是行尾）
                 const canBorrow =
@@ -1417,9 +1447,15 @@ export function collectTableDecorations(
                     const style = align
                         ? `width:${width}px; text-align:${align}`
                         : `width:${width}px`;
+                    // 补齐的空格子也要带「第一列 / 最后一列」标记：
+                    // 整行没有格子时第一格才是左边框的落点
+                    const padCls =
+                        `${CELL_CLASS}` +
+                        (col === 0 ? ` ${CELL_FIRST_CLASS}` : '') +
+                        (col === block.colCount - 1 ? ` ${CELL_LAST_CLASS}` : '');
                     decos.push(
                         Decoration.widget({
-                            widget: new EmptyCellWidget(width, style, CELL_CLASS),
+                            widget: new EmptyCellWidget(width, style, padCls),
                             side: 1,
                         }).range(line.lineTo)
                     );

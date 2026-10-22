@@ -126,6 +126,13 @@ interface EditSession {
      * 避免为了「缩回原高」把整个 mini-CM 销毁重建。
      */
     baseHeight: number;
+    /**
+     * 进入编辑前的节点宽度。
+     *
+     * 数学块在编辑态会按源码自然宽度撑宽（LaTeX 比渲染后的公式长），
+     * 文本没变时退出编辑要退回这个宽度，避免节点越编辑越宽。
+     */
+    baseWidth: number;
     display: NonNullable<ReturnType<MapCanvas['getDisplay']>>;
 }
 
@@ -186,6 +193,15 @@ export class MindMapApp {
     /** 浮动工具条。 */
     private toolbarEl: HTMLDivElement | null = null;
     private toolbarTimer: ReturnType<typeof setInterval> | null = null;
+    /**
+     * 多选浮动操作条（顶部居中）。
+     *
+     * Ctrl 多选 / 框选之后必须有一个明确的「删除全部选中项」入口：
+     * 单节点工具条上那个「删除」的语义是按当前节点算的，多选时显示它
+     * 既容易误点、也看不出到底会删几个。这条独立的操作条只在多选集合
+     * 非空时出现，文案直接带数量。
+     */
+    private multiBarEl: HTMLDivElement | null = null;
     /**
      * 「待确认删除」的节点 uid（第一次点删除后按钮变红）。
      *
@@ -262,6 +278,7 @@ export class MindMapApp {
             onViewChange: () => this.positionToolbar(),
             canDrop: (dragUid, parentUid) => this.validateDropParent(dragUid, parentUid),
             onMarqueeSelect: (uids) => this.applyMarqueeSelection(uids),
+            onDisplayEdit: (node, text) => this.handleDisplayEdit(node, text),
         } satisfies MapCanvasOptions);
 
         this.applyNodeSizeVars();
@@ -276,6 +293,7 @@ export class MindMapApp {
         // 离屏实例 LRU 淘汰：默认关闭，必须跟设置同步，否则旧行为会一直开着
         this.canvas.setDisplayCacheEnabled(this.settings.mindmapDisplayCache);
         this.createToolbar();
+        this.createMultiToolbar();
         this.createContextMenu();
 
         window.addEventListener('keydown', this.handleWindowKeyDown, true);
@@ -315,6 +333,7 @@ export class MindMapApp {
         if (this.multiSelected.size > 0) {
             this.multiSelected.clear();
             this.canvas.setMultiSelected(this.multiSelected);
+            this.updateMultiBar();
         }
         // 编辑中（输入法组合态）：外部更新延后，保护编辑 DOM
         if (this.editSession) {
@@ -525,6 +544,8 @@ export class MindMapApp {
         }
         this.toolbarEl?.remove();
         this.toolbarEl = null;
+        this.multiBarEl?.remove();
+        this.multiBarEl = null;
         this.closeContextMenu();
         this.resizeObserver?.disconnect();
         this.resizeObserver = null;
@@ -624,13 +645,22 @@ export class MindMapApp {
                 // 单元格是独立节点，直接把缩进画进去会在格子左边多出一截空白。
                 return {
                     doc: selfRange
-                        ? dedentListSource(sliceRange(selfRange))
+                        ? dedentNodeSource(sliceRange(selfRange))
                         : node.text,
                     sentinel: true,
                 };
             default:
-                // code / table / math / mermaid / image / meta：叶子，整段源码
-                return { doc: range ? sliceRange(range) : node.text, sentinel: true };
+                // code / table / math / mermaid / image / meta：叶子，整段源码。
+                // 与列表节点一样去掉公共行首缩进：列表项里的围栏在源文档中
+                // 为了挂进列表会缩进到内容列（有序列表嵌套时能到 7 格）。
+                // 节点是独立的 mini-CM，缩进 ≥4 格的围栏会被 CommonMark 判成
+                // 「缩进代码块」而不是 FencedCode —— mermaid 的块级 widget
+                // 根本不会生成，表现就是「mermaid 不渲染」。提交时
+                // renameNode 会把缩进按原样补回去。
+                return {
+                    doc: range ? dedentNodeSource(sliceRange(range)) : node.text,
+                    sentinel: true,
+                };
         }
     }
 
@@ -653,9 +683,17 @@ export class MindMapApp {
             this.toggleMultiSelection(uid);
             return;
         }
+        // 单击 = 选中（并且可以顺手拖动节点）；
+        // 再点一次**已经选中的**节点才进入编辑。
+        //
+        // 以前单击直接 startEdit，结果是「想拖节点却先进了编辑」，
+        // 而且刚拖选完文字松手也会被当成点击。现在第一下只负责选中，
+        // 编辑入口保留在：再次单击、双击、F2 / 工具条。
+        // 多选状态下的普通单击要先清掉多选、切回单选，不算「再次点击」。
+        const wasSelected = this.selectedUid === uid && this.multiSelected.size === 0;
         this.selectNode(uid);
         if (node.kind === 'root') return;
-        this.startEdit(uid, event.clientX, event.clientY);
+        if (wasSelected) this.startEdit(uid, event.clientX, event.clientY);
     }
 
     /**
@@ -668,10 +706,12 @@ export class MindMapApp {
         else this.multiSelected.add(uid);
         this.canvas.setMultiSelected(this.multiSelected);
         if (this.multiSelected.size > 0) {
-            // 工具条仍锚在最后点的节点上（删除按钮会按整个集合删）
+            // 多选期间只显示顶部的批量操作条；单节点工具条上的
+            // ＋子节点 / ＋兄弟 对一批节点没有意义，先藏起来。
             this.selectedUid = uid;
             this.canvas.setSelected(uid);
-            this.showToolbar(uid);
+            if (this.toolbarEl) this.toolbarEl.style.display = 'none';
+            this.updateMultiBar();
         } else {
             this.clearSelection();
         }
@@ -692,6 +732,7 @@ export class MindMapApp {
         this.selectedUid = uids.length > 0 ? uids[uids.length - 1] : null;
         this.canvas.setSelected(this.selectedUid);
         if (this.toolbarEl) this.toolbarEl.style.display = 'none';
+        this.updateMultiBar();
     }
 
     /** 选中节点、显示工具条、联动大纲。 */
@@ -700,10 +741,11 @@ export class MindMapApp {
         if (this.pendingDeleteUid !== null && this.pendingDeleteUid !== uid) {
             this.clearPendingDelete();
         }
-        // 普通点击 = 回到单选，清掉上一轮框选
+        // 普通点击 = 回到单选，清掉上一轮框选 / 多选
         if (this.multiSelected.size > 0) {
             this.multiSelected.clear();
             this.canvas.setMultiSelected(this.multiSelected);
+            this.updateMultiBar();
         }
         this.selectedUid = uid;
         this.canvas.setSelected(uid);
@@ -742,6 +784,7 @@ export class MindMapApp {
         this.canvas.setSelected(null);
         this.resetDisplaySelections(null);
         if (this.toolbarEl) this.toolbarEl.style.display = 'none';
+        this.updateMultiBar();
         if (this.toolbarTimer) {
             clearInterval(this.toolbarTimer);
             this.toolbarTimer = null;
@@ -830,6 +873,53 @@ export class MindMapApp {
         });
         this.container.appendChild(bar);
         this.toolbarEl = bar;
+    }
+
+    /**
+     * 多选操作条（顶部居中，独立于单节点工具条）。
+     *
+     * 只放一个按钮：删除 N 项。第一次点击变红并改成「确认删除 N 项」，
+     * 4 秒内再点一次才真正删除 —— 和多选常常一次十几个节点，误删代价
+     * 比单节点大得多，和单节点删除保持同一套两段式确认。
+     */
+    private createMultiToolbar(): void {
+        if (this.multiBarEl) return;
+        const bar = document.createElement('div');
+        bar.className = 'lwm-toolbar lwm-multi-toolbar';
+        bar.style.display = 'none';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.act = 'multi-delete';
+        button.textContent = '删除 0 项';
+        bar.appendChild(button);
+        // 操作条自己的事件不能漏给画布（否则点击会被当成空白点击 → 清空多选）
+        bar.addEventListener('pointerdown', (event) => event.stopPropagation());
+        bar.addEventListener('click', (event) => {
+            event.stopPropagation();
+            if ((event.target as HTMLElement).closest('button')) this.deleteSelected();
+        });
+        this.container.appendChild(bar);
+        this.multiBarEl = bar;
+    }
+
+    /** 同步多选操作条的可见性 / 数量 / 待确认态。 */
+    private updateMultiBar(): void {
+        const bar = this.multiBarEl;
+        if (!bar) return;
+        const count = this.multiSelected.size;
+        if (count === 0) {
+            bar.style.display = 'none';
+            this.pendingDeleteMulti = false;
+            return;
+        }
+        const button = bar.querySelector<HTMLButtonElement>('button');
+        if (button) {
+            button.textContent = this.pendingDeleteMulti
+                ? `确认删除 ${count} 项`
+                : `删除 ${count} 项`;
+            button.classList.toggle('lwm-danger', this.pendingDeleteMulti);
+        }
+        bar.style.display = 'flex';
     }
 
     /** 造一个「添加类」按钮 + 悬浮二级菜单。 */
@@ -1059,6 +1149,7 @@ export class MindMapApp {
         if (this.multiSelected.size > 0) {
             this.multiSelected.clear();
             this.canvas.setMultiSelected(this.multiSelected);
+            this.updateMultiBar();
         }
         // 占位节点 / 被 LRU 逐出的节点：强制建一个真实显示实例。
         // ensureEditDisplay 无视缩放降级档，保证拿到的是**全量**实例
@@ -1074,6 +1165,8 @@ export class MindMapApp {
             initialText: display.getText(),
             // 进编辑前的高度：文本没变时用它把编辑期间撑高的盒子收回去
             baseHeight: current.height,
+            // 宽度同理：数学块编辑时按源码撑宽，退出时收回
+            baseWidth: current.width,
             display,
         };
         this.editSession = session;
@@ -1100,9 +1193,50 @@ export class MindMapApp {
         // 这一帧里会话可能已经被提交/重建（外部 UPDATE、整树 setData），
         // 那时旧 display 已销毁，再 focusAt 会向已销毁视图派发选区事务。
         requestAnimationFrame(() => {
-            if (this.editSession !== session) return;
+            if (this.editSession !== session || display.destroyed) return;
+            // 数学块：编辑态显示的是 $$ 源码，比渲染后的公式宽得多。
+            // 进编辑这一帧按源码自然宽度重算一次，只撑宽不缩窄
+            // （宽度不得低于显示时的宽度）；高度保持显示态不变，
+            // 编辑区箱内滚动、只露两行（见 mindmapStyles）。
+            if (session.kind === 'math') {
+                const needed = this.measureEditingSourceWidth(display);
+                if (needed > session.baseWidth) {
+                    this.canvas.setNodeWidth(session.uid, needed);
+                }
+            }
             display.focusAt(x, y);
         });
+    }
+
+    /**
+     * 估算编辑态源码需要多宽（px）。
+     *
+     * 不用 DOM 量：编辑区的 .cm-line 是自动折行的，scrollWidth 永远等于
+     * 盒子宽度，量不出「一整行源码有多长」。用 canvas 按 .cm-content 的
+     * 实际字体逐行 measureText（与排版用的是同一套字体，误差只有几个 px），
+     * 取最长一行再加上节点左右留白。
+     *
+     * @param display 已经翻成编辑态的节点显示实例
+     * @returns 需要的宽度；拿不到 2D 上下文时返回 0（调用方会跳过撑宽）
+     */
+    private measureEditingSourceWidth(
+        display: NonNullable<ReturnType<MapCanvas['getDisplay']>>
+    ): number {
+        const content = display.view.contentDOM;
+        const style = getComputedStyle(content);
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return 0;
+        // 字体必须与 CM 内容一致；canvas 的 font 语法与 CSS 一致
+        ctx.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+        let max = 0;
+        for (const line of display.getText().split('\n')) {
+            if (line.length === 0) continue;
+            max = Math.max(max, ctx.measureText(line).width);
+        }
+        if (max <= 0) return 0;
+        // 节点内边距 + 光标/滚动条的安全余量
+        return Math.ceil(max) + 28;
     }
 
     /**
@@ -1187,6 +1321,25 @@ export class MindMapApp {
         });
     }
 
+    /**
+     * 显示态按钮改动了节点本地文档（mermaid 宽度档位 / 表格加行加列）。
+     *
+     * 这些操作不经过编辑会话，改动只存在于节点的 mini-CM 里。这里按 uid
+     * 走 renameNode → commit 回写 markdown；放到微任务里执行，避免在上面的
+     * CM dispatch 过程中同步重建整棵树（会把正在派发的 view 销毁掉）。
+     * 编辑会话里不处理：那种改动由 blur/Esc 的提交路径统一回写。
+     */
+    private handleDisplayEdit(node: MapNode, text: string): void {
+        if (this.editSession) return;
+        const uid = node.uid;
+        queueMicrotask(() => {
+            if (this.editSession || !this.currentTree) return;
+            // 期间可能整树重建过：按 uid 重新确认节点还在
+            if (!this.canvas.getNode(uid)) return;
+            this.commit(renameNode(this.markdown, this.currentTree, uid, text));
+        });
+    }
+
     /** 提交当前编辑会话（如有）。 */
     private commitEditSession(): void {
         const session = this.editSession;
@@ -1219,7 +1372,9 @@ export class MindMapApp {
         // 文本没变：全量档下显示实例本来就是完整的，exitEdit 已经切回显示态，
         // 就地收尾即可（只把编辑时撑高的盒子收回去）。轻量 / 纯文本档才需要
         // 重建降档，finishEditDisplay 返回 false 时再走 refreshNode。
-        if (this.canvas.finishEditDisplay(session.uid, session.baseHeight)) return;
+        if (this.canvas.finishEditDisplay(session.uid, session.baseHeight, session.baseWidth)) {
+            return;
+        }
         this.canvas.refreshNode(session.uid, true);
     }
 
@@ -1335,17 +1490,18 @@ export class MindMapApp {
         }
         if (!this.pendingDeleteMulti) {
             this.pendingDeleteMulti = true;
-            this.showMultiDeleteHint(uids.length);
+            // 操作条自己的按钮变红并改成「确认删除 N 项」—— 提示直接
+            // 落在用户刚才点的那个按钮上，不用再飘一条独立的提示。
+            this.updateMultiBar();
             if (this.pendingDeleteTimer !== null) clearTimeout(this.pendingDeleteTimer);
             this.pendingDeleteTimer = setTimeout(() => {
                 this.pendingDeleteTimer = null;
                 this.pendingDeleteMulti = false;
-                this.removeMultiDeleteHint();
+                this.updateMultiBar();
             }, 4000);
             return;
         }
         this.pendingDeleteMulti = false;
-        this.removeMultiDeleteHint();
         if (this.pendingDeleteTimer !== null) {
             clearTimeout(this.pendingDeleteTimer);
             this.pendingDeleteTimer = null;
@@ -1358,20 +1514,8 @@ export class MindMapApp {
         this.canvas.setSelected(null);
         this.clearPendingDelete();
         if (this.toolbarEl) this.toolbarEl.style.display = 'none';
+        this.updateMultiBar();
         this.commit(deleteNodes(this.markdown, tree, uids));
-    }
-
-    /** 多选删除的提示条（复用 perf-notice 的浮层样式）。 */
-    private showMultiDeleteHint(count: number): void {
-        this.removeMultiDeleteHint();
-        const hint = document.createElement('div');
-        hint.className = 'lwm-perf-notice lwm-multi-delete-hint';
-        hint.textContent = `已选中 ${count} 项，再按一次 Delete 确认删除`;
-        this.container.appendChild(hint);
-    }
-
-    private removeMultiDeleteHint(): void {
-        this.container.querySelectorAll('.lwm-multi-delete-hint').forEach((el) => el.remove());
     }
 
     /** 把删除按钮切成红色「确认删除」态（4 秒后自动复位）。 */
@@ -1406,9 +1550,9 @@ export class MindMapApp {
             button.classList.remove('lwm-danger');
             button.textContent = '删除';
         }
-        // 多选删除的待确认态一并复位（否则提示条会留在屏幕上）
+        // 多选删除的待确认态一并复位（顶部操作条恢复成「删除 N 项」）
         this.pendingDeleteMulti = false;
-        this.removeMultiDeleteHint();
+        this.updateMultiBar();
     }
 
     /** 展开按钮事件：同步 collapsedUids 与数据树的 expand 标记。 */
@@ -1467,6 +1611,41 @@ export class MindMapApp {
         if (!targetUid) return false;
         this.selectAndCenterUid(targetUid);
         return true;
+    }
+
+    /**
+     * 从文本模式切进导图后的定位。
+     *
+     * - 固定 100% 缩放（需求：进入导图时 100%，不按整棵树 fit 后缩小）；
+     * - 选中视口中线所在的节点并居中（行号 → 最深节点）。
+     * 必须先 setActive(true)（容器可见、节点已测量），再做这两步。
+     *
+     * @param line0 0-based 正文行号
+     */
+    focusLineFromEditor(line0: number): void {
+        if (!this.active) return;
+        // 先定缩放，再居中：centerOn 用的是当前 zoom
+        this.canvas.setZoomPercent(100);
+        const uid = this.findNodeUidAtLine(line0);
+        if (uid) this.selectAndCenterUid(uid);
+    }
+
+    /**
+     * 离开导图前取「用户正在看的位置」对应的 0-based 行号。
+     *
+     * 优先级：选中/正在编辑的节点 → 视口中心所在节点。调用方必须在
+     * setActive(false) **之前**取（那时会清空选中）。
+     *
+     * @returns 行号；没有可用节点时返回 null
+     */
+    getFocusLine0(): number | null {
+        if (!this.currentTree) return null;
+        const selected = this.selectedUid ? this.canvas.getNode(this.selectedUid) : null;
+        const selectedRange = selected?.data._lineRange as NodeLineRange | undefined;
+        if (selectedRange) return selectedRange.fromLine;
+        const centered = this.canvas.getNodeAtViewportCenter();
+        const centeredRange = centered?.data._lineRange as NodeLineRange | undefined;
+        return centeredRange?.fromLine ?? null;
     }
 
     /** 选中并居中（目标被折叠祖先藏住时先展开祖先）。 */
@@ -2094,10 +2273,15 @@ export class MindMapApp {
 }
 
 /**
- * 去掉列表项源码的公共行首缩进（导图单元格渲染用）。
+ * 去掉节点源码的公共行首缩进（导图单元格渲染用）。
  *
- * 嵌套列表项在源文档里带父级缩进（空格或 Tab），但单元格本身已经是
- * 独立的节点，缩进再画进去就会在格子左侧多出一截空白（有序 / 无序同此）。
+ * 列表项及列表项里的媒体块在源文档里带父级缩进（空格或 Tab），但单元格
+ * 本身已经是独立的节点，缩进再画进去就会在格子左侧多出一截空白
+ * （有序 / 无序 / 代码块 / 表格 / mermaid 同此）。
+ *
+ * 对媒体块还有一层语义影响：围栏缩进 ≥4 格时，独立的 mini-CM 会把它
+ * 解析成「缩进代码块」，mermaid 的块级 widget 不会生成。去掉缩进后
+ * 才是普通 FencedCode（提交时 renameNode 会补回去）。
  *
  * 以首行为基准整体左移，续行保留相对缩进：
  * ```
@@ -2106,10 +2290,10 @@ export class MindMapApp {
  * ```
  * 首行没有缩进（顶层列表项）时原样返回，避免无谓的字符串复制。
  *
- * @param source 列表项自身的源码行（`_selfLineRange` 切片）
+ * @param source 节点自身的源码行（`_selfLineRange` / `_lineRange` 切片）
  * @returns 去掉公共缩进后的源码
  */
-function dedentListSource(source: string): string {
+function dedentNodeSource(source: string): string {
     const lines = source.split('\n');
     const indent = /^[ \t]*/.exec(lines[0] ?? '')?.[0] ?? '';
     if (!indent) return source;

@@ -176,7 +176,15 @@ export function renameNode(
     // para / 媒体 / 元数据节点（code/table/image/math/mermaid/meta）：
     // 整段行区间替换。编辑的就是其完整 md 源码（围栏、表格线、图片语法、
     // front matter 的 --- 全部由用户输入负责 —— 统一显示态后编辑态含完整结构）。
-    lines.splice(fromLine, toLine - fromLine + 1, ...trimmed.split('\n'));
+    //
+    // 显示态给节点喂的是**去掉公共行首缩进**的源码（列表项里的围栏如果
+    // 保留 4+ 空格，独立 mini-CM 会把它当成缩进代码块，mermaid 就不渲染）。
+    // 提交时要按原首行缩进补回去，否则列表项里的代码块/表格会掉出列表。
+    const originalIndent = /^[ \t]*/.exec(lines[fromLine] ?? '')?.[0] ?? '';
+    const replacement = trimmed.split('\n').map((line) =>
+        line.trim() === '' ? '' : originalIndent + line
+    );
+    lines.splice(fromLine, toLine - fromLine + 1, ...replacement);
     return { text: lines.join('\n') };
 }
 
@@ -274,8 +282,10 @@ export function addSiblingNode(
         // 段落兄弟（Shift+Enter 的普通文本路径）：空行 + 同缩进段落。
         // 空行是段落边界，没有它新文字会被并进同一段；段落若在列表项内部
         // （缩进过的续段），沿用原行缩进才能继续算作该列表项的子段落。
+        // 只有父节点是列表时才继承缩进 —— 顶层段落后面新加的兄弟必须顶格。
         const sourceLine = lines[rangeOf(node).fromLine] ?? '';
-        const indent = /^[ \t]*/.exec(sourceLine)?.[0] ?? '';
+        const inList = found.parent?.data._kind === 'list';
+        const indent = inList ? (/^[ \t]*/.exec(sourceLine)?.[0] ?? '') : '';
         lines.splice(insertAt, 0, '', indent + NEW_NODE_TEXT);
     } else {
         const sourceLine = lines[rangeOf(node).fromLine] ?? '- ';
@@ -330,8 +340,12 @@ export function addNode(
     if (!parent) return { text: markdown };
 
     const lines = markdown.split('\n');
-    const targetRange = rangeOf(target);
     const siblingIndex = found.index;
+    // root 没有 _lineRange（treeBuilder 只给非 root 写），rangeOf 会抛错。
+    // 根节点加子节点时插入位置本来就是文末，这里给一个「最后一行」的假区间。
+    const targetRange = target.data._lineRange
+        ? rangeOf(target)
+        : { fromLine: Math.max(0, lines.length - 1), toLine: Math.max(0, lines.length - 1) };
     // 插入位置：子节点 / 兄弟都追加到目标整棵子树之后
     // （子节点=父章节末尾，兄弟=目标子树之后；顺序都正确）
     const insertAt = placement === 'child' && targetKind === 'root'
@@ -341,14 +355,26 @@ export function addNode(
     const newUid = `${parent.data.uid}/${newIndex}`;
 
     // —— 列表上下文 ——
+    //
+    // 缩进只属于列表：块级内容（代码块/表格/公式/mermaid/段落）只有在
+    // **列表项内部**才需要缩进到内容列，否则会掉出列表项变成顶层块。
+    // 以前这里把目标行自身的行首空白当成缩进源，一个缩进了 7 个空格的
+    // 目标行会把整段新媒体块也缩进 7 格 —— 导图节点拿到的是独立 mini-CM
+    // 文档，≥4 空格的围栏会被 CommonMark 当成缩进代码块，mermaid 直接
+    // 不渲染。现在：父节点不是列表就一律顶格。
     const targetFirstLine = lines[targetRange.fromLine] ?? '';
-    // 父节点是列表（加子节点）或目标本身是列表（加兄弟）时，新内容要带缩进
+    const parentIsList = parent.data._kind === 'list';
+    // 父是列表（加子节点）或目标是列表（加兄弟）时，新内容要带缩进
     const listParent = placement === 'child' && targetKind === 'list';
     const listSibling = placement === 'sibling' && targetKind === 'list';
-    const childIndent = listParent
-        ? listContentColumn(targetFirstLine)
-        : listIndentOf(targetFirstLine);
-    const listIndent = placement === 'sibling' ? listIndentOf(targetFirstLine) : childIndent;
+    // 列表内子项必须缩进到内容列（`1. ` 比 `- ` 宽）；
+    // 其余列表上下文沿用目标行的行首缩进（兄弟与父内容列对齐）
+    const childIndent = listParent ? listContentColumn(targetFirstLine) : 0;
+    const listIndent = listParent
+        ? childIndent
+        : parentIsList
+          ? listIndentOf(targetFirstLine)
+          : 0;
     const ordered = target.data._listOrdered === true;
 
     /** 造一个列表项。 */

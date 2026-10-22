@@ -23,13 +23,7 @@
  */
 
 import { EditorState, Prec, Compartment, StateField } from '@codemirror/state';
-import {
-    EditorView,
-    keymap,
-    drawSelection,
-    Decoration,
-    type DecorationSet,
-} from '@codemirror/view';
+import { EditorView, keymap, Decoration, type DecorationSet } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { markdownKeymap } from '../codemirror/extensions/keymap.js';
@@ -44,6 +38,9 @@ import {
     createLivePreviewDisplayExtension,
     livePreviewEditAddons,
 } from '../codemirror/extensions/livePreview/plugin.js';
+import { codeBlockSelectionPlugin } from '../codemirror/extensions/livePreview/codeBlockSelection.js';
+import { tableEditBridge } from '../codemirror/extensions/livePreview/tableHoverControls.js';
+import { runTableCommand } from '../codemirror/extensions/livePreview/tableCommands.js';
 import {
     ensureTokenColorCss,
     liveWriteMdTokenHighlight,
@@ -91,6 +88,15 @@ export interface NodeDisplayOptions {
      * 缩放后这些细节本来也看不清，省掉的是每节点几十个装饰与测量。
      */
     lite?: boolean;
+    /**
+     * 显示态（**非编辑会话**）文档被改动时回调，参数是去掉哨兵换行的源码。
+     *
+     * 显示态的按钮会直接改本地文档：mermaid 的宽度档位改 info 行、
+     * 表格边缘的「+」通过 withEditable 临时可编辑后执行 runTableCommand。
+     * 这些改动不经过 enterEdit/exitEdit，上层收不到提交事件，必须在这里
+     * 接出去走 renameNode → 源文档；否则下一次 setData 就被覆盖。
+     */
+    onDisplayChange?: (text: string) => void;
 }
 
 /** 节点显示会话。 */
@@ -182,6 +188,16 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
     const readOnlyComp = new Compartment();
     const editExtComp = new Compartment();
 
+    // 翻转状态必须**先于扩展声明**：display 更新监听器要读它们判断
+    // 「现在是显示态还是编辑会话」。编辑会话的提交走 enterEdit 的 blur/Esc，
+    // 显示态才需要我们在这里把改动转给上层。
+    let editing = false;
+    let destroyed = false;
+    // display 在视图创建之后才组装：表格 + 按钮的桥用闭包取它（调用发生在用户
+    // 交互时，那时 display 早就赋好值了）。用对象包一层是为了让 TS 别把
+    // 「声明时是 null」的收窄带到闭包里（会报 never）。
+    const bridgeRef: { display: NodeDisplay | null } = { display: null };
+
     const extensions = [
         // 只读显示：不可编辑（选区仍然可用，行内展开靠的就是选区）
         editableComp.of(EditorView.editable.of(false)),
@@ -200,6 +216,29 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
                 '.cm-content': { padding: '2px 0' },
             })
         ),
+        // 选区高亮：主编辑器把 drawSelection 的矩形层藏起来，靠这个插件
+        // 用 mark 装饰画选中文字（含代码块 / 行内元素 / widget 高亮）。
+        // 节点 CM 以前漏了它 —— 鼠标拖选时 CM 的选区状态其实变了，但屏幕上
+        // 没有任何高亮，看起来就是「节点里的文字根本选不中」。
+        // 轻量档也要带上：它只是几段 mark 装饰，没有监听器/测量成本。
+        codeBlockSelectionPlugin,
+        // 表格边缘「+」的执行桥：显示态是只读的（editable=false），
+        // runTableCommand 会直接拒绝。这里在真正执行命令的那一下临时
+        // 放开可编辑性（withEditable），执行完立刻收回 —— 不进入完整编辑会话。
+        tableEditBridge.of((command, pos) => {
+            const target = bridgeRef.display;
+            if (!target || destroyed) return false;
+            return target.withEditable((view) => runTableCommand(view, command, pos));
+        }),
+        // 显示态文档变化 → 交给上层回写 markdown。
+        // 编辑会话里 docChanged 不归这里管（blur/Esc 会提交），所以先判 editing。
+        EditorView.updateListener.of((update) => {
+            if (!update.docChanged || editing || destroyed) return;
+            const text = update.state.doc.toString();
+            options.onDisplayChange?.(
+                sentinel && text.endsWith('\n') ? text.slice(0, -1) : text
+            );
+        }),
         // 与文本模式渲染一致的**显示态** live 扩展包（无编辑交互插件：
         // 几十实例同屏时的监听器/测量钩子大头都在这里省掉）。
         // 轻量档（画布缩得很小）连这层也省掉，只显示源码排版。
@@ -252,9 +291,7 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
         }),
     });
 
-    // —— 翻转状态 ——
-    let editing = false;
-    let destroyed = false;
+    // —— 翻转状态 ——（editing / destroyed 已在扩展之前声明，监听器要用）
     let blurHandler: (() => void) | null = null;
 
     /** 事件截断（编辑态专用，防拖选文字触发节点/画布拖拽）。 */
@@ -465,5 +502,7 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
             });
         },
     };
+    // 扩展里的闭包从这里拿到 display（表格加行/列的临时可编辑桥）
+    bridgeRef.display = display;
     return display;
 }

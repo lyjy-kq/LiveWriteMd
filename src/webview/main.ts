@@ -448,6 +448,9 @@ function applyMindmapUndoRedo(kind: 'undo' | 'redo'): void {
 async function enterMindmapMode(): Promise<void> {
     const host = getMindmapHost();
     const editorHost = getOrCreateEditorHost();
+    // 必须在隐藏编辑器之前量：容器 hidden 之后 clientHeight = 0，
+    // lineBlockAtHeight 拿不到当前屏
+    const middleLine = editor?.getViewportMiddleLine() ?? null;
     editorHost.hidden = true;
     host.hidden = false;
 
@@ -473,6 +476,9 @@ async function enterMindmapMode(): Promise<void> {
     }
     await mindmapApp.whenReady();
     mindmapApp.setActive(true);
+    // 从文本模式「当前看到的这一屏中间」开始，并固定 100% 缩放。
+    // setActive 内部的 fit() 会按整棵树自动缩放，focusLineFromEditor 覆盖它。
+    if (middleLine !== null) mindmapApp.focusLineFromEditor(middleLine - 1);
     sendLog('INFO', 'Mindmap mode activated');
 }
 
@@ -480,12 +486,18 @@ async function enterMindmapMode(): Promise<void> {
  * 退出导图模式：隐藏导图容器、恢复文本容器；CM 状态（撤销栈/光标/滚动）原样保留。
  */
 function leaveMindmapMode(): void {
+    // 必须在 setActive(false) 之前取：它会 clearSelection()，之后就只剩
+    // 「视口中心」这一条线索了。优先级：选中/编辑节点 → 视口中心节点。
+    const focusLine = mindmapApp?.getFocusLine0() ?? null;
     getMindmapHost().hidden = true;
     getOrCreateEditorHost().hidden = false;
     mindmapApp?.setActive(false);
     // 容器从 display:none 恢复后让 CM 重新测量
     requestAnimationFrame(() => {
-        editor?.getView()?.requestMeasure();
+        const view = editor?.getView();
+        view?.requestMeasure();
+        // 回到导图里最后看的那一项（行号是 0-based，scrollToLine 要 1-based）
+        if (focusLine !== null) editor?.scrollToLine(focusLine + 1);
     });
 }
 

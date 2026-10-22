@@ -959,7 +959,12 @@ export class MermaidWidget extends WidgetType {
                         : undefined,
                     // 浮层里改完代码，把新源码写回围栏之间（见 commitMermaidSource）
                     onSourceCommit: (next: string) => this.commitMermaidSource(view, next, range),
-                    mountHost: view.dom,
+                    // 挂到 <body>，不要挂 view.dom：导图节点的 mini-CM 位于
+                    // 画布的 world(translate)+scaler(scale) 变换层里，浮层又是
+                    // position:fixed。fixed 在变换祖先下会相对该祖先定位、还会
+                    // 被节点/画布的 overflow 裁掉 —— 放大查看在导图里直接失效。
+                    // body 是文档根，无变换、无裁剪，live 与导图共用同一份。
+                    mountHost: document.body,
                 });
             },
             async () => {

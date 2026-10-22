@@ -180,9 +180,11 @@ export function createBaseThemeStyles(): Extension {
             color: `var(--livewritemd-italic-color, ${tone('#2bbac5')})`,
         },
         '&light .cm-md-bold': {
-            // 金色系压深后必然偏棕，这是色相决定的；60% 时约 rgb(105,84,67)，
-            // 已经能明显看出是「暗金」而不是橙色，再深就完全是褐色了。
-            color: `var(--livewritemd-bold-color, ${tone('#d9a37a', true, 60)})`,
+            // 浅色主题：正文已经压到纯黑，加粗若再用「压深的金」
+            // （rgb(105,84,67) 那种深棕）会比正文还灰，完全看不出重点。
+            // 这里换成饱和度更高的暗金（#a86b00，白底对比约 4.4:1）：
+            // 色相明确是金/琥珀，又不会亮到读不清，才压得住纯黑正文。
+            color: `var(--livewritemd-bold-color, #a86b00)`,
         },
         '&light .cm-md-italic': {
             color: `var(--livewritemd-italic-color, ${tone('#2bbac5', true)})`,
@@ -622,6 +624,41 @@ export function createBaseThemeStyles(): Extension {
             // 「实在放不下才从中间断开」，长 URL、长代码照断不误。
             whiteSpace: 'normal',
             overflowWrap: 'break-word',
+        },
+        // 表格**最左边**那格的左边框：所有格子都用 marginLeft:-1px 把相邻
+        // 边框叠成一条，第一格也被一起左移了 1px，左边框落到行盒外面，
+        // 视觉上表格像「没有左边」。把第一格退回 0，左边框落回盒内。
+        '.cm-md-tcell.cm-md-tcell-start': {
+            marginLeft: '0',
+        },
+        // 悬停右边框/下边框时那条边泛蓝（tableHoverControls 加的类）
+        '.cm-md-tcell-edge-col': {
+            boxShadow: 'inset -2px 0 0 var(--vscode-focusBorder, #007fd4)',
+        },
+        '.cm-md-tcell-edge-row': {
+            boxShadow: 'inset 0 -2px 0 var(--vscode-focusBorder, #007fd4)',
+        },
+        // 边缘「+」按钮：绝对定位在 view.dom 里（编辑器是定位上下文），
+        // 尺寸/配色跟 live 的预览按钮保持一套视觉
+        '.cm-md-table-add': {
+            position: 'absolute',
+            zIndex: '20',
+            width: '18px',
+            height: '18px',
+            borderRadius: '999px',
+            display: 'none',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '14px',
+            lineHeight: '1',
+            cursor: 'pointer',
+            userSelect: 'none',
+            color: '#ffffff',
+            backgroundColor: 'var(--vscode-focusBorder, #007fd4)',
+            boxShadow: '0 1px 5px rgba(0, 0, 0, 0.35)',
+        },
+        '.cm-md-table-add:hover': {
+            filter: 'brightness(1.12)',
         },
         // 管道线：压 0 宽但保留在文档里（光标还能停上去，方向键能跨过去）
         // flex 容器里它也是个 item，靠 font-size:0 把宽度吃掉

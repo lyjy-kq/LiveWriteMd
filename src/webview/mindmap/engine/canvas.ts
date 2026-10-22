@@ -175,6 +175,18 @@ export interface MapCanvasOptions {
      * @param uids 当前框住的节点 uid（按视图顺序）
      */
     onMarqueeSelect?(uids: string[]): void;
+    /**
+     * 显示态（非编辑会话）里节点本地文档被改动了。
+     *
+     * 目前的来源都是 widget 上的按钮：mermaid 的宽度档位（改 info 行里的
+     * `{width=…}`）、表格边缘的加行/加列（withEditable 临时可编辑后执行
+     * runTableCommand）。这些改动只落在节点自己的 mini-CM 文档里，
+     * 必须由上层走 renameNode → 源文档，否则下次 setData 就被覆盖回去。
+     *
+     * @param node 被改动的节点
+     * @param text 改动后的节点源码（已去掉哨兵换行）
+     */
+    onDisplayEdit?(node: MapNode, text: string): void;
 }
 
 /** 指针状态。 */
@@ -551,7 +563,6 @@ export class MapCanvas {
         const oldRoot = this.root;
         const oldByUid = new Map(this.byUid);
         const oldDisplays = this.displays;
-        const oldMounted = new Set(this.mounted);
         const reverseRemap = new Map<string, string>();
         if (opts?.uidRemap) {
             for (const [from, to] of opts.uidRemap) reverseRemap.set(to, from);
@@ -698,12 +709,21 @@ export class MapCanvas {
         }
         this.displays = displays;
 
-        // 4. 重建挂载集合（DOM 里还在 nodeLayer 的才算挂载）
+        // 4. 重建挂载集合（DOM 里还在 nodeLayer 的才算挂载）。
+        //
+        // 必须按**新模型 + DOM 实际父节点**重建，不能拿旧的 mounted uid
+        // 到新模型里查：删除一个节点后，后面兄弟的路径式 uid 会整体前移
+        // （0/2/0 → 0/1/0），用旧 uid 查到的要么不存在、要么根本是另一个
+        // 节点。那些真正还挂在画布上的子节点会因此漏出 mounted 集合，
+        // 而 relayout() 只给 mounted 里的节点写 transform —— 它们的 DOM
+        // 就停在删除前的位置，表现为「下一个兄弟的子节点位置乱一下」，
+        // 直到收起再展开（走 mountNode）才被重新定位。
         this.mounted.clear();
-        for (const uid of oldMounted) {
-            const node = this.byUid.get(uid);
-            if (node?.wrapper?.parentElement === this.nodeLayer) this.mounted.add(uid);
-        }
+        walkAll(newRoot, (node) => {
+            if (node.wrapper?.parentElement === this.nodeLayer) {
+                this.mounted.add(node.uid);
+            }
+        });
         // 集合是重建的，版本号对不上旧值：下一轮不要跳过可见性同步
         this.mountedVersion += 1;
 
@@ -1417,6 +1437,9 @@ export class MapCanvas {
             codeLanguages: this.options.codeLanguages,
             // 轻量档只省显示用的 live preview 扩展，编辑态仍会补回交互插件
             lite: effectiveMode === 'lite',
+            // 显示态按钮（mermaid 宽度、表格加行/列）改了本地文档后，
+            // 立刻交给上层回写源文档
+            onDisplayChange: (text) => this.options.onDisplayEdit?.(node, text),
         });
         wrapper.replaceChildren(display.container);
         node.display = display;
@@ -1743,11 +1766,12 @@ export class MapCanvas {
      * @param baseHeight 进入编辑前的节点高度（0 = 没记录，不恢复）
      * @returns 是否已就地处理完
      */
-    finishEditDisplay(uid: string, baseHeight: number): boolean {
+    finishEditDisplay(uid: string, baseHeight: number, baseWidth?: number): boolean {
         const node = this.byUid.get(uid);
         if (!node) return false;
         const entry = this.displays.get(uid);
         if (!entry || entry.mode !== 'full' || this.renderTier !== 0) return false;
+        let changed = false;
         // 编辑期间 growNodeHeight 只增不减，文本没变就恢复到进编辑前的高度
         const target =
             Number.isFinite(baseHeight) && baseHeight > 0 ? baseHeight : node.height;
@@ -1757,10 +1781,54 @@ export class MapCanvas {
                 node.wrapper.style.height = `${target}px`;
                 this.positionNode(node);
             }
+            changed = true;
+        }
+        // 宽度回缩：数学块进编辑时可能按源码自然宽度撑宽了（见 setNodeWidth），
+        // 文本没变就退回进编辑前的宽度；文本变了会走 commit → 完整重测。
+        if (
+            baseWidth !== undefined &&
+            Number.isFinite(baseWidth) &&
+            baseWidth > 0 &&
+            Math.abs(node.width - baseWidth) > 0.5
+        ) {
+            node.width = baseWidth;
+            if (node.wrapper) {
+                node.wrapper.style.width = `${baseWidth}px`;
+                this.positionNode(node);
+            }
+            changed = true;
+        }
+        if (changed) {
             this.relayout();
             this.updateViewport();
             this.options.onViewChange();
         }
+        return true;
+    }
+
+    /**
+     * 直接改写节点盒子的宽度（编辑态按内容宽度撑宽用）。
+     *
+     * 与 growNodeHeight 同款：只写 node.width + 内联样式，然后 relayout，
+     * **不动 node.height**。数学块编辑时源码（LaTeX）往往比渲染出来的公式长，
+     * 不撑宽的话编辑区会挤成一条窄缝、只能左右滚动，很难改。
+     *
+     * @param uid 节点 uid
+     * @param width 目标宽度（px）
+     * @returns 是否真的改了宽度
+     */
+    setNodeWidth(uid: string, width: number): boolean {
+        const node = this.byUid.get(uid);
+        const next = Math.ceil(width);
+        if (!node?.wrapper || !Number.isFinite(next) || next <= 0) return false;
+        if (Math.abs(node.width - next) <= 0.5) return false;
+        node.width = next;
+        node.measured = true;
+        node.wrapper.style.width = `${next}px`;
+        this.positionNode(node);
+        this.relayout();
+        this.updateViewport();
+        this.options.onViewChange();
         return true;
     }
 
@@ -2368,6 +2436,51 @@ export class MapCanvas {
         this.scheduleWorldLayer();
     }
 
+    /**
+     * 直接把缩放设成指定百分比（以容器中心为锚点）。
+     *
+     * 模式切换用：从 live 进导图时要求固定 100%，而 setActive 里的 fit()
+     * 会按整棵树自动算一个缩放。zoomAt 是唯一能同时维护 pan/zoom 与
+     * 降级档位的入口，所以这里包一层，不直接改 this.zoom。
+     *
+     * @param percent 缩放百分比（100 = 原始大小）
+     */
+    setZoomPercent(percent: number): void {
+        const rect = this.container.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+        this.zoomAt(rect.width / 2, rect.height / 2, percent / 100);
+    }
+
+    /**
+     * 视口中心所在的节点（取包含中心点的最深一层）。
+     *
+     * live → map 的「从当前页中间开始」反向操作用：map → live 时如果
+     * 没有选中节点，就以用户正在看的画面中心为准。
+     */
+    getNodeAtViewportCenter(): MapNode | null {
+        if (!this.root) return null;
+        const rect = this.container.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return null;
+        const worldX = (rect.width / 2 - this.panX) / this.zoom;
+        const worldY = (rect.height / 2 - this.panY) / this.zoom;
+        // byUid 含折叠子树里的节点；只从**可见**节点里挑，否则会返回
+        // 一个根本不在屏幕上的节点位置
+        let best: MapNode | null = null;
+        walkVisible(this.root, (node) => {
+            if (
+                worldX < node.x ||
+                worldX > node.x + node.width ||
+                worldY < node.y ||
+                worldY > node.y + node.height
+            ) {
+                return;
+            }
+            // 包含中心点的节点里取最深的一层（节点之间可能有重叠的布局盒子）
+            if (!best || node.depth > best.depth) best = node;
+        });
+        return best;
+    }
+
     /** 把节点平移到容器中心。 */
     centerOn(uid: string): void {
         const node = this.byUid.get(uid);
@@ -2620,6 +2733,20 @@ export class MapCanvas {
         // 展开按钮：交给 click 处理（要读 ctrlKey），不要启动拖动
         if (target?.closest?.('.lwm-expand-btn')) {
             event.stopPropagation();
+            return;
+        }
+
+        // mermaid 节点右下角的「放大 / 复制 / 尺寸」按钮组：完全交给 widget
+        // 自己处理（按钮的 mousedown 由 CM 的 ignoreEvent 放行）。这里不能
+        // 建 node 指针，否则 pointerup 会被当成「单击节点」——第一次点按钮
+        // 选中节点，第二次就顺手进了编辑态，按钮看着像失灵。
+        // 表格边缘的「+」按钮也一样：它挂在编辑器根节点上（不在 .cm-content
+        // 里），不拦住的话 pointerup 会被当成单击节点，第二次点按钮就进编辑态。
+        if (
+            target?.closest?.(
+                '.cm-md-preview-actions, .cm-md-resize-actions, .cm-md-table-add'
+            )
+        ) {
             return;
         }
 

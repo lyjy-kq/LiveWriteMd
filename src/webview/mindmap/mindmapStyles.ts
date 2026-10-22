@@ -406,9 +406,11 @@ export const MINDMAP_CSS = `
     color: inherit;
 }
 /* widget 自带的放大/复制/尺寸按钮在导图节点里隐藏：保持节点紧凑、
-   点击行为统一（点击图片/图表 = 选中节点，不进浮层） */
-.lwm-node .cm-md-preview-actions,
-.lwm-node .cm-md-resize-actions {
+   点击行为统一（点击图片/图表 = 选中节点，不进浮层）。
+   mermaid 例外：用户要求复用 live 的「放大查看 / 尺寸调节」，
+   这两组按钮在 mermaid 节点里原样显示（见下面的恢复规则）。 */
+.lwm-node:not(.lwm-node-mermaid) .cm-md-preview-actions,
+.lwm-node:not(.lwm-node-mermaid) .cm-md-resize-actions {
     display: none !important;
 }
 /* 哨兵行（显示 CM 末尾的隐藏空行）：压 0 高，把选区引出块外，
@@ -595,6 +597,17 @@ export const MINDMAP_CSS = `
     background: var(--vscode-inputValidation-errorBackground, #b93b3b);
     color: #ffffff;
     box-shadow: inset 0 0 0 1px var(--vscode-errorForeground, #f14c4c);
+}
+
+/* 多选操作条：顶部居中，和节点工具条区分开（节点工具条跟着节点走）。
+   只在 Ctrl 多选 / Ctrl 框选后出现，按钮文案带数量，避免误删。 */
+.lwm-multi-toolbar {
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+.lwm-multi-toolbar button {
+    padding: 4px 12px;
 }
 
 /* =================================================================
@@ -810,6 +823,11 @@ export const MINDMAP_CSS = `
 .lwm-node-editing .cm-scroller {
     overflow-y: auto !important;
     max-height: 100%;
+}
+/* 数学块编辑态：源码区只露两行（$$ 行与公式行），其余箱内滚动。
+   高度不重算，仍沿用显示态节点盒子的高度，只是把可视窗口收紧。 */
+.lwm-node-math.lwm-node-editing .cm-scroller {
+    max-height: calc(2 * var(--livewritemd-line-height, 1.7em)) !important;
 }
 .lwm-node-editing .cm-content {
     cursor: text;

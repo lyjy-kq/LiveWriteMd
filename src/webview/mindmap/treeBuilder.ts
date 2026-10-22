@@ -212,9 +212,15 @@ export function buildMindMapTree(markdown: string, fileName: string): MindMapTre
         }
         // 媒体节点：代码块 / mermaid / 表格进导图（设计文档 §6 + 迭代 N1）
         if (node.name === 'FencedCode' || node.name === 'CodeBlock') {
-            // mermaid 围栏单独成一类（显示态渲染图，而不是代码文本）
+            // mermaid 围栏单独成一类（显示态渲染图，而不是代码文本）。
+            // info 行可能带标题 / 宽度（`mermaid 流程图 {width=50%}`），
+            // 只取第一个空白分隔的 token 判语言 —— 与 live 的
+            // extractFencedCodeLanguage 保持一致，否则调过宽度后节点会
+            // 变成普通代码块，mermaid 又「不渲染」了。
             const info = node.getChildren('CodeInfo')[0];
-            const lang = info ? doc.slice(info.from, info.to).trim().toLowerCase() : '';
+            const lang = info
+                ? doc.slice(info.from, info.to).trim().split(/\s+/)[0].toLowerCase()
+                : '';
             appendMediaBlock(node, currentParent(), lang === 'mermaid' ? 'mermaid' : 'code');
             return;
         }
@@ -364,8 +370,11 @@ export function buildMindMapTree(markdown: string, fileName: string): MindMapTre
                 appendListItems(child, node, child.name === 'OrderedList');
             } else if (child.name === 'FencedCode' || child.name === 'CodeBlock') {
                 // 列表项内的代码块 → 该列表节点的 code 子节点（mermaid 单独成类）
+                // info 只取第一个 token（理由同上：宽度/标题修饰不改变语言）
                 const info = child.getChildren('CodeInfo')[0];
-                const lang = info ? doc.slice(info.from, info.to).trim().toLowerCase() : '';
+                const lang = info
+                    ? doc.slice(info.from, info.to).trim().split(/\s+/)[0].toLowerCase()
+                    : '';
                 appendMediaBlock(child, node, lang === 'mermaid' ? 'mermaid' : 'code');
             } else if (child.name === 'Table') {
                 appendMediaBlock(child, node, 'table');
