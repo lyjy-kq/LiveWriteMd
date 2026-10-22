@@ -58,7 +58,10 @@ interface BuildNode {
  * @returns simple-mind-map 树数据
  */
 export function buildMindMapTree(markdown: string, fileName: string): MindMapTreeNode {
-    const raw = markdown.length > 0 ? markdown : '';
+    // CRLF → LF：CRLF 文档每行尾巴带 \r，GFM 表格分隔行（`| --- |`）
+    // 末尾多出这个字符就认不出表格，整段塌成普通段落（数学块判定同理）。
+    // \r\n → \n 行数不变，下游 markdownEdit 按行号回写原文仍然对得上。
+    const raw = (markdown.length > 0 ? markdown : '').replace(/\r\n/g, '\n');
     // 先修正「缩进不够」的嵌套列表，再解析（见 normalizeNestedListIndent）。
     // 注意后续所有文本切片都用修正后的 doc：行数不变、只有行首空白变了，
     // 行号映射仍然有效；显示侧 dedentListSource 会把补出来的缩进去掉。
@@ -237,7 +240,14 @@ export function buildMindMapTree(markdown: string, fileName: string): MindMapTre
             appendParagraphIfUseful(node, currentParent());
             return;
         }
-        // Blockquote / HTMLBlock / HorizontalRule 等非树内容：直接跳过
+        // HTML 块（README 常见的 `<p align="center">…</p>`、徽章图片行等）：
+        // 作为 html 媒体节点进导图。渲染仍交给 live 的 HTML 块 widget，
+        // 节点格子只是把同一段源码喂给 mini-CM。
+        if (node.name === 'HTMLBlock' && isUsefulHtmlBlock(doc.slice(node.from, node.to))) {
+            appendMediaBlock(node, currentParent(), 'html');
+            return;
+        }
+        // Blockquote / 纯注释 HTML / HorizontalRule 等非树内容：直接跳过
     }
 
     /**
@@ -247,7 +257,7 @@ export function buildMindMapTree(markdown: string, fileName: string): MindMapTre
     function appendMediaBlock(
         node: SyntaxNode,
         parent: BuildNode,
-        kind: 'code' | 'table' | 'math' | 'mermaid'
+        kind: 'code' | 'table' | 'math' | 'mermaid' | 'html'
     ): void {
         const fromLine = lineOf(node.from);
         const toLine = lineOf(node.to - 1);
@@ -268,6 +278,17 @@ export function buildMindMapTree(markdown: string, fileName: string): MindMapTre
                     : `${language || '代码'} · ${contentLines} 行`;
         } else if (kind === 'math') {
             text = `数学 · ${toLine - fromLine + 1} 行`;
+        } else if (kind === 'html') {
+            // HTML 块的摘要：剥掉标签后的可见文字（降级档只显示摘要），
+            // 纯图片块没有文字就退回「HTML · N 行」。
+            const plain = src
+                .replace(/<[^>]*>/g, ' ')
+                .replace(/&nbsp;/gi, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+            text = plain
+                ? plain.slice(0, PARA_TRUNCATE_LENGTH)
+                : `HTML · ${toLine - fromLine + 1} 行`;
         } else {
             // 表格：表头 + 分隔行 + 数据行；摘要给「行 × 列」
             const tableLines = src.split('\n').filter((line) => line.trim() !== '');
@@ -362,6 +383,14 @@ export function buildMindMapTree(markdown: string, fileName: string): MindMapTre
                     firstContent = child;
                     node.text = extractListItemText(doc, child);
                     node.ownToLine = lineOf(child.to - 1);
+                } else if (
+                    child.name === 'Paragraph' &&
+                    isDisplayMathParagraph(doc, child)
+                ) {
+                    // 列表项里的显示公式（`- 项` 后接 `$$…$$`）：作为 math 子节点。
+                    // 以前这里只会走 appendParagraphIfUseful，而它见到 `$$` 开头
+                    // 直接 return —— 用户新加的公式节点就这么「消失」了。
+                    appendMediaBlock(child, node, 'math');
                 } else {
                     // 列表项里的后续段落 -> para 子节点（保持源顺序）
                     appendParagraphIfUseful(child, node);
@@ -378,8 +407,14 @@ export function buildMindMapTree(markdown: string, fileName: string): MindMapTre
                 appendMediaBlock(child, node, lang === 'mermaid' ? 'mermaid' : 'code');
             } else if (child.name === 'Table') {
                 appendMediaBlock(child, node, 'table');
+            } else if (
+                child.name === 'HTMLBlock' &&
+                isUsefulHtmlBlock(doc.slice(child.from, child.to))
+            ) {
+                // 列表项里的 HTML 块同样作为 html 媒体子节点
+                appendMediaBlock(child, node, 'html');
             }
-            // 列表项内的引用 / HTML 块等仍跳过
+            // 列表项内的引用等仍跳过
             child = child.nextSibling;
         }
         // 兜底：极端情况下没有 Paragraph 子节点
@@ -509,6 +544,24 @@ function stripInlineImages(text: string): string {
 }
 
 /**
+ * HTML 块是否值得进导图 / 渲染成 widget。
+ *
+ * 只认「至少有一个可渲染标签」的块：纯注释、`<script>` / `<style>` 这类
+ * 渲染结果为空的块宁可按原来的方式跳过。`<details>` 有 live 专用的折叠
+ * 交互 widget，不算普通 HTML 块（避免和 details 装饰重复替换同一段）。
+ */
+function isUsefulHtmlBlock(raw: string): boolean {
+    const text = raw.trim();
+    if (!text) return false;
+    if (/^<details\b/i.test(text)) return false;
+    if (text.startsWith('<!--')) return false;
+    if (/<(?:script|style)\b/i.test(text)) return false;
+    return /<(?:p|div|center|b|strong|i|em|img|a|br|span|h[1-6]|table|ul|ol|li|blockquote|figure)\b/i.test(
+        text
+    );
+}
+
+/**
  * 整段是不是 $$ 数学块（迭代 N1）。
  *
  * 判定与 live 的公式收集器一致按文本特征：去掉首尾空白后
@@ -567,7 +620,7 @@ function detectFrontMatterEndLine(doc: string): number {
  * @param markdown 原始全文
  * @returns 修正行首缩进后的全文（行数、行序不变）
  */
-function normalizeNestedListIndent(markdown: string): string {
+export function normalizeNestedListIndent(markdown: string): string {
     const lines = markdown.split('\n');
     /** 打开中的列表项：缩进列 + 标记宽度（含标记后的空白）。 */
     const stack: Array<{ indent: number; width: number }> = [];

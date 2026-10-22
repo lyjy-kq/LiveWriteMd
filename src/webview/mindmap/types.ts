@@ -5,8 +5,9 @@
  * 本项目自定义字段一律下划线开头（设计文档 §4）。
  */
 
-/** 导图节点语义类型。code / table / image / math / mermaid 合称「媒体节点」
- * （设计文档 §6 媒体节点；math/mermaid 为迭代 N1 新增）；
+/** 导图节点语义类型。code / table / image / math / mermaid / html 合称
+ * 「媒体节点」（设计文档 §6 媒体节点；math/mermaid 为迭代 N1 新增，
+ * html 用于 README 常见的居中段落 / 徽章图片块）；
  * meta = 文档 front matter 元数据节点（任务 14，根节点固定首位的叶子）。 */
 export type MindMapNodeKind =
     | 'root'
@@ -18,6 +19,7 @@ export type MindMapNodeKind =
     | 'image'
     | 'math'
     | 'mermaid'
+    | 'html'
     | 'meta';
 
 /** 节点在源 Markdown 中对应的 0-based 行区间（含两端）。根节点没有行区间。 */

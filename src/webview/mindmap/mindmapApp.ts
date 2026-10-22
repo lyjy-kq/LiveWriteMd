@@ -54,8 +54,10 @@ import {
     addNode,
     addSiblingNode,
     countSubtreeNodes,
+    deleteChildNodes,
     deleteNode,
     deleteNodes,
+    deleteSelfKeepChildren,
     findNodeByUid as findTreeNodeByUid,
     isMediaKind,
     moveNode,
@@ -136,6 +138,23 @@ interface EditSession {
     display: NonNullable<ReturnType<MapCanvas['getDisplay']>>;
 }
 
+/**
+ * 「拆分到子节点」的选区快照。
+ *
+ * 必须在选区变化的那一刻备好：点击工具条按钮会让编辑区失焦，
+ * mini-CM 的 blur 处理器会立刻把编辑会话提交掉（editSession 变 null），
+ * 等 click 的 action 执行时再读选区已经来不及了。
+ */
+interface SplitCapture {
+    uid: string;
+    from: number;
+    to: number;
+    /** 选中文字（换行已压成空格的单行） */
+    text: string;
+    /** 快照时节点的完整文本（去哨兵行） */
+    fullText: string;
+}
+
 export class MindMapApp {
     private readonly container: HTMLElement;
     private readonly options: MindMapAppOptions;
@@ -187,6 +206,11 @@ export class MindMapApp {
 
     private selectedUid: string | null = null;
     private editSession: EditSession | null = null;
+    /**
+     * 「拆分到子节点」的最新选区快照（选区变化时刷新）。
+     * 按钮点击时编辑会话可能已被 blur 提交掉，只能用这份快照。
+     */
+    private splitCapture: SplitCapture | null = null;
     /** 编辑中撑高节点的合并帧：每帧最多量一次内容高度，别每个按键都强制布局。 */
     private growFrame: number | null = null;
 
@@ -812,15 +836,22 @@ export class MindMapApp {
         const bar = document.createElement('div');
         bar.className = 'lwm-toolbar';
         bar.style.display = 'none';
+        // 「拆分」：只在编辑态选中了文字时出现（见 refreshSplitButton）。
+        // 主按钮 = 拆到子节点；悬停二级菜单可选拆到兄弟节点。
+        bar.appendChild(this.createSplitMenu());
         bar.appendChild(this.createAddMenu('child', '＋子节点'));
         bar.appendChild(this.createAddMenu('sibling', '＋兄弟'));
-        const deleteButton = document.createElement('button');
-        deleteButton.type = 'button';
-        deleteButton.dataset.act = 'delete';
-        deleteButton.textContent = '删除';
-        bar.appendChild(deleteButton);
-        // 工具条上的按下事件不要漏给画布（避免触发平移/选中）
-        bar.addEventListener('pointerdown', (event) => event.stopPropagation());
+        bar.appendChild(this.createDeleteMenu());
+        // 工具条上的按下事件不要漏给画布（避免触发平移/选中）。
+        // 还要 preventDefault 挡住默认的焦点转移：点按钮时编辑中的节点
+        // 不该失焦（失焦会立刻 blur 提交会话，「拆分到子节点」这类
+        // 依赖选区的操作就会被打断；按钮在 mousedown 时被 hide 还会
+        // 连 click 都发不出来）。
+        bar.addEventListener('pointerdown', (event) => {
+            event.stopPropagation();
+            event.preventDefault();
+        });
+        bar.addEventListener('mousedown', (event) => event.preventDefault());
         bar.addEventListener('click', (event) => {
             event.stopPropagation();
             const target = event.target as HTMLElement;
@@ -834,8 +865,34 @@ export class MindMapApp {
                 this.addFromMenu(placement, addItem);
                 return;
             }
+            // 删除的二级菜单项（只删自己 / 只删子节点 / 连同子树）
+            const delItem = target.closest<HTMLElement>('[data-del]');
+            if (delItem) {
+                this.deleteFromMenu(delItem);
+                return;
+            }
+            // 拆分的二级菜单项（拆到子节点 / 拆到兄弟节点）
+            const splitItem = target.closest<HTMLElement>('[data-split]');
+            if (splitItem) {
+                if (this.splitCapture) {
+                    this.splitSelection(
+                        this.splitCapture,
+                        splitItem.dataset.split === 'sibling' ? 'sibling' : 'child'
+                    );
+                }
+                return;
+            }
             const button = target.closest<HTMLButtonElement>('button[data-act]');
-            if (!button || !this.selectedUid) return;
+            if (!button) return;
+            if (button.dataset.act === 'split') {
+                // 拆分不依赖 selectedUid（编辑会话可能已被失焦提交掉），
+                // 全靠选区变化时备好的快照；主按钮 = 拆到子节点
+                if (this.splitCapture) {
+                    this.splitSelection(this.splitCapture, 'child');
+                }
+                return;
+            }
+            if (!this.selectedUid) return;
             switch (button.dataset.act) {
                 case 'child':
                     // 普通点击 = 普通文本节点
@@ -920,6 +977,34 @@ export class MindMapApp {
             button.classList.toggle('lwm-danger', this.pendingDeleteMulti);
         }
         bar.style.display = 'flex';
+        this.positionMultiBar();
+    }
+
+    /**
+     * 多选操作条定位到「最下面的选中节点」的下方。
+     *
+     * 多选经常跨越好几层（框选一列 / Ctrl 点散点），固定在顶部会离
+     * 操作对象很远；贴到最下面那个节点的下缘，和单节点工具条
+     * 「跟着节点走」的体感一致。
+     */
+    private positionMultiBar(): void {
+        const bar = this.multiBarEl;
+        if (!bar || bar.style.display === 'none' || this.multiSelected.size === 0) {
+            return;
+        }
+        let bottom = -Infinity;
+        let left = 0;
+        for (const uid of this.multiSelected) {
+            const rect = this.canvas.getNodeRect(uid);
+            if (!rect) continue;
+            if (rect.bottom > bottom) {
+                bottom = rect.bottom;
+                left = rect.left;
+            }
+        }
+        if (bottom === -Infinity) return;
+        bar.style.left = `${left}px`;
+        bar.style.top = `${bottom + 6}px`;
     }
 
     /** 造一个「添加类」按钮 + 悬浮二级菜单。 */
@@ -1006,6 +1091,89 @@ export class MindMapApp {
         return wrap;
     }
 
+    /**
+     * 造「删除」按钮 + 悬浮二级菜单。
+     *
+     * 普通点击保留原来的默认行为（删整棵子树，有子项时先变红要二次确认），
+     * 悬停展开的二级菜单提供导图里另外两种常见删法：
+     * - 只删除自己：子节点整体上移一级，接替当前节点的位置；
+     * - 只删除子节点：保留当前节点，清空它下面的分支。
+     *
+     * 实现方式与「＋子节点 / ＋兄弟」完全一致（`.lwm-tool-menu`），
+     * 显示/隐藏交给 CSS 的 :hover，不额外维护开关状态。
+     */
+    /**
+     * 「拆分」按钮 + 悬浮二级菜单（拆到子节点 / 拆到兄弟节点）。
+     *
+     * 主按钮点击 = 拆到子节点（最常用）。整个菜单只在编辑态有文字
+     * 选区时可见（refreshSplitButton 控制），因为拆分作用的对象是
+     * 选区而不是节点本身。
+     */
+    private createSplitMenu(): HTMLDivElement {
+        const wrap = document.createElement('div');
+        wrap.className = 'lwm-tool-menu';
+        wrap.dataset.menu = 'split';
+        wrap.style.display = 'none';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.act = 'split';
+        button.textContent = '拆分';
+        button.title = '把选中的文字剪到一个新的子节点里；悬停可选拆到兄弟节点';
+        wrap.appendChild(button);
+
+        const popup = document.createElement('div');
+        popup.className = 'lwm-tool-popup';
+        const addItem = (act: 'child' | 'sibling', text: string, title: string): void => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.dataset.split = act;
+            item.textContent = text;
+            item.title = title;
+            popup.appendChild(item);
+        };
+        addItem('child', '拆分到子节点', '选中文字剪成一个新子节点');
+        addItem('sibling', '拆分到兄弟节点', '选中文字剪成当前节点后面的同级节点');
+        wrap.appendChild(popup);
+        return wrap;
+    }
+
+    private createDeleteMenu(): HTMLDivElement {
+        const wrap = document.createElement('div');
+        wrap.className = 'lwm-tool-menu';
+        wrap.dataset.menu = 'delete';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.act = 'delete';
+        button.textContent = '删除';
+        button.title = '点击删除节点及子节点；悬停选择其它删除方式';
+        wrap.appendChild(button);
+
+        const popup = document.createElement('div');
+        popup.className = 'lwm-tool-popup';
+        const addItem = (
+            act: 'subtree' | 'self' | 'children',
+            text: string,
+            title: string
+        ): void => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.dataset.del = act;
+            item.textContent = text;
+            item.title = title;
+            popup.appendChild(item);
+        };
+        // 文案里的数量由 showToolbar 动态补（「（共 N 项）」）
+        addItem('subtree', '删除节点及子节点', '连同整棵子树一起删除（与点击「删除」相同）');
+        addItem(
+            'self',
+            '只删除自己',
+            '保留子节点，让它们接替当前节点的位置'
+        );
+        addItem('children', '只删除子节点', '保留当前节点，删掉它下面的所有分支');
+        wrap.appendChild(popup);
+        return wrap;
+    }
+
     /** 普通点击「＋子节点 / ＋兄弟」：插入普通文本节点。 */
     private addQuick(placement: 'child' | 'sibling'): void {
         this.insertNodeSpec(placement, { type: 'text' });
@@ -1085,7 +1253,9 @@ export class MindMapApp {
             );
             if (menu) menu.classList.toggle('lwm-menu-disabled', disabled);
         };
-        const childDisabled = kind === 'para' || kind === 'meta' || media;
+        // 段落（文本叶子）也能加子节点：addNode 会先把它升级成列表项。
+        // 媒体 / meta 仍是真叶子（代码块、表格里塞不进子节点）。
+        const childDisabled = kind === 'meta' || media;
         // 段落 / 媒体现在支持加兄弟（普通文本节点），root 与元数据仍不行
         const siblingDisabled = kind === 'root' || kind === 'meta';
         setDisabled('child', childDisabled);
@@ -1093,6 +1263,35 @@ export class MindMapApp {
         setDisabled('delete', kind === 'root');
         setMenuDisabled('child', childDisabled);
         setMenuDisabled('sibling', siblingDisabled);
+        // 根节点不能删：整个删除菜单（含悬停展开）一起禁用
+        setMenuDisabled('delete', kind === 'root');
+
+        // 删除二级菜单：文案带子项数量，「只删除子节点」在没有分支时禁用
+        const treeNode =
+            this.currentTree && this.selectedUid
+                ? findTreeNodeByUid(this.currentTree, this.selectedUid)
+                : null;
+        const childCount = treeNode ? countSubtreeNodes(treeNode.node) : 0;
+        const deleteMenu = this.toolbarEl.querySelector<HTMLElement>(
+            '.lwm-tool-menu[data-menu="delete"]'
+        );
+        const subtreeItem = deleteMenu?.querySelector<HTMLButtonElement>(
+            '[data-del="subtree"]'
+        );
+        if (subtreeItem) {
+            subtreeItem.textContent =
+                childCount > 0 ? `删除节点及子节点` : '删除节点';
+        }
+        const childrenItem = deleteMenu?.querySelector<HTMLButtonElement>(
+            '[data-del="children"]'
+        );
+        if (childrenItem) {
+            childrenItem.disabled = childCount === 0;
+            childrenItem.title =
+                childCount === 0
+                    ? '当前节点没有子节点'
+                    : '保留当前节点，删掉它下面的所有分支';
+        }
         this.toolbarEl.style.display = 'flex';
         this.positionToolbar();
         if (this.toolbarTimer) clearInterval(this.toolbarTimer);
@@ -1102,6 +1301,8 @@ export class MindMapApp {
 
     /** 工具条定位到选中节点右下方；菜单会按容器边界翻转方向。 */
     private positionToolbar(): void {
+        // 多选操作条也要跟帧（它独立显隐，不受单节点工具条状态影响）
+        this.positionMultiBar();
         if (!this.toolbarEl || !this.selectedUid || this.toolbarEl.style.display === 'none') {
             return;
         }
@@ -1188,17 +1389,21 @@ export class MindMapApp {
                 : undefined,
             // 回车换行 / 自动折行让内容变高时撑高盒子。
             onDocChanged: () => this.scheduleGrowEditingNode(session),
+            // 选中一段文字 → 工具条出现「拆分到子节点」；塌回光标 → 收起来
+            onSelectionChange: () => this.refreshSplitButton(),
         });
         // 等一帧让 CM 完成重配与布局，再按点击坐标落光标（不全选）。
         // 这一帧里会话可能已经被提交/重建（外部 UPDATE、整树 setData），
         // 那时旧 display 已销毁，再 focusAt 会向已销毁视图派发选区事务。
         requestAnimationFrame(() => {
             if (this.editSession !== session || display.destroyed) return;
-            // 数学块：编辑态显示的是 $$ 源码，比渲染后的公式宽得多。
-            // 进编辑这一帧按源码自然宽度重算一次，只撑宽不缩窄
-            // （宽度不得低于显示时的宽度）；高度保持显示态不变，
-            // 编辑区箱内滚动、只露两行（见 mindmapStyles）。
-            if (session.kind === 'math') {
+            // 媒体节点（公式 / HTML 块 / mermaid / 代码 / 表格 / 图片）：
+            // 编辑态显示的是 Markdown 源码，通常比渲染结果宽得多
+            // （LaTeX、`<img src="...">`、表格管道行尤其明显）。
+            // 进编辑这一帧按源码自然宽度重算一次，**只撑宽不缩窄**
+            // （宽度不得低于显示时的宽度）；**高度保持不变**，
+            // 装不下的部分在编辑区箱内纵向滚动（见 mindmapStyles）。
+            if (isMediaKind(session.kind)) {
                 const needed = this.measureEditingSourceWidth(display);
                 if (needed > session.baseWidth) {
                     this.canvas.setNodeWidth(session.uid, needed);
@@ -1347,10 +1552,106 @@ export class MindMapApp {
         this.finishEdit(session, session.display.getText());
     }
 
+    /**
+     * 刷新「拆分到子节点」按钮：备快照 + 按有无选区显隐。
+     *
+     * 调用时机：编辑态选区变化（miniCm 的 onSelectionChange）、
+     * 会话结束（清空）。选中文字 → 按钮出现；塌成光标 → 按钮消失。
+     */
+    private refreshSplitButton(): void {
+        this.splitCapture = this.captureSplitSelection();
+        // 整个「拆分」菜单（主按钮 + 二级菜单）一起显隐
+        const menu = this.toolbarEl?.querySelector<HTMLElement>(
+            '.lwm-tool-menu[data-menu="split"]'
+        );
+        if (menu) menu.style.display = this.splitCapture ? '' : 'none';
+    }
+
+    /** 「拆分到子节点」当前的选区快照（没有可拆分选区时返回 null）。 */
+    private captureSplitSelection(): SplitCapture | null {
+        const session = this.editSession;
+        // 限文本节点：媒体节点（代码/表格/公式…）编辑的是源码，
+        // 从中剪一段走只会得到一截坏语法。
+        if (!session || !TEXT_NODE_KINDS.has(session.kind)) return null;
+        if (session.display.destroyed) return null;
+        const sel = session.display.view.state.selection.main;
+        if (sel.empty) return null;
+        const text = session.display.view.state
+            .sliceDoc(sel.from, sel.to)
+            .replace(/\s*\n\s*/g, ' ')
+            .trim();
+        if (!text) return null;
+        return {
+            uid: session.uid,
+            from: sel.from,
+            to: sel.to,
+            text,
+            fullText: session.display.getText(),
+        };
+    }
+
+    /**
+     * 「拆分到子节点」：把编辑态选中的文字从当前节点剪掉，作为新子节点的内容。
+     *
+     * 为什么要捕获而不是点菜单时再读选区：点击菜单按钮必然让编辑区
+     * **失焦**，而 mini-CM 的 blur 处理器会立刻提交编辑会话 ——
+     * 轮到菜单 action 执行时 editSession 已经是 null，现场读的方案
+     * 会静默什么都不做（实测「点了没反应」）。所以打开菜单时就把
+     * 选区位置 / 选中文字 / 节点全文都快照下来。
+     *
+     * 执行时按会话是否还活着分两条路：
+     * 1. 会话还活着（无头测试 / 焦点没丢）：先在 mini-CM 里挖掉选区，
+     *    连同其它未提交改动一起提交；
+     * 2. 会话已被失焦提交（真实点击）：源文档里是「剪掉前」的全文，
+     *    按快照位置算出删掉选中段后的文本，直接 renameNode 写回。
+     * 最后用剪下来的文字新建子节点 / 兄弟节点 —— commit 会自动选中并进编辑。
+     *
+     * @param placement - child = 新子节点；sibling = 当前节点后面的同级节点
+     */
+    private splitSelection(captured: SplitCapture, placement: 'child' | 'sibling'): void {
+        const session = this.editSession;
+        if (
+            session &&
+            session.uid === captured.uid &&
+            !session.display.destroyed
+        ) {
+            session.display.view.dispatch({
+                changes: { from: captured.from, to: captured.to },
+            });
+            this.commitEditSession();
+        } else if (this.currentTree) {
+            const newText =
+                captured.fullText.slice(0, captured.from) +
+                captured.fullText.slice(captured.to);
+            this.commit(
+                renameNode(this.markdown, this.currentTree, captured.uid, newText)
+            );
+        }
+        if (!this.currentTree) return;
+        this.commit(
+            placement === 'sibling'
+                ? addSiblingNode(
+                      this.markdown,
+                      this.currentTree,
+                      captured.uid,
+                      captured.text
+                  )
+                : addChildNode(
+                      this.markdown,
+                      this.currentTree,
+                      captured.uid,
+                      captured.text
+                  )
+        );
+    }
+
     /** 结束编辑会话：文本有变化走 renameNode → commit。 */
     private finishEdit(session: EditSession, text: string | null): void {
         if (this.editSession !== session) return;
         this.editSession = null;
+        // 会话结束：拆分快照作废，按钮收起
+        this.splitCapture = null;
+        this.refreshSplitButton();
         // 会话结束后不再撑高（提交路径会完整重测，允许回缩）
         this.cancelGrowEditingNode();
         session.display.exitEdit();
@@ -1467,6 +1768,50 @@ export class MindMapApp {
         this.clearPendingDelete();
         this.clearSelection();
         this.commit(deleteNode(this.markdown, this.currentTree, uid));
+    }
+
+    /**
+     * 二级删除菜单：按选项执行不同的删法。
+     *
+     * 菜单本身已经是一次「明确选择」，所以这里直接提交，不再走键盘 Delete
+     * 的两段式确认；节点还在的「只删除子节点」保持选中，工具条继续贴着它。
+     *
+     * @param item - 带 `data-del` 的菜单项（subtree / self / children）
+     */
+    private deleteFromMenu(item: HTMLElement): void {
+        if (!this.selectedUid) return;
+        const act = item.dataset.del;
+        // 结构操作前先落掉编辑会话，否则 commit 只会写 pendingTree
+        this.endEditBeforeStructuralOp();
+        const tree = this.currentTree;
+        if (!tree) return;
+        const uid = this.selectedUid;
+        const found = findTreeNodeByUid(tree, uid);
+        if (!found || found.node.data._kind === 'root') return;
+        const childCount = countSubtreeNodes(found.node);
+
+        let result: { text: string };
+        switch (act) {
+            case 'self':
+                // 只删自己：子节点上移一级
+                result = deleteSelfKeepChildren(this.markdown, tree, uid);
+                break;
+            case 'children':
+                if (childCount === 0) return;
+                result = deleteChildNodes(this.markdown, tree, uid);
+                // 节点还在，重建后保持选中（不要把工具条一起收掉）
+                this.clearPendingDelete();
+                this.commit(result);
+                if (this.selectedUid === uid) this.showToolbar(uid);
+                return;
+            default:
+                // 含子树：与点击「删除」一致
+                result = deleteNode(this.markdown, tree, uid);
+                break;
+        }
+        this.clearPendingDelete();
+        this.clearSelection();
+        this.commit(result);
     }
 
     /**
@@ -2237,7 +2582,8 @@ export class MindMapApp {
         if (!node) return;
         const kind = node.kind;
         const media = isMediaKind(kind);
-        if (event.key === 'Tab' && kind !== 'para' && kind !== 'meta' && !media) {
+        // Tab = 加子节点；段落也放行（addChildNode 会先把它升级成列表项）
+        if (event.key === 'Tab' && kind !== 'meta' && !media) {
             event.preventDefault();
             this.addChild();
         } else if (

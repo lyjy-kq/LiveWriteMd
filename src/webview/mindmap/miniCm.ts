@@ -139,6 +139,11 @@ export interface NodeDisplay {
         onShiftEnter?: () => void;
         /** 文档变化（回车/自动折行）时通知上层，用于把节点盒子撑高。 */
         onDocChanged?: () => void;
+        /**
+         * 选区变化（拖选/键盘选择/点击塌光标）时通知上层。
+         * 「拆分到子节点」按钮的可用态与快照靠它刷新。
+         */
+        onSelectionChange?: () => void;
     }) => void;
     /** 翻转回显示态（提交/放弃之后调用；提交逻辑由调用方完成）。 */
     exitEdit: () => void;
@@ -177,7 +182,12 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
     ensureTokenColorCss();
 
     const sentinel = options.sentinel === true;
-    const rawDoc = sentinel ? options.doc + '\n' : options.doc;
+    // 文档里的 \r\n / \r 必须先归一成 \n：CM 的 Text.of 按 \r\n?|\n 分行后
+    // 重新用 \n 拼接，文档会比原始字符串短；后面「选区停文末」若按原始
+    // 字符串长度算锚点就越界 —— CRLF 文档里几乎每个多行节点都在
+    // EditorState.create 抛 RangeError: Selection points outside of document。
+    // （节点源码来自 markdown.split('\n')，CRLF 文档的每行尾巴都带一个 \r。）
+    const rawDoc = (sentinel ? options.doc + '\n' : options.doc).replace(/\r\n?/g, '\n');
 
     const container = document.createElement('div');
     container.className = 'lwm-node-display';
@@ -332,7 +342,7 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
             // 正好等于节点盒子里需要留给内容的高度
             return view.contentDOM.getBoundingClientRect().height;
         },
-        enterEdit: ({ kind, onCommit, onShiftEnter, onDocChanged }): void => {
+        enterEdit: ({ kind, onCommit, onShiftEnter, onDocChanged, onSelectionChange }): void => {
             if (editing || destroyed) return;
             editing = true;
             container.classList.add('lwm-node-editing');
@@ -419,6 +429,8 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
                         // 上层据此把节点盒子撑高，否则新行会被编辑态裁掉
                         EditorView.updateListener.of((update) => {
                             if (update.docChanged) onDocChanged?.();
+                            // 选区变化单独上报：拆分按钮要跟着选区显隐
+                            if (update.selectionSet) onSelectionChange?.();
                         }),
                         // 与 live 模式同款的行内格式快捷键（Ctrl/Cmd+B/I/G）。
                         // 放在 history/defaultKeymap 前面，保证 Mod-g 不会被

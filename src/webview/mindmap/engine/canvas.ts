@@ -257,6 +257,16 @@ interface DisplayEntry {
     display: NodeDisplay;
     wrapper: HTMLElement;
     node: MapNode;
+    /**
+     * 当前模型节点的间接引用（onDisplayChange 闭包只认它）。
+     *
+     * 为什么不能直接在闭包里捕获 node：setData 重建模型时实例会被
+     * 「认领」到新节点上，闭包若持有创建时的旧节点，整条引用链
+     * （displays → display → 闭包 → 旧节点 → parent/children）会把
+     * **整棵旧模型树**一直挂住 —— 实测大文档每重建一次泄漏约 7MB。
+     * 闭包改为读这个盒子的 current，迁移实例时同步更新即可。
+     */
+    nodeRef: { current: MapNode };
     kind: string;
     /**
      * 实例档位：full = 完整 live preview，lite = 轻量源码渲染。
@@ -673,10 +683,14 @@ export class MapCanvas {
                 if (node.wrapper === entry.wrapper) {
                     node.display = entry.display;
                     claimedDisplays.add(entry.display);
+                    // 实例迁到新节点：同步间接引用，onDisplayChange 才不会
+                    // 把改动写回旧模型节点（顺带避免闭包挂住整棵旧树）
+                    entry.nodeRef.current = node;
                     displays.set(node.uid, {
                         display: entry.display,
                         wrapper: entry.wrapper,
                         node,
+                        nodeRef: entry.nodeRef,
                         kind: node.kind,
                         // 沿用旧实例的档位：ensureContent 会检查它是否仍符合当前档
                         mode: entry.mode,
@@ -1286,9 +1300,10 @@ export class MapCanvas {
         } else if (dataset.level !== undefined) {
             delete dataset.level;
         }
-        if (node.note) {
-            if (node.wrapper.title !== node.note) node.wrapper.title = node.note;
-        } else if (node.wrapper.hasAttribute('title')) {
+        // 不再把 note（段落全文 / 媒体源码）塞进 title：
+        // 悬停节点时浏览器会弹原生提示框，遮住相邻节点，而且截断文本本来就
+        // 能通过编辑态查看全文。这里只负责清掉历史遗留的 title 属性。
+        if (node.wrapper.hasAttribute('title')) {
             node.wrapper.removeAttribute('title');
         }
     }
@@ -1326,6 +1341,7 @@ export class MapCanvas {
                 entry.display.sentinel === sentinel
             ) {
                 entry.node = node;
+                entry.nodeRef.current = node;
                 entry.wrapper = wrapper;
                 // 包裹元素可能被重建过：CM 不在里面才搬，避免无谓 DOM 变更
                 if (entry.display.container.parentElement !== wrapper) {
@@ -1430,6 +1446,9 @@ export class MapCanvas {
             node.display = null;
         }
         const { doc, sentinel } = this.options.computeDoc(node);
+        // 节点引用走间接盒子：实例迁移（setData 认领）时只换 current，
+        // 避免闭包把旧模型节点（乃至整棵旧树）挂住不放。
+        const nodeRef = { current: node };
         const display = createNodeDisplay({
             doc,
             sentinel,
@@ -1439,7 +1458,7 @@ export class MapCanvas {
             lite: effectiveMode === 'lite',
             // 显示态按钮（mermaid 宽度、表格加行/列）改了本地文档后，
             // 立刻交给上层回写源文档
-            onDisplayChange: (text) => this.options.onDisplayEdit?.(node, text),
+            onDisplayChange: (text) => this.options.onDisplayEdit?.(nodeRef.current, text),
         });
         wrapper.replaceChildren(display.container);
         node.display = display;
@@ -1450,6 +1469,7 @@ export class MapCanvas {
             display,
             wrapper,
             node,
+            nodeRef,
             kind: node.kind,
             mode: effectiveMode,
         });
@@ -2744,6 +2764,23 @@ export class MapCanvas {
             return;
         }
 
+        // Ctrl / Cmd + 点链接：打开链接（外部地址 → openUrl，相对路径 → openFile）。
+        //
+        // 为什么只能在画布这一层接：
+        // 1. 导图节点里的 mini-CM 用的是只读显示扩展包（见 plugin.ts 的
+        //    createLivePreviewDisplayExtension），本来就不带 live 的链接点击插件；
+        // 2. 就算带上也没用 —— 画布在 pointerdown 里 setPointerCapture 之后，
+        //    浏览器会把后续 mousedown 重定向到画布，CM 挂在 contentDOM 上的
+        //    处理器收不到。
+        //
+        // 普通单击在导图里有别的含义（选中节点 / 展开源码），所以链接跟
+        // 图片一样统一要求按住 Ctrl，避免误触。
+        if ((event.ctrlKey || event.metaKey) && this.openLinkAt(event)) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+        }
+
         const wrapper = target?.closest?.('.lwm-node[data-uid]') as HTMLElement | null;
         const inNode = !!wrapper && wrapper.parentElement === this.nodeLayer;
         const uid = inNode ? (wrapper!.dataset.uid ?? '') : '';
@@ -2771,6 +2808,26 @@ export class MapCanvas {
             // 画布元素，CodeMirror 挂在 contentDOM 上的 mousedown 收不到事件 ——
             // 表现就是节点里的文字（包括加粗 / 斜体 / 代码 / 表格）怎么拖都
             // 选不中。改为真正开始拖节点时再捕获（见 handlePointerMove）。
+            //
+            // 「已经选中的节点」按下就是拖节点：
+            // 第一次单击负责选中，之后从节点任何位置（包括正文/表格单元格）
+            // 拖拽都应该移动节点。以前正文里按下会走「拖选文字」，用户看到的是
+            // 文字被涂蓝、节点纹丝不动。未选中的节点仍保留拖选文字的手势，
+            // 这样显示态里的文字依旧能直接框选；文字编辑态（第二次单击）本来就会
+            // 提前 return，选字完全交给 mini-CM。
+            const selectedForDrag =
+                uid === this.selectedUid && this.multiSelected.size === 0;
+            // 复选框 / 链接 / 按钮要保留自己的默认行为（勾选、Ctrl+点击），
+            // 不能为了拖节点把它们一起 preventDefault 掉。
+            const interactiveTarget = !!target?.closest?.(
+                'input, button, a, .cm-md-checkbox'
+            );
+            if (selectedForDrag && !interactiveTarget) {
+                // 阻止浏览器在拖动前先开始拖选文字（pointerdown 的默认行为
+                // 会派生出 mousedown → 选区）。单击（没移动）仍然走 pointerup
+                // 的 onNodeClick，不受影响。
+                event.preventDefault();
+            }
             this.pointer = {
                 kind: 'node',
                 pointerId: event.pointerId,
@@ -2778,8 +2835,10 @@ export class MapCanvas {
                 startX: event.clientX,
                 startY: event.clientY,
                 moved: false,
-                // 落在正文里 = 用户可能是想拖选文字；没按 Alt 时不启动节点拖动
-                fromContent: !!target?.closest?.('.cm-content'),
+                // 落在正文里 = 用户可能是想拖选文字；没按 Alt 时不启动节点拖动。
+                // 已选中的节点例外：直接拖节点。
+                fromContent:
+                    !selectedForDrag && !!target?.closest?.('.cm-content'),
                 event,
             };
             return;
@@ -2797,6 +2856,48 @@ export class MapCanvas {
         };
         this.canvasEl.classList.add('lwm-panning');
         this.capturePointer(event.pointerId);
+    }
+
+    /**
+     * Ctrl / Cmd + 点中节点里的链接时打开它。
+     *
+     * 链接 DOM 由 live 装饰产出：普通链接 / 文件路径是带 `data-href` 的
+     * `.cm-md-link` span，HTML 块里的 `<a>` 也走同一套（见 buildHtmlBlockFragment）。
+     *
+     * 打开方式与 live 一致：
+     * - `http(s)://` → `openUrl`（宿主用 openExternal 交给系统浏览器）；
+     * - 其它（相对路径 / 文件路径）→ `openFile`（宿主按当前文档目录解析）；
+     * - `#锚点` → 导图里没有可滚动的正文，这一下只吞掉，不当成节点选中。
+     *
+     * @param event - 画布收到的 pointerdown（阶段不捕获指针）
+     * @returns true 表示这一下已经按「打开链接」处理，调用方不要再启动拖动 / 框选
+     */
+    private openLinkAt(event: PointerEvent): boolean {
+        const target = event.target instanceof Element ? event.target : null;
+        const link = target?.closest('.cm-md-link');
+        const href = link?.getAttribute('data-href')?.trim();
+        if (!href) return false;
+
+        // 锚点在导图视图里没法跳（正文不在这个画布上），但也不要让这一下
+        // 掉进「Ctrl 点节点 = 切换多选」的分支
+        if (href.startsWith('#')) return true;
+
+        // webview 宿主注入的 API；探针 / 单独浏览器里没有时，只吞掉手势
+        const vscodeApi = (
+            window as unknown as {
+                __vscodeApi?: { postMessage(message: unknown): void };
+            }
+        ).__vscodeApi;
+        if (!vscodeApi) return true;
+
+        if (href.startsWith('http://') || href.startsWith('https://')) {
+            vscodeApi.postMessage({ type: 'openUrl', url: href });
+        } else {
+            // 与 live 的链接逻辑保持一致：去掉 #fragment / ?query 再交给宿主
+            const path = href.split('#')[0].split('?')[0].trim();
+            if (path) vscodeApi.postMessage({ type: 'openFile', path });
+        }
+        return true;
     }
 
     /** setPointerCapture 在合成事件/已释放指针上会抛异常，统一兜住。 */

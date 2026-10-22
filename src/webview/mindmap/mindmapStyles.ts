@@ -409,8 +409,11 @@ export const MINDMAP_CSS = `
    点击行为统一（点击图片/图表 = 选中节点，不进浮层）。
    mermaid 例外：用户要求复用 live 的「放大查看 / 尺寸调节」，
    这两组按钮在 mermaid 节点里原样显示（见下面的恢复规则）。 */
-.lwm-node:not(.lwm-node-mermaid) .cm-md-preview-actions,
-.lwm-node:not(.lwm-node-mermaid) .cm-md-resize-actions {
+/* 只有 mermaid 与图片保留右下角操作胶囊（放大查看 / 复制 / 缩放宽度）。
+   图片节点此前一并被这条规则藏掉了，用户反馈找不到这些按钮 ——
+   按钮本身在 ImageWidget 里一直都在，只是被 display:none 压住。 */
+.lwm-node:not(.lwm-node-mermaid):not(.lwm-node-image) .cm-md-preview-actions,
+.lwm-node:not(.lwm-node-mermaid):not(.lwm-node-image) .cm-md-resize-actions {
     display: none !important;
 }
 /* 哨兵行（显示 CM 末尾的隐藏空行）：压 0 高，把选区引出块外，
@@ -470,16 +473,68 @@ export const MINDMAP_CSS = `
     max-height: calc(20 * var(--livewritemd-line-height, 1.7em) + 1.4em);
 }
 /* 表格节点：不限宽高，尽量全部渲染（任务 12） */
-/* 图片节点：自带上限 */
+/* 图片节点：自带上限。
+   高度上限与公式/mermaid 一致（20em）：图片的宽度档位是
+   「30em × 25/50/75/100%」，100% 那一档按常见横图比例约 20em 高，
+   上限太小会把最大档直接压回去，点「+」看不出变化。 */
 .lwm-node-image {
     max-width: 30em;
-    max-height: 14em;
+    max-height: 20em;
+}
+/* 图片节点：节点盒贴合图片本身。
+   默认的正文排版会给图片多留一圈空白 ——
+   .cm-content 上下各 2px 内边距、.cm-line 左右各 4px 内边距，
+   行盒还会按 1.7em 行高留出基线空间（小图尤其明显，节点比图片高出一截）；
+   live 里图片按容器 75% 限宽，量节点时又拿这个百分比去算 max-content，
+   结果节点被撑到 30em、图片只占其中 75%，两边各空一大块。
+   这里只改「图片节点 + 非编辑态」：显示态贴图，点开编辑仍按正文排版。 */
+.lwm-node-image:not(.lwm-node-editing) .cm-content {
+    padding: 0;
+}
+.lwm-node-image:not(.lwm-node-editing) .cm-line {
+    padding-left: 0;
+    padding-right: 0;
+    /* 行高归零：小图（比一行文字还矮）不再被行盒撑高 */
+    line-height: 0;
+}
+.lwm-node-image:not(.lwm-node-editing) .cm-md-image-wrapper {
+    /* 宽度档位（25/50/75/100%）在导图里以节点上限 30em 为基准：
+       默认 75% → 22.5em。--cm-md-media-ratio 是 ImageWidget 写入的
+       无单位小数（0.75），这里才能用 calc 乘出长度。 */
+    max-width: calc(30em * var(--cm-md-media-ratio, 0.75));
+    /* 行高归零后按顶边对齐，避免 vertical-align: middle 的基线偏移 */
+    vertical-align: top;
+}
+.lwm-node-image:not(.lwm-node-editing) .cm-md-image {
+    /* 宽度跟着 wrapper 的档位走；高度上限与节点一致，
+       宽高同时受限时浏览器会按比例缩放，不会裁掉一截 */
+    max-width: 100%;
+    max-height: 20em;
+    width: auto;
+    height: auto;
+    vertical-align: top;
+}
+/* 双击展开：取消大小的上限，按图片原始尺寸显示 */
+.lwm-node-image.lwm-node-expanded .cm-md-image-wrapper {
+    max-width: none;
+}
+.lwm-node-image.lwm-node-expanded .cm-md-image {
+    max-width: none;
+    max-height: none;
 }
 /* 数学块 / mermaid 节点：图可能很高，默认截断 */
 .lwm-node-math,
 .lwm-node-mermaid {
     max-width: 30em;
     max-height: 20em;
+}
+/* HTML 块节点（居中段落 / 徽章图）：按图片节点的口径收一收宽度；
+   带 width 属性的图片不能把节点撑到整块画布那么宽，
+   图片由 live 的 .cm-md-html-block img { max-width:100% } 跟着缩。 */
+.lwm-node-html {
+    max-width: 30em;
+    max-height: 24em;
+    overflow: hidden;
 }
 /* 元数据节点（--- 块纯文本，与 live 一致） */
 .lwm-node-meta {
@@ -489,6 +544,7 @@ export const MINDMAP_CSS = `
 .lwm-node-image.lwm-node-expanded,
 .lwm-node-math.lwm-node-expanded,
 .lwm-node-mermaid.lwm-node-expanded,
+.lwm-node-html.lwm-node-expanded,
 .lwm-node-meta.lwm-node-expanded {
     max-width: none;
     max-height: none;
@@ -599,12 +655,12 @@ export const MINDMAP_CSS = `
     box-shadow: inset 0 0 0 1px var(--vscode-errorForeground, #f14c4c);
 }
 
-/* 多选操作条：顶部居中，和节点工具条区分开（节点工具条跟着节点走）。
+/* 多选操作条：定位到「最下面那个选中节点」的下方（positionMultiBar
+   每帧跟随画布），和单节点工具条同一套跟随逻辑。
    只在 Ctrl 多选 / Ctrl 框选后出现，按钮文案带数量，避免误删。 */
 .lwm-multi-toolbar {
-    top: 12px;
-    left: 50%;
-    transform: translateX(-50%);
+    top: 0;
+    left: 0;
 }
 .lwm-multi-toolbar button {
     padding: 4px 12px;

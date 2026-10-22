@@ -6,6 +6,7 @@
  * 增删、改名共用同一套「算出新全文 -> dispatch / CONTENT_CHANGE」通道。
  */
 
+import { normalizeNestedListIndent } from './treeBuilder.js';
 import type { MindMapTreeNode, NodeLineRange } from './types.js';
 
 /** 新节点默认文本。 */
@@ -188,68 +189,92 @@ export function renameNode(
     return { text: lines.join('\n') };
 }
 
-/** 是否媒体节点（code / table / image / math / mermaid）：叶位置、可删可拖可编辑源码。 */
+/** 是否媒体节点（code / table / image / math / mermaid / html）：叶位置、可删可拖可编辑源码。 */
 export function isMediaKind(kind: string): boolean {
     return (
         kind === 'code' ||
         kind === 'table' ||
         kind === 'image' ||
         kind === 'math' ||
-        kind === 'mermaid'
+        kind === 'mermaid' ||
+        kind === 'html'
     );
 }
 
 /**
  * §6.2 在 parent 下新增子节点。
  * root -> H1（文末）；H(n<6) -> H(n+1)；H6 -> 无序列表项；
- * list -> 缩进 +1 的同类型列表项；para 不允许。
+ * list -> 缩进 +1 的同类型列表项；para 先原地升级成列表项再插子项。
+ *
+ * @param text - 新节点的初始文字（默认「分支主题」）。
+ *        「拆分到子节点」把选中内容剪过来时走这里。
  */
 export function addChildNode(
     markdown: string,
     tree: MindMapTreeNode,
-    parentUid: string
+    parentUid: string,
+    text: string = NEW_NODE_TEXT
 ): EditResult {
     const found = findNodeByUid(tree, parentUid);
     if (!found) return { text: markdown };
     const parent = found.node;
-    // para / 媒体节点是叶子：不允许有子节点
-    if (parent.data._kind === 'para' || isMediaKind(parent.data._kind)) {
+    // 媒体节点是真正的叶子（代码块 / 表格里塞不进子节点）
+    if (isMediaKind(parent.data._kind)) {
         return { text: markdown };
     }
 
     const lines = markdown.split('\n');
+
+    // 段落要加子节点：Markdown 里段落没有「子节点」这种结构，
+    // 先把它原地升级成列表项（`- 文字`），再在它下面插子项。
+    // 这样文字仍是正文（不会被改成标题），层级由缩进自然表达。
+    if (parent.data._kind === 'para') {
+        const self =
+            (parent.data._selfLineRange as NodeLineRange | undefined) ?? rangeOf(parent);
+        const childIndent = promoteParagraphToList(lines, self);
+        insertListItem(lines, self.toLine + 1, childIndent, false, text, false);
+        return { text: lines.join('\n'), newNodeUid: `${parent.data.uid}/0` };
+    }
+    // 缩进列要按 treeBuilder 看到的「归一化文本」算：
+    // 用户（或粘贴进来的文档）常有缩进不足的嵌套列表，treeBuilder 在解析前
+    // 会把 marker 补到父项内容列。若这里按原始行算，插入的代码块/子列表
+    // 会差几格，重建后掉出父列表项 —— 表现就是「子节点跑到了兄弟/上一层」。
+    // 归一化只改行首空白、不改行数，行号与原始文本一一对应。
+    const normalizedLines = normalizeNestedListIndent(markdown).split('\n');
     const newIndex = parent.children.length;
     const newUid = `${parent.data.uid}/${newIndex}`;
 
     if (parent.data._kind === 'root') {
         // 完全空白的文档直接给一个标题，避免前面残留空行
         if (markdown.trim() === '') {
-            return { text: `# ${NEW_NODE_TEXT}`, newNodeUid: newUid };
+            return { text: `# ${text}`, newNodeUid: newUid };
         }
-        insertHeadingAtEnd(lines, 1, NEW_NODE_TEXT);
+        insertHeadingAtEnd(lines, 1, text);
         return { text: lines.join('\n'), newNodeUid: newUid };
     }
     if (parent.data._kind === 'heading') {
         const level = parent.data._headingLevel ?? 1;
         const { toLine } = rangeOf(parent);
         if (level < 6) {
-            insertHeadingAt(lines, toLine + 1, level + 1, NEW_NODE_TEXT);
+            insertHeadingAt(lines, toLine + 1, level + 1, text);
         } else {
             // H6 不能再深：转无序列表项（2 空格缩进，作为 H6 节内顶层列表）
-            insertListItem(lines, toLine + 1, 2, false, NEW_NODE_TEXT, true);
+            insertListItem(lines, toLine + 1, 2, false, text, true);
         }
         return { text: lines.join('\n'), newNodeUid: newUid };
     }
 
     // list：缩进 +1，类型继承父节点
     const { toLine } = rangeOf(parent);
-    const indent = listContentColumn(lines[rangeOf(parent).fromLine] ?? '-');
+    const indent = listContentColumn(
+        normalizedLines[rangeOf(parent).fromLine] ?? '-'
+    );
     insertListItem(
         lines,
         toLine + 1,
         indent,
         parent.data._listOrdered === true,
-        NEW_NODE_TEXT,
+        text,
         false
     );
     return { text: lines.join('\n'), newNodeUid: newUid };
@@ -258,11 +283,15 @@ export function addChildNode(
 /**
  * §6.2 新增兄弟节点：在目标子树区间之后插入同形态行。
  * root 不允许。
+ *
+ * @param text - 新节点的初始文字（默认「分支主题」）。
+ *        「拆分到兄弟节点」把选中内容剪过来时走这里。
  */
 export function addSiblingNode(
     markdown: string,
     tree: MindMapTreeNode,
-    uid: string
+    uid: string,
+    text: string = NEW_NODE_TEXT
 ): EditResult {
     const found = findNodeByUid(tree, uid);
     if (!found || !found.parent || found.node.data._kind === 'root') {
@@ -272,12 +301,14 @@ export function addSiblingNode(
     // 媒体节点不支持「新增兄弟」（无法凭空造一个代码块/表格/图片，工具条也已禁用）
     if (isMediaKind(node.data._kind)) return { text: markdown };
     const lines = markdown.split('\n');
+    // 与 addChildNode 同理：兄弟的缩进必须跟 treeBuilder 归一化后的树一致
+    const normalizedLines = normalizeNestedListIndent(markdown).split('\n');
     const { toLine } = rangeOf(node);
     const insertAt = toLine + 1;
     const newUid = `${found.parent.data.uid}/${found.index + 1}`;
 
     if (node.data._kind === 'heading') {
-        insertHeadingAt(lines, insertAt, node.data._headingLevel ?? 1, NEW_NODE_TEXT);
+        insertHeadingAt(lines, insertAt, node.data._headingLevel ?? 1, text);
     } else if (node.data._kind === 'para') {
         // 段落兄弟（Shift+Enter 的普通文本路径）：空行 + 同缩进段落。
         // 空行是段落边界，没有它新文字会被并进同一段；段落若在列表项内部
@@ -286,16 +317,18 @@ export function addSiblingNode(
         const sourceLine = lines[rangeOf(node).fromLine] ?? '';
         const inList = found.parent?.data._kind === 'list';
         const indent = inList ? (/^[ \t]*/.exec(sourceLine)?.[0] ?? '') : '';
-        lines.splice(insertAt, 0, '', indent + NEW_NODE_TEXT);
+        lines.splice(insertAt, 0, '', indent + text);
     } else {
-        const sourceLine = lines[rangeOf(node).fromLine] ?? '- ';
+        // 行首缩进取归一化文本：缩进不足的嵌套项在树里已被补到父内容列，
+        // 这里沿用原始缩进会让新兄弟掉到父列表外面（「加兄弟跑到父节点兄弟」）。
+        const sourceLine = normalizedLines[rangeOf(node).fromLine] ?? '- ';
         const indent = listIndentOf(sourceLine);
         insertListItem(
             lines,
             insertAt,
             indent,
             node.data._listOrdered === true,
-            NEW_NODE_TEXT,
+            text,
             false
         );
     }
@@ -331,8 +364,9 @@ export function addNode(
     if (!found) return { text: markdown };
     const target = found.node;
     const targetKind = target.data._kind;
-    // 叶子节点不能加子节点；root 没有兄弟
-    if (placement === 'child' && (targetKind === 'para' || targetKind === 'meta' || isMediaKind(targetKind))) {
+    // 媒体节点是真正的叶子；root 没有兄弟。
+    // 段落允许加子节点：会先被升级成列表项（见下面的 promoteParagraphToList）。
+    if (placement === 'child' && (targetKind === 'meta' || isMediaKind(targetKind))) {
         return { text: markdown };
     }
     if (placement === 'sibling' && targetKind === 'root') return { text: markdown };
@@ -340,12 +374,29 @@ export function addNode(
     if (!parent) return { text: markdown };
 
     const lines = markdown.split('\n');
+    // 缩进计算统一用归一化文本（见 addChildNode 的说明）：解析树看到的
+    // 列表缩进才是「真实层级」，原始行的缩进可能比它浅几格。
+    const normalizedLines = normalizeNestedListIndent(markdown).split('\n');
     const siblingIndex = found.index;
     // root 没有 _lineRange（treeBuilder 只给非 root 写），rangeOf 会抛错。
     // 根节点加子节点时插入位置本来就是文末，这里给一个「最后一行」的假区间。
     const targetRange = target.data._lineRange
         ? rangeOf(target)
         : { fromLine: Math.max(0, lines.length - 1), toLine: Math.max(0, lines.length - 1) };
+
+    // 段落加子节点：先原地升级成列表项，后面的插入逻辑按「列表父节点」走。
+    // 升级只改行首（补 `- ` / 续行缩进），文字本身、行数都不变。
+    const promotePara = placement === 'child' && targetKind === 'para';
+    // 升级后的内容列（原缩进 + 2）：子项必须落在这个列上才会被解析成子列表。
+    // 不能拿升级前的 targetFirstLine 去算 —— 段落行没有 marker，
+    // listContentColumn 会给出 0，子项会掉成同级列表（看起来「加子节点没生效」）。
+    let promotedIndent = 0;
+    if (promotePara) {
+        promotedIndent = promoteParagraphToList(
+            lines,
+            (target.data._selfLineRange as NodeLineRange | undefined) ?? targetRange
+        );
+    }
 
     // —— 标题节点的插入位置 ——
     //
@@ -368,10 +419,30 @@ export function addNode(
     /** 标题自身内容（不含子标题）的结束行：setext 标题可能占两行。 */
     const headingOwnEnd =
         (target.data._selfLineRange as NodeLineRange | undefined)?.toLine ?? targetRange.fromLine;
+    // —— 根节点的块级子节点（非标题）——
+    //
+    // 虚拟根（文件名）的直接子节点只能是「第一个标题之前」的顶层块。
+    // 以前一律插到文末，结果这些块被解析成**最后一个标题**的子节点，
+    // 用户看到的就是「给根加子节点，却出现在某个标题的兄弟位置」。
+    // 有标题时插到第一个标题之前；没有标题时插到文末。
+    // 标题类新增不适用：新标题追加到文末本来就属于根。
+    const rootBlockChild =
+        placement === 'child' &&
+        targetKind === 'root' &&
+        spec.type !== 'heading';
+    const firstRootHeading = rootBlockChild
+        ? target.children.find(
+              (child) =>
+                  child.data._kind === 'heading' && !!child.data._lineRange
+          )
+        : undefined;
+
     // 新的内容块/新标题插入位置
     const insertAt =
         placement === 'child' && targetKind === 'root'
-            ? lines.length
+            ? rootBlockChild
+                ? (firstRootHeading?.data._lineRange?.fromLine ?? lines.length)
+                : lines.length
             : targetIsHeading && !headingSiblingHeading
               ? (lastNonHeadingChild?.data._lineRange?.toLine ?? headingOwnEnd) + 1
               : targetRange.toLine + 1;
@@ -380,11 +451,18 @@ export function addNode(
     // 选中/进入编辑一个**别的**节点（以前标题加兄弟就会跳到下一个标题）。
     // 标题 + 非同级标题 spec：实际的父节点是**目标标题自己**（见上面的说明）。
     const newIndex =
-        targetIsHeading && !headingSiblingHeading
-            ? nonHeadingChildren.length
-            : placement === 'child'
-              ? parent.children.length
-              : siblingIndex + 1;
+        rootBlockChild && firstRootHeading
+            ? // 插在第一个标题之前：新节点在根的子节点里排在这些「标题之前的块」之后
+              parent.children.filter(
+                  (child) =>
+                      (child.data._lineRange?.fromLine ?? Number.MAX_SAFE_INTEGER) <
+                      insertAt
+              ).length
+            : targetIsHeading && !headingSiblingHeading
+              ? nonHeadingChildren.length
+              : placement === 'child'
+                ? parent.children.length
+                : siblingIndex + 1;
     // 标题兄弟退化成子节点时，父 uid 要用目标标题，而不是 found.parent
     const newUid = `${targetIsHeading && !headingSiblingHeading ? target.data.uid : parent.data.uid}/${newIndex}`;
 
@@ -396,14 +474,20 @@ export function addNode(
     // 目标行会把整段新媒体块也缩进 7 格 —— 导图节点拿到的是独立 mini-CM
     // 文档，≥4 空格的围栏会被 CommonMark 当成缩进代码块，mermaid 直接
     // 不渲染。现在：父节点不是列表就一律顶格。
-    const targetFirstLine = lines[targetRange.fromLine] ?? '';
+    const targetFirstLine = normalizedLines[targetRange.fromLine] ?? '';
     const parentIsList = parent.data._kind === 'list';
-    // 父是列表（加子节点）或目标是列表（加兄弟）时，新内容要带缩进
-    const listParent = placement === 'child' && targetKind === 'list';
+    // 父是列表（加子节点）或目标是列表（加兄弟）时，新内容要带缩进。
+    // 刚升级成列表项的段落同样按列表父节点处理。
+    const listParent =
+        placement === 'child' && (targetKind === 'list' || promotePara);
     const listSibling = placement === 'sibling' && targetKind === 'list';
     // 列表内子项必须缩进到内容列（`1. ` 比 `- ` 宽）；
     // 其余列表上下文沿用目标行的行首缩进（兄弟与父内容列对齐）
-    const childIndent = listParent ? listContentColumn(targetFirstLine) : 0;
+    const childIndent = listParent
+        ? promotePara
+            ? promotedIndent
+            : listContentColumn(targetFirstLine)
+        : 0;
     const listIndent = listParent
         ? childIndent
         : parentIsList
@@ -482,7 +566,11 @@ export function addNode(
             break;
         }
         case 'math': {
-            block = indentBlock(['$$', '', '$$'], listIndent);
+            // 空的公式行不能夹在两条 `$$` 之间：`$$` / 空行 / `$$` 会被
+            // CommonMark 拆成两个普通段落，treeBuilder 的 isDisplayMathParagraph
+            // 两行都不满足（长度 < 5），新节点直接消失。紧挨着的两行 `$$` 才是一个
+            // 完整的显示公式块（空公式）。
+            block = indentBlock(['$$', '$$'], listIndent);
             break;
         }
         case 'mermaid': {
@@ -591,6 +679,141 @@ export function deleteNodes(
 }
 
 /**
+ * 只删除节点自己，子节点整体上移一级（导图里最常用的「删掉这一层」）。
+ *
+ * 和 {@link deleteNode}（连整棵子树一起删）不同，这里要保证：
+ *
+ * 1. **子节点接替被删节点的位置** —— 标题链减少 `#` 数（`### C` → `## C`），
+ *    列表链把缩进退到被删节点的标记列（`    - C` → `  - C`）；
+ * 2. 子节点的**整棵子树**一起平移，子树内部的相对层级不能变；
+ * 3. 被删节点自身的区间用 `_selfLineRange`，不能把子节点的行也删掉
+ *    （`_lineRange` 是含子树的，见 types.ts 的字段说明）。
+ *
+ * 先平移子节点、再删自身：两步都用原始行号，不需要来回换算。
+ *
+ * @param markdown 源全文
+ * @param tree 当前导图树
+ * @param uid 被删除的节点 uid
+ * @returns 新全文（root 自动忽略）
+ */
+export function deleteSelfKeepChildren(
+    markdown: string,
+    tree: MindMapTreeNode,
+    uid: string
+): EditResult {
+    const found = findNodeByUid(tree, uid);
+    if (!found || !found.parent || found.node.data._kind === 'root') {
+        return { text: markdown };
+    }
+    const node = found.node;
+    const lines = markdown.split('\n');
+    const self = (node.data._selfLineRange as NodeLineRange | undefined) ?? rangeOf(node);
+    /** 被删节点的标记列：列表是缩进，标题就是行首空白 */
+    const nodeIndent = listIndentOf(lines[self.fromLine] ?? '');
+    const nodeLevel = node.data._headingLevel ?? 1;
+
+    for (const child of node.children) {
+        const childRange = child.data._lineRange as NodeLineRange | undefined;
+        if (!childRange) continue;
+        const block = lines.slice(childRange.fromLine, childRange.toLine + 1);
+
+        if (node.data._kind === 'heading' && child.data._kind === 'heading') {
+            // 标题链：子标题顶上被删节点的级别（正常情况下正好 -1）
+            const delta = Math.max(
+                0,
+                (child.data._headingLevel ?? 1) - nodeLevel
+            );
+            if (delta > 0) {
+                lines.splice(
+                    childRange.fromLine,
+                    block.length,
+                    ...shiftHeadingLevel(block, delta)
+                );
+            }
+            continue;
+        }
+
+        // 列表 / 段落 / 媒体：子项首行的缩进退到被删节点的标记列。
+        // 每个直接子节点单独算 delta —— 容错文档里兄弟缩进不一定完全一致。
+        const childSelf =
+            (child.data._selfLineRange as NodeLineRange | undefined) ?? childRange;
+        const childIndent = listIndentOf(lines[childSelf.fromLine] ?? '');
+        const delta = childIndent - nodeIndent;
+        if (delta > 0) {
+            lines.splice(
+                childRange.fromLine,
+                block.length,
+                ...reindentLines(block, -delta)
+            );
+        }
+    }
+
+    // 删掉节点自身（含标题的续行 / setext 下划线），子节点行保持原样
+    lines.splice(self.fromLine, self.toLine - self.fromLine + 1);
+    const joined = lines
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .replace(/^\n+/, '');
+    return { text: joined };
+}
+
+/**
+ * 只删除节点的全部子节点，保留节点自己。
+ *
+ * 子节点的 `_lineRange` 已经包含各自的整棵子树，所以直接按区间删；
+ * 从后往前删，避免前面的删除影响后面的行号。
+ *
+ * @param markdown 源全文
+ * @param tree 当前导图树
+ * @param uid 保留的节点 uid
+ * @returns 新全文（没有子节点 / root 时原样返回）
+ */
+export function deleteChildNodes(
+    markdown: string,
+    tree: MindMapTreeNode,
+    uid: string
+): EditResult {
+    const found = findNodeByUid(tree, uid);
+    if (!found || found.node.children.length === 0) {
+        return { text: markdown };
+    }
+    const lines = markdown.split('\n');
+    const ranges = found.node.children
+        .map((child) => child.data._lineRange as NodeLineRange | undefined)
+        .filter((range): range is NodeLineRange => !!range)
+        .sort((a, b) => b.fromLine - a.fromLine);
+    if (ranges.length === 0) return { text: markdown };
+    for (const range of ranges) {
+        lines.splice(range.fromLine, range.toLine - range.fromLine + 1);
+    }
+    const joined = lines
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .replace(/^\n+/, '');
+    return { text: joined };
+}
+
+/**
+ * 把一段行里的 ATX 标题整体升 `delta` 级（`#` 数量减少）。
+ *
+ * 只认 ATX；setext 标题（文字行 + `===`/`---` 下划线）没法用「改 `#` 数」
+ * 表达层级变化，原样保留 —— 宁可层级不动，也不能把下划线行改坏。
+ *
+ * @param block 标题子树的行
+ * @param delta 要升的级数（> 0）
+ * @returns 新的行数组
+ */
+function shiftHeadingLevel(block: string[], delta: number): string[] {
+    return block.map((line) => {
+        const match = /^([ \t]*)(#{1,6})([ \t]+.*)$/.exec(line);
+        if (!match) return line;
+        const level = Math.min(6, Math.max(1, match[2].length - delta));
+        if (level === match[2].length) return line;
+        return `${match[1]}${'#'.repeat(level)}${match[3]}`;
+    });
+}
+
+/**
  * §6.4 拖拽移动（类型不变、各走各的链）。
  *
  * @param dragUid 被拖节点 uid
@@ -619,6 +842,9 @@ export function moveNode(options: {
     const mediaDrag = isMediaKind(dragNode.data._kind);
 
     let lines = markdown.split('\n');
+    // 缩进参照用归一化文本（行数不变）：拖动落点与增删节点必须按同一套
+    // 列表层级计算，否则缩进不足的嵌套列表会把媒体块甩出父项。
+    const normalizedLines = normalizeNestedListIndent(markdown).split('\n');
     const range = rangeOf(dragNode);
 
     // —— 跨链类型转换判定（迭代 N2：列表项 ↔ 标题互转）——
@@ -659,14 +885,16 @@ export function moveNode(options: {
         blockLines = lines.slice(range.fromLine, range.toLine + 1);
         // 落到列表节点下：整段缩进到列表内容列，否则 CommonMark 会认为它已脱出列表
         if (parentNode.data._kind === 'list') {
-            const indent = listContentColumn(lines[rangeOf(parentNode).fromLine] ?? '-');
+            const indent = listContentColumn(
+                normalizedLines[rangeOf(parentNode).fromLine] ?? '-'
+            );
             blockLines = reindentLines(blockLines, indent);
         }
     } else if (convertTo === 'list') {
         // 标题块 → 列表块：首行剥 # 改成列表项行（缩进/标记随落点），
         // 章节内容整体缩进到列表内容列（保持子树仍挂在新列表项下）
         const { indent, marker } = listMarkerForDrop(
-            lines,
+            normalizedLines,
             anchorNode,
             gapNextNode,
             parentNode
@@ -703,7 +931,9 @@ export function moveNode(options: {
         const oldIndent = listIndentOf(sourceFirst);
         const newIndent =
             parentNode.data._kind === 'list'
-                ? listContentColumn(lines[rangeOf(parentNode).fromLine] ?? '-')
+                ? listContentColumn(
+                      normalizedLines[rangeOf(parentNode).fromLine] ?? '-'
+                  )
                 : 0;
         blockLines = reindentLines(
             lines.slice(range.fromLine, range.toLine + 1),
@@ -843,6 +1073,36 @@ function listIndentOf(line: string): number {
 function listContentColumn(line: string): number {
     const match = /^(\s*(?:[-*+]|\d+[.)])\s+)/.exec(line);
     return match ? match[1].replace(/\t/g, '    ').length : listIndentOf(line) + 2;
+}
+
+/**
+ * 把段落节点原地升级成列表项（段落要加子节点时用）。
+ *
+ * Markdown 里段落没有「子节点」这种结构：想让一段普通文字成为分支，
+ * 只能把它变成列表项。转换保持文字内容与位置不变，只补 `- ` 前缀，
+ * 续行缩进到 marker 之后（内容列），这样多行段落仍属于同一个列表项。
+ *
+ * @param lines - 可变的全文行数组（原地替换该段落的行）
+ * @param range - 段落自身行区间（`_selfLineRange`，不含子节点）
+ * @returns 新列表项的内容列缩进（子节点按这个缩进插入）
+ */
+function promoteParagraphToList(
+    lines: string[],
+    range: { fromLine: number; toLine: number }
+): number {
+    const raw = lines.slice(range.fromLine, range.toLine + 1);
+    if (raw.length === 0) return 0;
+    // 段落可能缩进在列表项内部（续段），保留原缩进，只补 marker
+    const indent = listIndentOf(raw[0]);
+    const pad = ' '.repeat(indent);
+    const converted = raw.map((line, index) => {
+        const text = line.trim();
+        if (text === '') return '';
+        // 首行加 marker；续行缩到内容列（marker 宽 2）
+        return index === 0 ? `${pad}- ${text}` : `${pad}  ${text}`;
+    });
+    lines.splice(range.fromLine, raw.length, ...converted);
+    return indent + 2;
 }
 
 /** 整块统一增减缩进（delta 为负时逐行去缩进）。 */
