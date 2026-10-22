@@ -130,86 +130,20 @@ export async function checkFileSize(document: vscode.TextDocument): Promise<IFil
     const fileSize = getFileSizeBytes(document);
     const largeFileThreshold = ConfigManager.getLargeFileThreshold();
 
-    // If threshold is 0, warning is disabled
-    if (largeFileThreshold === 0) {
-        Logger.debug(
-            `File size check disabled (threshold: 0). File size: ${formatFileSize(fileSize)}`
+    // 按用户要求：不再弹任何大小提醒，一律直接用 LiveWriteMD 打开。
+    // 大文件的性能由 webview 侧的虚拟化 / 降级渲染兜底，
+    // 弹窗只会打断「双击即开」的节奏。保留日志便于排查性能问题。
+    if (fileSize > SMALL_FILE_THRESHOLD) {
+        Logger.info(
+            `Large file opened without prompt: ${formatFileSize(fileSize)} ` +
+                `(threshold: ${formatFileSize(largeFileThreshold)})`
         );
-        return {
-            shouldProceed: true,
-            fileSize,
-            action: 'proceed',
-        };
     }
-
-    // Small files (<= 100KB): No warning
-    if (fileSize <= SMALL_FILE_THRESHOLD) {
-        Logger.debug(
-            `Small file detected: ${formatFileSize(fileSize)} - proceeding without warning`
-        );
-        return {
-            shouldProceed: true,
-            fileSize,
-            action: 'proceed',
-        };
-    }
-
-    // Medium files (100KB to threshold): Info message, continue after acknowledgment
-    if (fileSize <= largeFileThreshold) {
-        const warningMessage = `This file is ${formatFileSize(fileSize)}. Performance may be slightly affected.`;
-        Logger.warn(`Medium file detected: ${formatFileSize(fileSize)}`);
-
-        await vscode.window.showInformationMessage(warningMessage, 'Continue');
-
-        return {
-            shouldProceed: true,
-            fileSize,
-            action: 'proceed',
-            warning: warningMessage,
-        };
-    }
-
-    // Large files (> threshold): Warning with user choice
-    const warningMessage =
-        `This file is ${formatFileSize(fileSize)}. ` +
-        `Editing in LiveWriteMD editor may affect performance.`;
-    Logger.warn(
-        `Large file detected: ${formatFileSize(fileSize)} (threshold: ${formatFileSize(largeFileThreshold)})`
-    );
-
-    const selection = await vscode.window.showWarningMessage(
-        warningMessage,
-        { modal: true },
-        'Continue',
-        'Open with Text Editor'
-    );
-
-    // Map selection to result
-    switch (selection) {
-        case 'Continue':
-            Logger.info(`User chose to proceed with large file: ${formatFileSize(fileSize)}`);
-            return {
-                shouldProceed: true,
-                fileSize,
-                action: 'proceed',
-                warning: warningMessage,
-            };
-        case 'Open with Text Editor':
-            Logger.info(`User chose standardEditor for large file: ${formatFileSize(fileSize)}`);
-            return {
-                shouldProceed: false,
-                fileSize,
-                action: 'standardEditor',
-            };
-        default:
-            // User pressed Escape or closed dialog
-            Logger.info(`User cancelled large file dialog: ${formatFileSize(fileSize)}`);
-            return {
-                shouldProceed: false,
-                fileSize,
-                action: 'cancel',
-            };
-    }
+    return {
+        shouldProceed: true,
+        fileSize,
+        action: 'proceed',
+    };
 }
 
 /**

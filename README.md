@@ -1,12 +1,13 @@
 # LiveWriteMD
 
+<h2 align="center">在 VS Code 里，把 Markdown 写成一份排好的文档。</h2>
+
 <p align="center">
-  <b>在 VS Code 里，把 Markdown 写成一份排好的文档。</b><br>
   实时预览 · 思维导图 · 表格 / 公式 / 图表 · 完整中文输入 · PDF / HTML 导出
 </p>
 
 <p align="center">
-  <img src="assets/screenshot-live-dark.png" alt="LiveWriteMD 实时预览（深色主题）" width="900">
+  <img src="assets/screenshot-live-light.png" alt="LiveWriteMD 实时预览（浅色主题）" width="900">
 </p>
 
 <p align="center">

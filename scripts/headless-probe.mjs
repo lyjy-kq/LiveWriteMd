@@ -73,6 +73,10 @@ async function main() {
         '--disable-gpu',
         '--remote-debugging-port=0',
         `--user-data-dir=${profile}`,
+        // 量内存时可加 HEADLESS_PROBE_JS_FLAGS=--expose-gc，页面里手动 gc() 排除懒回收干扰
+        ...(process.env.HEADLESS_PROBE_JS_FLAGS
+            ? [`--js-flags=${process.env.HEADLESS_PROBE_JS_FLAGS}`]
+            : []),
         'about:blank',
     ]);
     const kill = () => {
