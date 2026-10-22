@@ -132,7 +132,8 @@ export const ROW_LAST_CLASS = 'cm-md-table-last-row';
 const HEADER_CLASS = 'cm-md-table-header';
 /** 偶数数据行：配合 --livewritemd-table-stripe-background 画斑马纹。 */
 const STRIPE_CLASS = 'cm-md-table-stripe';
-const DELIMITER_CLASS = 'cm-md-table-delimiter';
+/** 分隔行（`|---|---|`）：折叠显示，但仍是表格的一部分（边界遍历要跨过它）。 */
+export const DELIMITER_CLASS = 'cm-md-table-delimiter';
 
 /** 表格里的一行。 */
 export interface TableLine {

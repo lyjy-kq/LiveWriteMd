@@ -27,7 +27,12 @@
 
 import { Facet } from '@codemirror/state';
 import { EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
-import { CELL_LAST_CLASS, ROW_LAST_CLASS } from './tableRender.js';
+import {
+    CELL_LAST_CLASS,
+    DELIMITER_CLASS,
+    ROW_CLASS,
+    ROW_LAST_CLASS,
+} from './tableRender.js';
 import { runTableCommand, type TableCommand } from './tableCommands.js';
 
 /**
@@ -65,10 +70,24 @@ interface EdgeHit {
  */
 export const tableHoverControls = ViewPlugin.fromClass(
     class {
-        /** 当前高亮的格子（悬停右边框时是最后一列格子，下边框时是最后一行格子）。 */
-        private hoverCell: HTMLElement | null = null;
+        /**
+         * 当前高亮的整条边界：悬停右边框时是**每一行**的最后一列格子，
+         * 悬停下边框时是**最后一行**的全部格子。
+         *
+         * 线要沿整张表格画满，不能只亮鼠标下那一格 —— 用户加的是一整列/一整行，
+         * 提示就应该是一条贯穿表格边界的线。
+         */
+        private hoverCells: HTMLElement[] = [];
         /** 当前悬停的边（null = 没贴边）。 */
         private edge: EdgeKind | null = null;
+        /**
+         * 边界中点叠「+」的格子。
+         *
+         * 注意不是鼠标下那一格：加号固定落在**整条边界**的中点，
+         * 鼠标沿边界移动时它不会跟着跑。偏移量通过 CSS 变量
+         * `--lwm-edge-shift` 从格子中心修正到真正的边界中点。
+         */
+        private plusCell: HTMLElement | null = null;
         /** 最近一次 mousemove 的坐标：一帧只处理一次，避免每 move 都量 DOM。 */
         private lastEvent: MouseEvent | null = null;
         /** 已排队的 rAF。 */
@@ -134,19 +153,137 @@ export const tableHoverControls = ViewPlugin.fromClass(
             this.cleanup = [];
             if (this.frame !== null) cancelAnimationFrame(this.frame);
             this.frame = null;
-            this.hoverCell = null;
+            this.hoverCells = [];
+            this.plusCell = null;
             this.edge = null;
         }
 
-        /** 移除蓝色边 + 「+」提示。 */
+        /** 移除整条蓝色边 + 「+」提示。 */
         private clearHighlight(): void {
-            if (!this.hoverCell) return;
-            this.hoverCell.classList.remove(
-                'cm-md-tcell-edge-col',
-                'cm-md-tcell-edge-row'
-            );
-            this.hoverCell = null;
+            // 加号的位置修正是内联 CSS 变量，换格子/收起时都要清干净，
+            // 否则同一格下次被复用时还带着上一次的偏移
+            this.plusCell?.style.removeProperty('--lwm-edge-shift');
+            for (const cell of this.hoverCells) {
+                cell.classList.remove(
+                    'cm-md-tcell-edge-col',
+                    'cm-md-tcell-edge-row',
+                    'cm-md-tcell-edge-plus'
+                );
+            }
+            this.hoverCells = [];
+            this.plusCell = null;
             this.edge = null;
+        }
+
+        /**
+         * 把「+」放到整条边界的正中间。
+         *
+         * - col：纵向范围取「第一行最后一格的顶边 → 最后一行最后一格的底边」；
+         * - row：横向范围取「该行第一格的左边 → 最后一格的右边」。
+         *
+         * 中点多半落在中间某个格子里。给该格加 -plus 类后，`::after`
+         * 默认定位在这个格子的 50% 处，再用 --lwm-edge-shift 把它平移到
+         * 真正的边界中点 —— 否则格子高度不均时加号会偏半格。
+         *
+         * @param cells - 整条边界涉及的格子（col：上→下；row：左→右）
+         * @param kind - 边的方向
+         */
+        private placePlus(cells: HTMLElement[], kind: EdgeKind): void {
+            if (cells.length === 0) return;
+            const rects = cells.map((cell) => cell.getBoundingClientRect());
+            // 边界在屏幕上的起止：col 看 y，row 看 x。
+            // 数组顺序就是沿边界的顺序，首尾各取一端即可
+            const edgeStart = kind === 'col' ? rects[0].top : rects[0].left;
+            const edgeEnd =
+                kind === 'col' ? rects[rects.length - 1].bottom : rects[rects.length - 1].right;
+            const mid = (edgeStart + edgeEnd) / 2;
+
+            // 找包含中点的格子；中点正好落在两格之间的间隙（管道线）时取最近的
+            let target = cells[0];
+            let targetRect = rects[0];
+            let best = Infinity;
+            for (let i = 0; i < cells.length; i++) {
+                const rect = rects[i];
+                const lo = kind === 'col' ? rect.top : rect.left;
+                const hi = kind === 'col' ? rect.bottom : rect.right;
+                const distance = mid < lo ? lo - mid : mid > hi ? mid - hi : 0;
+                if (distance < best) {
+                    best = distance;
+                    target = cells[i];
+                    targetRect = rect;
+                }
+            }
+
+            // 屏幕坐标差 → 局部 CSS 像素差。导图节点的 mini-CM 外面套着
+            // transform: scale()，rect 是缩放后的屏幕像素，除以缩放比才能
+            // 直接写进 CSS（否则缩放越大偏移越大）。
+            const localSize = kind === 'col' ? target.offsetHeight : target.offsetWidth;
+            const screenSize = kind === 'col' ? targetRect.height : targetRect.width;
+            const scale = localSize > 0 ? screenSize / localSize : 1;
+            const center =
+                kind === 'col'
+                    ? (targetRect.top + targetRect.bottom) / 2
+                    : (targetRect.left + targetRect.right) / 2;
+            const shift = scale > 0 ? (mid - center) / scale : 0;
+
+            target.classList.add('cm-md-tcell-edge-plus');
+            target.style.setProperty('--lwm-edge-shift', `${shift.toFixed(2)}px`);
+            this.plusCell = target;
+        }
+
+        /**
+         * 取悬停格子所在的整张表的所有行（连续的 `.cm-md-table-row` 兄弟行）。
+         *
+         * 表格在 live preview 里是「一行一个 .cm-line」，同一张表的行是连续的
+         * 兄弟节点；用连续兄弟判定不会把下面另一张表的行也带进来。
+         */
+        private tableRowsOf(cell: HTMLElement): HTMLElement[] {
+            // 分隔行（`|---|---|`）夹在表头行和数据行之间，class 不是
+            // cm-md-table-row，但它是同一张表的一部分：遍历必须跨过它，
+            // 否则表头行会被漏掉，右边框只画到一半。
+            const isTableLine = (el: Element | null): el is HTMLElement =>
+                !!el &&
+                (el.classList.contains(ROW_CLASS) ||
+                    el.classList.contains(DELIMITER_CLASS));
+            let first = cell.closest('.cm-line') as HTMLElement | null;
+            if (!first || !isTableLine(first)) return [];
+            while (isTableLine(first.previousElementSibling)) {
+                first = first.previousElementSibling as HTMLElement;
+            }
+            const rows: HTMLElement[] = [];
+            let current: HTMLElement | null = first;
+            while (isTableLine(current)) {
+                rows.push(current);
+                current = current.nextElementSibling as HTMLElement | null;
+            }
+            return rows;
+        }
+
+        /**
+         * 把一条边铺满整张表：返回需要加线类的格子。
+         *
+         * - col：每一行的最后一列格子；
+         * - row：最后一行（悬停行）的全部格子。
+         */
+        private boundaryCells(hit: EdgeHit): HTMLElement[] {
+            const rows = this.tableRowsOf(hit.cell);
+            if (rows.length === 0) return [hit.cell];
+            if (hit.kind === 'row') {
+                const row = hit.cell.closest('.cm-line');
+                return row
+                    ? Array.from(
+                          row.querySelectorAll<HTMLElement>('.cm-md-tcell')
+                      )
+                    : [hit.cell];
+            }
+            const cells: HTMLElement[] = [];
+            for (const row of rows) {
+                const last = Array.from(
+                    row.querySelectorAll<HTMLElement>('.cm-md-tcell')
+                ).find((cell) => cell.classList.contains(CELL_LAST_CLASS));
+                if (last) cells.push(last);
+            }
+            return cells.length > 0 ? cells : [hit.cell];
         }
 
         /** 清掉高亮。 */
@@ -221,21 +358,26 @@ export const tableHoverControls = ViewPlugin.fromClass(
             );
         }
 
-        /** mousemove 主逻辑：贴边就高亮那条线，离开就清掉。 */
+        /** mousemove 主逻辑：贴边就高亮整条边界，离开就清掉。 */
         private handleMove(event: MouseEvent): void {
             const hit = this.resolveEdge(event);
             if (!hit) {
                 this.hide();
                 return;
             }
-            if (this.hoverCell !== hit.cell || this.edge !== hit.kind) {
-                this.clearHighlight();
-                hit.cell.classList.add(
-                    hit.kind === 'col' ? 'cm-md-tcell-edge-col' : 'cm-md-tcell-edge-row'
-                );
-                this.hoverCell = hit.cell;
-                this.edge = hit.kind;
+            // 同一条边的高亮与加号位置固定（不随指针移动），无需重复铺类
+            if (this.edge === hit.kind) return;
+            this.clearHighlight();
+            const cells = this.boundaryCells(hit);
+            const lineClass =
+                hit.kind === 'col' ? 'cm-md-tcell-edge-col' : 'cm-md-tcell-edge-row';
+            for (const cell of cells) {
+                cell.classList.add(lineClass);
             }
+            // 加号固定在整条边界的中点，不跟鼠标跑
+            this.placePlus(cells, hit.kind);
+            this.hoverCells = cells;
+            this.edge = hit.kind;
         }
 
         /**

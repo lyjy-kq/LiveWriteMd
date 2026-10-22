@@ -12,7 +12,10 @@
 import type { EditorState } from '@codemirror/state';
 import type { SyntaxNode } from '@lezer/common';
 import type { FrontmatterProperty } from './types.js';
-import { getDocumentBaseUri } from './state.js';
+// resolvePreviewImageUrl 的实现已下移到 state.ts（inlineEngine 也要用，
+// 放这里会形成 helpers → inlineEngine → helpers 的循环依赖），
+// 这里 re-export 保持既有调用方不用改 import。
+export { resolvePreviewImageUrl } from './state.js';
 import { renderInlineMarkdown } from './inlineEngine.js';
 
 // 统一行内引擎（lezer 驱动，inlineEngine.ts）：live 各处与导图共用。
@@ -212,38 +215,6 @@ export function splitMarkdownImageDestination(rawDestination: string): string {
     }
 
     return trimmed;
-}
-
-/**
- * 将图片原始地址解析为 webview 可访问的最终地址。
- *
- * 支持远程图片、data URI 和文档同级的相对路径图片。
- *
- * @param rawUrl - 图片原始链接或相对路径
- * @returns 可直接赋值给 img.src 的地址，失败时返回空字符串
- */
-export function resolvePreviewImageUrl(rawUrl: string): string {
-    const trimmed = rawUrl.trim();
-    if (!trimmed) return '';
-
-    if (
-        trimmed.startsWith('http://') ||
-        trimmed.startsWith('https://') ||
-        trimmed.startsWith('data:')
-    ) {
-        return trimmed;
-    }
-
-    const baseUri = getDocumentBaseUri();
-    if (!baseUri) return '';
-
-    try {
-        const normalizedBase = baseUri.endsWith('/') ? baseUri : `${baseUri}/`;
-        const normalizedPath = trimmed.replace(/\\/g, '/');
-        return new URL(normalizedPath, normalizedBase).href;
-    } catch {
-        return '';
-    }
 }
 
 /**

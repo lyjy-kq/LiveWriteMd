@@ -11,11 +11,18 @@
  *   依赖 marked。
  *
  * 支持的行内语法：加粗 / 斜体 / 删除线 / 行内代码 / 链接（含 autolink）/
- * 图片（渲染 alt 文本）/ 行内公式（$...$、$$...$$，KaTeX）/ `<br>` /
- * `[x]` `[ ]` 复选框 / HTML 实体。输出标签带与正文同款的 `cm-md-*` 类名，
- * 颜色字重都走 styles.ts 那套样式，两处渲染结果一致。
+ * 图片（Markdown 图片渲染 alt 文本；行内 `<img>` 标签渲染成真实图片，见下）/
+ * 行内公式（$...$、$$...$$，KaTeX）/ `<br>` / `[x]` `[ ]` 复选框 / HTML 实体。
+ * 输出标签带与正文同款的 `cm-md-*` 类名，颜色字重都走 styles.ts 那套样式，
+ * 两处渲染结果一致。
  *
- * 安全性：除白名单 `<br>` 外的 HTML 一律转义，输出可直接 innerHTML。
+ * 行内 `<img src width alt>` 是 README 海报墙（表格格子里放缩略图）的关键：
+ * 表格列宽靠这里的 HTML 量，live 装饰则走 plugin.ts 的 HTMLTag 分支渲染成
+ * widget，两条路的尺寸口径必须一致（都认 width 属性）。
+ *
+ * 安全性：除白名单 `<br>` / `<img>` 外的 HTML 一律转义，输出可直接 innerHTML。
+ * `<img>` 只保留 src/alt/width/height/title，宽高只接受数字，地址统一走
+ * resolvePreviewImageUrl（`javascript:` 之类不会被当成地址）。
  *
  * @module webview/codemirror/extensions/livePreview/inlineEngine
  */
@@ -23,9 +30,119 @@
 import type { SyntaxNode } from '@lezer/common';
 import { tunedMarkdownLanguage } from '../markdownParser.js';
 import { renderMathToHtml } from './mathRender.js';
+import { resolvePreviewImageUrl } from './state.js';
 
 /** 共享 parser（tunedMarkdownLanguage 的 Setext 修正对单行行内解析无影响）。 */
 const parser = tunedMarkdownLanguage.parser;
+
+// =============================================================================
+// 行内 <img>（表格格子里的海报缩略图）
+// =============================================================================
+
+/** 行内图片标签允许保留的属性（其余一概丢弃，`on*` 不可能进来）。 */
+const INLINE_IMAGE_ATTRS = new Set(['src', 'alt', 'width', 'height', 'title']);
+
+/** 单个 `<img ...>` 标签（整段文本必须只有一个标签，别把后面的文字吞掉）。 */
+const IMG_TAG_PATTERN = /^<img\b([^>]*?)\/?>$/i;
+
+/** 标签属性：双引号 / 单引号 / 裸值三种写法。 */
+const TAG_ATTR_PATTERN =
+    /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g;
+
+/** 解析后的行内图片信息。 */
+export interface InlineImageAttrs {
+    /** 原始地址（未解析成 webview 可访问地址）。 */
+    src: string;
+    alt?: string;
+    width?: string;
+    height?: string;
+    title?: string;
+}
+
+/**
+ * 解码 HTML 实体（属性值里的 `&amp;` / `&#x2F;` 等）。
+ *
+ * 只用最小实现：行内图片的地址里最常见的是 `&amp;`，没必要为几个实体
+ * 引入一个 DOM 解析器（这个函数在每次量表格列宽时都会跑）。
+ */
+function decodeHtmlEntities(text: string): string {
+    return text.replace(/&(#x[0-9a-f]+|#\d+|amp|quot|apos|lt|gt);/gi, (whole, code: string) => {
+        const lower = code.toLowerCase();
+        if (lower === 'amp') return '&';
+        if (lower === 'quot') return '"';
+        if (lower === 'apos') return "'";
+        if (lower === 'lt') return '<';
+        if (lower === 'gt') return '>';
+        const value =
+            lower.startsWith('#x') ? Number.parseInt(lower.slice(2), 16) : Number.parseInt(lower.slice(1), 10);
+        return Number.isFinite(value) ? String.fromCodePoint(value) : whole;
+    });
+}
+
+/** 尺寸只接受数字（可带 px / %），把 `onerror=...` 之类挡在门外。 */
+function safeDimension(value: string | undefined): string | undefined {
+    if (!value) return undefined;
+    const trimmed = value.trim();
+    return /^\d+(?:\.\d+)?(?:px|%)?$/.test(trimmed) ? trimmed : undefined;
+}
+
+/**
+ * 解析行内 `<img ...>` 标签。
+ *
+ * 只读取白名单属性，返回 null 表示：
+ * - 这段 HTML 不是单个 img 标签；或
+ * - 没有 src（画不出东西，调用方应保持源码显示）。
+ *
+ * @param raw - HTMLTag 节点原文
+ * @returns 图片信息；不适用时 null
+ */
+export function parseInlineImageTag(raw: string): InlineImageAttrs | null {
+    const match = raw.trim().match(IMG_TAG_PATTERN);
+    if (!match) return null;
+
+    const attrs: Record<string, string> = {};
+    TAG_ATTR_PATTERN.lastIndex = 0;
+    let attr: RegExpExecArray | null;
+    while ((attr = TAG_ATTR_PATTERN.exec(match[1])) !== null) {
+        const name = attr[1].toLowerCase();
+        if (!INLINE_IMAGE_ATTRS.has(name)) continue;
+        attrs[name] = decodeHtmlEntities(attr[2] ?? attr[3] ?? attr[4] ?? '');
+    }
+
+    const src = (attrs.src ?? '').trim();
+    if (!src) return null;
+
+    return {
+        src,
+        alt: attrs.alt,
+        width: safeDimension(attrs.width),
+        height: safeDimension(attrs.height),
+        title: attrs.title,
+    };
+}
+
+/**
+ * 把行内图片渲染成 HTML（拆列宽 / `<font>` 内容等走字符串渲染的场合用）。
+ *
+ * 地址解析失败时退回转义后的源码，至少不吞内容。
+ *
+ * @param attrs - parseInlineImageTag 的结果
+ * @param raw - 原始标签文本（解析失败时兜底显示）
+ * @returns HTML 字符串
+ */
+function renderInlineImageHtml(attrs: InlineImageAttrs, raw: string): string {
+    const resolved = resolvePreviewImageUrl(attrs.src);
+    if (!resolved) return escapeHtml(raw);
+    const parts = [
+        `class="cm-md-inline-image"`,
+        `src="${escapeHtml(resolved)}"`,
+    ];
+    if (attrs.alt !== undefined) parts.push(`alt="${escapeHtml(attrs.alt)}"`);
+    if (attrs.title !== undefined) parts.push(`title="${escapeHtml(attrs.title)}"`);
+    if (attrs.width) parts.push(`width="${escapeHtml(attrs.width)}"`);
+    if (attrs.height) parts.push(`height="${escapeHtml(attrs.height)}"`);
+    return `<img ${parts.join(' ')}>`;
+}
 
 /**
  * 公式片段：`$$...$$` 优先，其次 `$...$`（排除 $5 这种金额写法）。
@@ -146,8 +263,11 @@ function renderNode(node: SyntaxNode, src: string): string {
         }
         case 'HTMLTag': {
             const tag = src.slice(node.from, node.to);
-            // 白名单 <br>，其余 HTML 一律转义（安全底线）
-            return BR_TAG_PATTERN.test(tag) ? '<br>' : escapeHtml(tag);
+            // 白名单 <br> 与 <img>（表格格子里的海报缩略图），其余 HTML 一律转义
+            if (BR_TAG_PATTERN.test(tag)) return '<br>';
+            const image = parseInlineImageTag(tag);
+            if (image) return renderInlineImageHtml(image, tag);
+            return escapeHtml(tag);
         }
         case 'Entity':
             // &amp; 这类实体原样输出（本身已是转义形态，不能再 escape）

@@ -114,10 +114,13 @@ import {
     FootnoteDefWidget,
     FootnoteRefWidget,
     HorizontalRuleWidget,
+    HtmlBlockWidget,
     ImageWidget,
+    InlineHtmlImageWidget,
     FontTextWidget,
     MermaidWidget,
 } from './widgets.js';
+import { parseInlineImageTag } from './inlineEngine.js';
 
 /**
  * 使用源文本中的范围替换指定区间内容。
@@ -334,6 +337,27 @@ function collectFootnoteDecorations(
             );
         }
     }
+}
+
+/**
+ * HTML 块是否交给 {@link HtmlBlockWidget} 渲染。
+ *
+ * 只放行「至少有一个可渲染展示标签」的块：
+ * - `<details>` 由 collectDetailsDecorations 的折叠 widget 负责，跳过避免双重替换；
+ * - 注释 / `<script>` / `<style>` 渲染出来是空的，保持源码显示更诚实。
+ *
+ * @param raw - HTML 块原文
+ * @returns 是否渲染成 widget
+ */
+function isRenderableHtmlBlock(raw: string): boolean {
+    const text = raw.trim();
+    if (!text) return false;
+    if (/^<details\b/i.test(text)) return false;
+    if (text.startsWith('<!--')) return false;
+    if (/<(?:script|style)\b/i.test(text)) return false;
+    return /<(?:p|div|center|b|strong|i|em|img|a|br|span|h[1-6]|table|ul|ol|li|blockquote|figure)\b/i.test(
+        text
+    );
 }
 
 /**
@@ -988,11 +1012,15 @@ function applyTreeDecorations(
                     foldedLinesOf(state).has(state.doc.lineAt(from).from);
                 // 缩进式代码块：要在 CodeBlock 节点铺 rainbow indent
                 const isIndentedCodeBlock = name === 'CodeBlock';
+                // HTML 块：整块替换成渲染结果（居中段落 / 徽章图片行）。
+                // 块级 replace 只能从 StateField 这一遍产出，所以必须放行到这里。
+                const isHtmlBlock = name === 'HTMLBlock';
                 if (
                     !isMermaidFence &&
                     !isFoldedItem &&
                     !isFoldedHeading &&
-                    !isIndentedCodeBlock
+                    !isIndentedCodeBlock &&
+                    !isHtmlBlock
                 )
                     return;
             }
@@ -1486,6 +1514,23 @@ function applyTreeDecorations(
                         decos.push(hideDeco.range(urlNode.from, urlNode.to));
                     }
 
+                    // 链接文字恰好是一个行内 <img>（README 海报墙的写法：
+                    // `[<img src="preview-01.jpg" width="170">](poster-01.png)`）。
+                    // 把标签源码换成图片 widget；链接类与 data-href 直接交给
+                    // widget（见 InlineHtmlImageWidget），这里不再加 mark ——
+                    // replace 与 mark 完全同区间时，嵌套关系不由我们控制。
+                    const inlineImage = parseInlineImageTag(
+                        state.doc.sliceString(textFrom, textTo)
+                    );
+                    if (inlineImage) {
+                        decos.push(
+                            Decoration.replace({
+                                widget: new InlineHtmlImageWidget(inlineImage, targetUrl),
+                            }).range(textFrom, textTo)
+                        );
+                        return false;
+                    }
+
                     if (textFrom < textTo) {
                         // 空链接不加 data-href：有链接样式但点不开
                         const attrs: Record<string, string> = {};
@@ -1611,7 +1656,41 @@ function applyTreeDecorations(
                 }
 
                 case 'HTMLBlock': {
-                    // <details> is handled by post-processing
+                    // 块级替换只能从 block 那一遍（StateField）产出；
+                    // 窗口遍再产一次会因为 block 装饰来源不合法而报错。
+                    if (mode !== 'block') break;
+                    const rawHtml = state.doc.sliceString(from, to);
+                    // <details> 走 collectDetailsDecorations 的折叠 widget；
+                    // 纯注释 / script 等保持源码。
+                    if (!isRenderableHtmlBlock(rawHtml)) break;
+                    // replace 的区间必须是整行（块级 replace 的硬性要求），
+                    // HTMLBlock 节点本身通常不含行尾换行，这里按行对齐。
+                    const htmlStartLine = state.doc.lineAt(from);
+                    const htmlEndLine = state.doc.lineAt(Math.max(from, to - 1));
+                    decos.push(
+                        Decoration.replace({
+                            widget: new HtmlBlockWidget(rawHtml),
+                            block: true,
+                        }).range(htmlStartLine.from, htmlEndLine.to)
+                    );
+                    break;
+                }
+
+                case 'HTMLTag': {
+                    // 行内 <img>：表格格子里的海报缩略图，以及正文里零散写的
+                    // <img src=... width=...>。只替换真正的 img 标签，其它
+                    // 行内 HTML（<b>、<span>…）保持源码，不在这里扩大支持面。
+                    // 链接里的 img 由上面的 Link 分支处理并提前 return，
+                    // 不会走到这里重复替换。
+                    if (mode === 'block') break;
+                    const rawTag = state.doc.sliceString(from, to);
+                    const inlineImage = parseInlineImageTag(rawTag);
+                    if (!inlineImage) break;
+                    decos.push(
+                        Decoration.replace({
+                            widget: new InlineHtmlImageWidget(inlineImage),
+                        }).range(from, to)
+                    );
                     break;
                 }
             }

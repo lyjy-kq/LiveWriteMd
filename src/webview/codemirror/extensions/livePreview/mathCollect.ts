@@ -18,6 +18,7 @@
 
 import { Decoration } from '@codemirror/view';
 import type { EditorState } from '@codemirror/state';
+import { syntaxTree } from '@codemirror/language';
 import type { Tree } from '@lezer/common';
 import { hiddenSourceDeco } from './decorations.js';
 import { windowLines } from './ranges.js';
@@ -29,7 +30,43 @@ import { BlockMathWidget, InlineMathWidget } from './widgets.js';
 type DecoArray = Array<ReturnType<Decoration['range']>>;
 
 /**
- * 全篇扫一遍，把「独占一行的 `$$`」按出现顺序两两配对。
+ * 语法树里算「代码」的节点名。
+ *
+ * 行内代码（InlineCode / CodeMark）与围栏代码（FencedCode / CodeText /
+ * CodeInfo）、缩进代码块（CodeBlock）都在内 —— 这些位置的 `$` 是代码，不是公式。
+ */
+const CODE_NODE_NAMES = new Set([
+    'InlineCode',
+    'CodeMark',
+    'FencedCode',
+    'CodeText',
+    'CodeBlock',
+    'CodeInfo',
+]);
+
+/**
+ * 这个节点名是否属于代码区域。
+ *
+ * @param name - lezer 节点名
+ * @returns 代码区域返回 true
+ */
+function isCodeNodeName(name: string): boolean {
+    return CODE_NODE_NAMES.has(name);
+}
+
+/**
+ * 全篇扫一遍，把公式的**开头 `$$`** 和**结尾 `$$`** 两两配对。
+ *
+ * 认三种行（角色判定见 classifyDollarLine）：
+ * - 独占一行的 `$$`：按出现顺序交替当开头 / 结尾；
+ * - `$$内容`（可带缩进）：开头定界符 + 同一行的内容；
+ * - `内容$$`：同一行的内容 + 结尾定界符。
+ *
+ * 缩进要认：用户习惯在 `$$` 前面空两格，列表项里的公式更是必然带缩进。
+ * 以前只认「整行 `$$`」，`  $$a+b` / `  $$` 这种写法里，第二个 `$$`
+ * 会被当成新的开头，把后面真正的公式开头抢走、中间整段正文吞进公式。
+ *
+ * 缩进代码块（4 空格）与围栏代码里的 `$$` 一律不算公式。
  *
  * 为什么要先配对、而不是从某一行往下找下一个 `$$`：
  *
@@ -53,32 +90,104 @@ type DecoArray = Array<ReturnType<Decoration['range']>>;
  * @param state - 编辑器状态
  * @returns 开头行号 → 结尾行号
  */
-export function pairDollarLines(state: EditorState): Map<number, number> {
+export function pairDollarLines(state: EditorState, tree?: Tree): Map<number, number> {
     const pairs = new Map<number, number>();
     /** 还没配上对的开头行号，-1 表示当前不在公式里 */
     let openLn = -1;
     /** 是否正走在围栏代码块里（围栏里的 `$$` 不算公式） */
     let inFence = false;
+    /** 懒取语法树：调用方有现成的就复用，没有就现查一次 */
+    const syntax = (): Tree => tree ?? syntaxTree(state);
 
     for (let ln = 1; ln <= state.doc.lines; ln++) {
-        const text = state.doc.line(ln).text.trim();
+        const line = state.doc.line(ln);
+        const text = line.text.trim();
         // 围栏行：进/出代码块，本身不参与配对
         if (text.startsWith('```') || text.startsWith('~~~')) {
             inFence = !inFence;
             continue;
         }
-        if (inFence || text !== '$$') continue;
+        if (inFence) continue;
 
+        // 不含 `$$` 的行不可能参与配对，先跳过（避免每行都去查语法树）
+        if (!text.includes('$$')) continue;
+
+        // 缩进代码块里的 `$$` 是代码，不能参与配对 —— 否则它会把后面
+        // 真正公式的开头「抢走」，那一组就再也不渲染了。
+        // 代码块节点从第一个非空白字符开始，所以按缩进之后的位置查。
+        const lead = line.text.length - line.text.trimStart().length;
+        if (isCodeNodeName(syntax().resolveInner(line.from + lead, 1).type.name)) continue;
+
+        const role = classifyDollarLine(text);
+        // 不含定界符 / 定界符自己成对（`$$x$$`）：和跨行配对无关
+        if (role === 'none' || role === 'single') continue;
+
+        if (role === 'open') {
+            // 「开头行 + 同一行内容」（`  $$a+b`）。
+            // 前面如果已经有个没配上的开头，说明那段是残缺的写法，
+            // 让位给更靠后的这个（残缺段保持源码，不去吞后面的正文）。
+            openLn = ln;
+            continue;
+        }
+
+        if (role === 'close') {
+            // 「结尾行 + 同一行内容」（`a+b$$`）：只负责收尾，不能当新开头
+            if (openLn >= 0) {
+                pairs.set(openLn, ln);
+                openLn = -1;
+            }
+            continue;
+        }
+
+        // 独占一行的 `$$`：既可能是开头也可能是结尾，按出现顺序两两交替
         if (openLn < 0) {
-            // 遇到一个「开头」
             openLn = ln;
         } else {
-            // 遇到一个「结尾」，配成一对
             pairs.set(openLn, ln);
             openLn = -1;
         }
     }
     return pairs;
+}
+
+/**
+ * 一行（已 trim）里的 `$$` 扮演什么角色 —— `pairDollarLines` 靠它配对。
+ *
+ * 以前只认「整行就是 `$$`」，于是缩进 / 内容写在同一行的写法
+ * （`  $$a+b` 换行 `  $$`）会被彻底漏掉：第二个 `$$` 被当成新的开头，
+ * 结果它和后面真正的公式开头配成一对，中间整段正文被吞进公式里。
+ *
+ * 判定规则（都在 trim 之后的文本上做）：
+ * - `$$`                → `neutral`，可开可闭，交给配对循环按顺序交替；
+ * - `$$x$$`             → `single`，单行公式，收集时由 sameLineMatch 处理，不参与配对；
+ * - `$$x…`              → `open`，开头定界符后面还有内容；
+ * - `x…$$`              → `close`，内容之后才是结尾定界符；
+ * - 其余（`$$a$$ b`、`x $$ y` 这种）→ `none`，不参与配对，避免误吞。
+ *
+ * @param trimmed - 已经 trim 过的行文本
+ * @returns 该行在配对里的角色
+ */
+function classifyDollarLine(
+    trimmed: string
+): 'none' | 'single' | 'open' | 'close' | 'neutral' {
+    // 先判「整行就是 $$」：它既 startsWith 又 endsWith，别被下面的单一判定抢走
+    if (trimmed === '$$') return 'neutral';
+    if (!trimmed.includes('$$')) return 'none';
+
+    const starts = trimmed.startsWith('$$');
+    const ends = trimmed.endsWith('$$');
+    // 上下定界符挤在同一行：`$$x$$`，单行公式
+    if (starts && ends) return 'single';
+
+    if (starts) {
+        // 开头 `$$` 后面还剩内容，且内容里不再出现 `$$`（否则这行自己就含一对）
+        return trimmed.slice(2).includes('$$') ? 'none' : 'open';
+    }
+    if (ends) {
+        // 结尾 `$$` 前面的内容里不能再有 `$$`
+        return trimmed.slice(0, -2).includes('$$') ? 'none' : 'close';
+    }
+    return 'none';
 }
 
 /**
@@ -108,25 +217,15 @@ export function collectMathDecorations(
      * 这个位置是不是落在代码里（行内代码 / 围栏代码都算）。
      * 代码里的美元符号是代码，不是公式。
      */
-    const isInsideCode = (pos: number): boolean => {
-        const node = tree.resolveInner(pos, 1);
-        const n = node.type.name;
-        return (
-            n === 'InlineCode' ||
-            n === 'CodeMark' ||
-            n === 'FencedCode' ||
-            n === 'CodeText' ||
-            n === 'CodeBlock' ||
-            n === 'CodeInfo'
-        );
-    };
+    const isInsideCode = (pos: number): boolean =>
+        isCodeNodeName(tree.resolveInner(pos, 1).type.name);
 
     // 预编译行内公式正则，允许分隔符内外出现常见空格。
     // `(?!\$)` 的两头是为了排除 `$$`；结尾的 `(?!\d)` 是为了放过「$5 到 $10」这种价格。
     const inlineRegex = /(?<!\$)\$(?!\$)\s*(.+?)\s*\$(?!\$|\d)/g;
 
     // 块级 `$$` 的配对表：整篇算一次，循环里查表。配对规则见 pairDollarLines。
-    const dollarPairs = pairDollarLines(state);
+    const dollarPairs = pairDollarLines(state, tree);
     const dollarClosers = new Set(dollarPairs.values());
 
     // 当前选区：行内公式要不要展开，看的是光标在不在**表达式里面**，
@@ -168,7 +267,11 @@ export function collectMathDecorations(
         if (!lineText.includes('$')) continue;
 
         // 代码块内不做数学公式渲染，避免误伤源码。
-        if (isInsideCode(line.from)) continue;
+        // 注意**不能用 line.from 判**：缩进代码块（4 空格）的节点是从第一个
+        // 非空白字符开始的，行首那几个空格还在节点外面，resolveInner 会在那里
+        // 返回 Document，于是 `    $$x` 这类会被误当成公式。
+        const leadingSpace = lineText.length - lineText.trimStart().length;
+        if (isInsideCode(line.from + leadingSpace)) continue;
 
         // 同行块级公式：只有整行都由 $$ 包围时，才保留块级渲染（渲染成块级 widget，占 2.5 行高）。
         const sameLineMatch = lineText.match(/^\s*\$\$\s*(.+?)\s*\$\$\s*$/);
@@ -209,8 +312,14 @@ export function collectMathDecorations(
                 continue;
             }
 
-            const rawFrom = state.doc.line(ln + 1).from;
-            const rawTo = state.doc.line(closingLn).from;
+            // 公式原文 = 开头 `$$` 之后 … 结尾 `$$` 之前。
+            // 内容允许写在定界符同一行（`  $$a+b` / `a+b$$`），所以起点是
+            // 开头行里 `$$` 的末尾、终点是结尾行里 `$$` 的起点，中间的行整段包含。
+            // 这种写法常见于缩进（列表项 / 引用块 / 用户习惯空两格）。
+            const openIdx = line.text.indexOf('$$');
+            const closeIdx = closingLine.text.lastIndexOf('$$');
+            const rawFrom = line.from + Math.max(0, openIdx) + 2;
+            const rawTo = closingLine.from + Math.max(0, closeIdx);
             const rawTex = state.doc.sliceString(rawFrom, rawTo);
             const texContent = rawTex.trim();
             if (texContent) {

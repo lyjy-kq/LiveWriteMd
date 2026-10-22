@@ -548,6 +548,37 @@ export function createBaseThemeStyles(): Extension {
         },
 
         // =================================================================
+        // HTML 块（README 顶部的居中标题 / 徽章图片行）
+        // =================================================================
+        // 整块被 block widget 替换，里面就是用户写的 HTML（白名单重建）。
+        // 只做「正文里能安放」的最小修正：图片不撑破正文宽度、段落不要
+        // 浏览器默认的上下大间距。
+        '.cm-md-html-block': {
+            display: 'block',
+            width: '100%',
+            boxSizing: 'border-box',
+        },
+        '.cm-md-html-block img': {
+            maxWidth: '100%',
+            height: 'auto',
+            verticalAlign: 'middle',
+        },
+        '.cm-md-html-block p': {
+            margin: '0.35em 0',
+        },
+        '.cm-md-html-block > :first-child': {
+            marginTop: '0',
+        },
+        '.cm-md-html-block > :last-child': {
+            marginBottom: '0',
+        },
+        '.cm-md-html-block a': {
+            // 复用 live 链接颜色，但不加下划线（README 徽章行里全是图）
+            color: 'var(--vscode-textLink-foreground, #4fc1ff)',
+            textDecoration: 'none',
+        },
+
+        // =================================================================
         // Hidden lines (for block widget rendering)
         // =================================================================
         '.cm-md-hidden-line': {
@@ -635,6 +666,9 @@ export function createBaseThemeStyles(): Extension {
             marginLeft: '0',
         },
         // 悬停右边框/下边框时那条边泛蓝（tableHoverControls 加的类）。
+        // 这两类会加到**整条边界**涉及的所有格子上（最后一列的每一行 /
+        // 最后一行的每一格），所以视觉上是一条贯穿整张表格的线，
+        // 而不是鼠标下那一格的一小段。
         // 这条线本身就是**点击热区**：按下去直接加列/加行，不再有浮动按钮
         // （浮动按钮在导图节点的缩放变换里坐标会算错，到处乱飞）。
         '.cm-md-tcell-edge-col': {
@@ -647,7 +681,9 @@ export function createBaseThemeStyles(): Extension {
         },
         // 线中点叠一个纯 CSS 的「+」：只是提示，pointer-events:none 让点击
         // 穿透到格子本身（命中检测在 tableHoverControls 里）。
-        '.cm-md-tcell-edge-col::after, .cm-md-tcell-edge-row::after': {
+        // 整条边界上只有一个加号，且固定在整个边界的正中（不是鼠标位置）；
+        // 落在哪个格子由 placePlus 计算，再用 --lwm-edge-shift 修正到边界中点。
+        '.cm-md-tcell-edge-plus::after': {
             content: '"+"',
             position: 'absolute',
             zIndex: '20',
@@ -666,16 +702,17 @@ export function createBaseThemeStyles(): Extension {
             userSelect: 'none',
             boxSizing: 'border-box',
         },
-        // 右边界：加号骑在右边框上，纵向居中
-        '.cm-md-tcell-edge-col::after': {
+        // 右边界：加号骑在右边框上，纵向锚点 = 格子中心 + 到整条边界中点的偏移
+        // （--lwm-edge-shift 由 tableHoverControls 按边界总高度算，默认 0）
+        '.cm-md-tcell-edge-col.cm-md-tcell-edge-plus::after': {
             right: '-9px',
-            top: '50%',
+            top: 'calc(50% + var(--lwm-edge-shift, 0px))',
             transform: 'translateY(-50%)',
         },
-        // 下边界：加号骑在下边框上，横向居中
-        '.cm-md-tcell-edge-row::after': {
+        // 下边界：加号骑在下边框上，横向锚点同理
+        '.cm-md-tcell-edge-row.cm-md-tcell-edge-plus::after': {
             bottom: '-9px',
-            left: '50%',
+            left: 'calc(50% + var(--lwm-edge-shift, 0px))',
             transform: 'translateX(-50%)',
         },
         // 管道线：压 0 宽但保留在文档里（光标还能停上去，方向键能跨过去）
@@ -860,6 +897,20 @@ export function createBaseThemeStyles(): Extension {
             height: 'auto',
             borderRadius: '4px',
             verticalAlign: 'middle',
+        },
+        // 行内 <img>：表格格子里的海报缩略图（见 InlineHtmlImageWidget）。
+        // 尺寸优先听标签的 width/height 属性；没有属性时按图片原始尺寸。
+        // max-width 只在正文行里生效（.cm-line 后代）：表格列宽是用屏幕外
+        // 量尺量的，量尺宿主是 0 宽，100% 会解析成 0，把图片量成零宽、
+        // 列宽跟着算小，最后图片被挤成一条 —— 量尺里必须让 width 属性说了算。
+        '.cm-md-inline-image': {
+            display: 'inline-block',
+            verticalAlign: 'middle',
+            height: 'auto',
+            borderRadius: '3px',
+        },
+        '.cm-line .cm-md-inline-image': {
+            maxWidth: '100%',
         },
         '.cm-md-image-fallback': {
             display: 'inline-block',

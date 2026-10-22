@@ -304,6 +304,43 @@ export function getDocumentBaseUri(): string {
     return _documentBaseUri;
 }
 
+/**
+ * 把图片原始地址解析成 webview 能直接访问的地址。
+ *
+ * 放在 state.ts 而不是 helpers.ts：行内引擎（inlineEngine）也要用它，
+ * 而 helpers 已经 import 了 inlineEngine，反过来再依赖会形成循环。
+ * 这里只依赖本文件里的 baseUri，是最底层的实现。
+ *
+ * 支持远程地址、data URI 与文档目录下的相对路径。
+ *
+ * @param rawUrl - 图片原始链接或相对路径
+ * @returns 可直接赋值给 img.src 的地址；无法解析时返回空串
+ */
+export function resolvePreviewImageUrl(rawUrl: string): string {
+    const trimmed = rawUrl.trim();
+    if (!trimmed) return '';
+
+    if (
+        trimmed.startsWith('http://') ||
+        trimmed.startsWith('https://') ||
+        trimmed.startsWith('data:')
+    ) {
+        return trimmed;
+    }
+
+    if (!_documentBaseUri) return '';
+
+    try {
+        const normalizedBase = _documentBaseUri.endsWith('/')
+            ? _documentBaseUri
+            : `${_documentBaseUri}/`;
+        const normalizedPath = trimmed.replace(/\\/g, '/');
+        return new URL(normalizedPath, normalizedBase).href;
+    } catch {
+        return '';
+    }
+}
+
 // =============================================================================
 // List Fold State
 // =============================================================================
