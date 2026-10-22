@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=794, initial-scale=1">
+<title>LiveWriteMD 海报 01 · 边写边渲染</title>
+<link rel="stylesheet" href="poster.css">
+</head>
+<body>
+<div class="poster accent-cyan">
+
+    <!-- 页眉：系列名 + 页码 -->
+    <div class="series">
+        <div class="brand"><span class="brand-mark"></span>LiveWriteMD</div>
+        <div class="rule"></div>
+        <div>Poster 01 / 04</div>
+    </div>
+
+    <!-- 主标题 -->
+    <div class="hero">
+        <div class="kicker"><i></i>VS Code Extension · Markdown</div>
+        <h1 class="title">边写，<br><em>边渲染。</em></h1>
+        <p class="subtitle">
+            Markdown 的写法，排好版的阅读体验。<br>
+            四种视图、一份源文件——<b>光标停下的地方，就是成品的模样。</b>
+        </p>
+    </div>
+
+    <!-- 能力胶囊 -->
+    <div class="pills">
+        <span class="pill"><span class="dot"></span>实时预览</span>
+        <span class="pill"><span class="dot"></span>思维导图</span>
+        <span class="pill"><span class="dot"></span>表格 · 公式 · Mermaid</span>
+        <span class="pill"><span class="dot"></span>PNG / SVG / PDF</span>
+        <span class="pill"><b>本地渲染</b></span>
+    </div>
+
+    <!-- 主视觉：真实扩展截图 -->
+    <div class="shot">
+        <img src="../screenshot-live-dark.png" alt="LiveWriteMD 实时预览界面">
+        <span class="shot-tag">LIVE PREVIEW</span>
+    </div>
+
+    <!-- 三个数字，快速建立记忆点 -->
+    <div class="stats">
+        <div class="stat">
+            <div class="v">4 <small>VIEWS</small></div>
+            <div class="k">实时 · 阅读 · 源码 · 导图</div>
+        </div>
+        <div class="stat">
+            <div class="v">1 <small>SOURCE</small></div>
+            <div class="k">Markdown 是唯一数据源</div>
+        </div>
+        <div class="stat">
+            <div class="v">0 <small>SWITCH</small></div>
+            <div class="k">不用在编辑与预览间来回切</div>
+        </div>
+    </div>
+
+    <!-- 页脚 -->
+    <div class="footer">
+        <div><b>LiveWriteMD</b> · 在 VS Code 里写 Markdown</div>
+        <div class="page-no">01 / 04</div>
+    </div>
+
+</div>
+<script>
+    // 静态海报没有应用生命周期：等图片全部加载、字体就位后再放行截图脚本
+    window.addEventListener('load', () => {
+        setTimeout(() => {
+            window.__shotReady = true;
+        }, 300);
+    });
+</script>
+</body>
+</html>

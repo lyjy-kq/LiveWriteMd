@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=794, initial-scale=1">
+<title>LiveWriteMD 海报 03 · 思维导图</title>
+<link rel="stylesheet" href="poster.css">
+</head>
+<body>
+<div class="poster accent-violet compact">
+
+    <!-- 页眉 -->
+    <div class="series">
+        <div class="brand"><span class="brand-mark"></span>LiveWriteMD</div>
+        <div class="rule"></div>
+        <div>Poster 03 / 04</div>
+    </div>
+
+    <!-- 主标题 -->
+    <div class="hero">
+        <div class="kicker"><i></i>02 · Mind Map</div>
+        <h1 class="title">同一份 Markdown，<br><em>长出第二副骨架</em></h1>
+        <p class="subtitle">
+            标题是骨、列表是叶。<b>改导图就是改 Markdown，反过来也一样。</b>
+        </p>
+    </div>
+
+    <!-- 导图实拍 -->
+    <div class="shot">
+        <img src="../screenshot-mindmap-dark.png" alt="LiveWriteMD 思维导图界面">
+        <span class="shot-tag">MIND MAP · DARK</span>
+    </div>
+
+    <!-- 四项导图能力 -->
+    <div class="cards">
+        <div class="card">
+            <div class="num">01 / STRUCTURE</div>
+            <h3>标题为骨，列表为叶</h3>
+            <p>H1–H6 构成主干，跳级标题自动挂到最近一级；嵌套列表就是嵌套节点，段落与媒体块也各得其所。</p>
+        </div>
+        <div class="card">
+            <div class="num">02 / RENDER</div>
+            <h3>节点里是真正的渲染</h3>
+            <p>代码高亮、可视化表格、KaTeX、Mermaid 都在节点内直接运行，与实时预览同一套组件。</p>
+        </div>
+        <div class="card">
+            <div class="num">03 / EDIT</div>
+            <h3>在导图上直接写</h3>
+            <p>双击编辑，Tab 加子节点，Enter 加同级；拖动改结构，非法落点自动回弹，回写全程可撤销。</p>
+        </div>
+        <div class="card">
+            <div class="num">04 / NAVIGATE</div>
+            <h3>查找、多选、导出</h3>
+            <p>文档级搜索替换、Ctrl 点选与框选批量删除、缩略图导航，一键导出 PNG / SVG / PDF。</p>
+        </div>
+    </div>
+
+    <!-- 页脚 -->
+    <div class="footer">
+        <div><b>LiveWriteMD</b> · 一份源文件，两种读法</div>
+        <div class="page-no">03 / 04</div>
+    </div>
+
+</div>
+<script>
+    // 静态海报没有应用生命周期：等图片全部加载、字体就位后再放行截图脚本
+    window.addEventListener('load', () => {
+        setTimeout(() => {
+            window.__shotReady = true;
+        }, 300);
+    });
+</script>
+</body>
+</html>

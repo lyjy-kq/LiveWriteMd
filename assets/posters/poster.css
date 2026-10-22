@@ -1,0 +1,689 @@
+/* ==========================================================================
+ * LiveWriteMD 宣传海报 · 共用样式
+ *
+ * A4 竖版：794 × 1123 CSS px（96dpi 下的 210 × 297mm）。
+ * 打印时 @page 兜底，屏幕/截图时按固定 px，保证四张尺寸一致。
+ * ========================================================================== */
+
+@page {
+    size: 210mm 297mm;
+    margin: 0;
+}
+
+/* 打印时用物理尺寸，避免 794px 与 210mm 的亚像素差多出一页空白 */
+@media print {
+    html,
+    body {
+        width: 210mm;
+        height: 297mm;
+    }
+
+    .poster {
+        width: 210mm;
+        height: 297mm;
+    }
+}
+
+* {
+    box-sizing: border-box;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    background: #05070b;
+}
+
+body {
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC",
+        "Noto Sans CJK SC", "Segoe UI", sans-serif;
+    color: #e9eef6;
+    -webkit-font-smoothing: antialiased;
+}
+
+.poster {
+    position: relative;
+    width: 794px;
+    height: 1123px;
+    overflow: hidden;
+    padding: 54px 56px 36px;
+    display: flex;
+    flex-direction: column;
+    background:
+        radial-gradient(900px 620px at 88% -8%, var(--glow-a), transparent 62%),
+        radial-gradient(760px 520px at -12% 34%, var(--glow-b), transparent 60%),
+        radial-gradient(900px 500px at 108% 104%, var(--glow-c), transparent 64%),
+        #080b11;
+}
+
+/* 细网格 + 顶部高光，增加「工程感」但不抢内容 */
+.poster::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+        linear-gradient(rgba(255, 255, 255, 0.024) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.024) 1px, transparent 1px);
+    background-size: 46px 46px;
+    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.85), transparent 72%);
+    pointer-events: none;
+}
+
+.poster::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0.65;
+}
+
+/* 每张海报一个主色 */
+.accent-cyan {
+    --accent: #6ee7ff;
+    --accent-2: #9af0c8;
+    --accent-soft: rgba(110, 231, 255, 0.16);
+    --accent-line: rgba(110, 231, 255, 0.34);
+    --glow-a: rgba(64, 183, 255, 0.16);
+    --glow-b: rgba(110, 231, 255, 0.07);
+    --glow-c: rgba(154, 240, 200, 0.1);
+}
+
+.accent-green {
+    --accent: #8ef0b0;
+    --accent-2: #6ee7ff;
+    --accent-soft: rgba(142, 240, 176, 0.14);
+    --accent-line: rgba(142, 240, 176, 0.34);
+    --glow-a: rgba(84, 214, 140, 0.16);
+    --glow-b: rgba(142, 240, 176, 0.07);
+    --glow-c: rgba(110, 231, 255, 0.09);
+}
+
+.accent-violet {
+    --accent: #c3b0ff;
+    --accent-2: #ff9ecb;
+    --accent-soft: rgba(195, 176, 255, 0.15);
+    --accent-line: rgba(195, 176, 255, 0.36);
+    --glow-a: rgba(150, 116, 255, 0.18);
+    --glow-b: rgba(255, 158, 203, 0.07);
+    --glow-c: rgba(110, 231, 255, 0.08);
+}
+
+.accent-amber {
+    --accent: #ffc46b;
+    --accent-2: #ff8fa3;
+    --accent-soft: rgba(255, 196, 107, 0.14);
+    --accent-line: rgba(255, 196, 107, 0.36);
+    --glow-a: rgba(255, 166, 66, 0.15);
+    --glow-b: rgba(255, 143, 163, 0.07);
+    --glow-c: rgba(142, 240, 176, 0.07);
+}
+
+/* ---------- 页眉：品牌 + 编号 ---------- */
+
+.series {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-family: "Cascadia Code", Consolas, "SF Mono", monospace;
+    font-size: 10px;
+    letter-spacing: 0.26em;
+    text-transform: uppercase;
+    color: rgba(233, 238, 246, 0.5);
+}
+
+.series .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--accent);
+    letter-spacing: 0.2em;
+}
+
+.brand-mark {
+    width: 16px;
+    height: 16px;
+    border: 1.4px solid var(--accent);
+    border-radius: 4px;
+    position: relative;
+    display: inline-block;
+}
+
+.brand-mark::before,
+.brand-mark::after {
+    content: "";
+    position: absolute;
+    background: var(--accent);
+}
+
+.brand-mark::before {
+    left: 3px;
+    right: 3px;
+    top: 6px;
+    height: 1px;
+}
+
+.brand-mark::after {
+    left: 6px;
+    right: 6px;
+    bottom: 3px;
+    height: 1px;
+    opacity: 0.55;
+}
+
+.series .rule {
+    flex: 1 1 auto;
+    height: 1px;
+    margin: 0 18px;
+    background: linear-gradient(90deg, var(--accent-line), transparent);
+}
+
+/* ---------- 主标题区 ---------- */
+
+.hero {
+    position: relative;
+    z-index: 2;
+    margin-top: 46px;
+}
+
+.kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    height: 24px;
+    padding: 0 11px;
+    border: 1px solid var(--accent-line);
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.kicker i {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--accent);
+}
+
+.title {
+    margin: 18px 0 0;
+    font-size: 57px;
+    line-height: 1.08;
+    letter-spacing: -0.035em;
+    font-weight: 800;
+    color: #f5f8ff;
+}
+
+.title em {
+    font-style: normal;
+    color: var(--accent);
+}
+
+.title .thin {
+    font-weight: 300;
+    color: rgba(233, 238, 246, 0.72);
+}
+
+.subtitle {
+    margin: 16px 0 0;
+    font-size: 15.5px;
+    line-height: 1.72;
+    color: rgba(233, 238, 246, 0.64);
+    max-width: 660px;
+}
+
+.subtitle b {
+    color: rgba(233, 238, 246, 0.88);
+    font-weight: 600;
+}
+
+/* ---------- 截图框 ---------- */
+
+.shot {
+    position: relative;
+    z-index: 2;
+    margin-top: 30px;
+    border-radius: 13px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: #0d1118;
+    box-shadow:
+        0 26px 70px rgba(0, 0, 0, 0.55),
+        0 0 0 1px rgba(255, 255, 255, 0.03),
+        0 0 60px -12px var(--accent-line);
+    overflow: hidden;
+}
+
+.shot img {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.shot .shot-tag {
+    position: absolute;
+    right: 12px;
+    top: 12px;
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: rgba(8, 11, 17, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: var(--accent);
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 9.5px;
+    letter-spacing: 0.1em;
+    backdrop-filter: blur(6px);
+}
+
+/* ---------- 特性胶囊 ---------- */
+
+.pills {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 9px;
+    margin-top: 24px;
+}
+
+.pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 30px;
+    padding: 0 13px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.11);
+    background: rgba(255, 255, 255, 0.035);
+    color: rgba(233, 238, 246, 0.78);
+    font-size: 11.5px;
+    white-space: nowrap;
+}
+
+.pill b {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.pill .dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+}
+
+/* ---------- 卡片 ---------- */
+
+.cards {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 24px;
+}
+
+.card {
+    position: relative;
+    padding: 15px 16px 14px;
+    border-radius: 11px;
+    border: 1px solid rgba(255, 255, 255, 0.085);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.016));
+}
+
+.card .num {
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 9.5px;
+    color: var(--accent);
+    letter-spacing: 0.14em;
+    opacity: 0.9;
+}
+
+.card h3 {
+    margin: 7px 0 5px;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: #f2f6fd;
+}
+
+.card p {
+    margin: 0;
+    font-size: 10.8px;
+    line-height: 1.65;
+    color: rgba(233, 238, 246, 0.56);
+}
+
+.card::after {
+    content: "";
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    top: 0;
+    height: 1px;
+    background: linear-gradient(90deg, var(--accent-line), transparent);
+    opacity: 0.6;
+}
+
+/* ---------- 对比条 ---------- */
+
+.compare {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.compare > div {
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.022);
+    font-size: 10.8px;
+    line-height: 1.6;
+    color: rgba(233, 238, 246, 0.56);
+}
+
+.compare strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: rgba(233, 238, 246, 0.82);
+}
+
+.compare .win {
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+    color: rgba(233, 238, 246, 0.78);
+}
+
+.compare .win strong {
+    color: var(--accent);
+}
+
+/* ---------- 步骤 ---------- */
+
+.steps {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-top: 26px;
+}
+
+.step {
+    padding: 14px 13px;
+    border-radius: 11px;
+    border: 1px solid rgba(255, 255, 255, 0.085);
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.step .n {
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 18px;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+}
+
+.step h4 {
+    margin: 8px 0 4px;
+    font-size: 12.5px;
+    color: #f2f6fd;
+}
+
+.step p {
+    margin: 0;
+    font-size: 10.2px;
+    line-height: 1.55;
+    color: rgba(233, 238, 246, 0.52);
+}
+
+/* ---------- CTA ---------- */
+
+.cta {
+    position: relative;
+    z-index: 2;
+    margin-top: auto;
+    padding: 18px 20px;
+    border-radius: 12px;
+    border: 1px solid var(--accent-line);
+    background:
+        linear-gradient(120deg, var(--accent-soft), rgba(255, 255, 255, 0.02) 62%);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+}
+
+.cta .label {
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 9.5px;
+    letter-spacing: 0.18em;
+    color: var(--accent);
+    text-transform: uppercase;
+}
+
+.cta .big {
+    margin-top: 5px;
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: #f6f9ff;
+}
+
+.cta .big span {
+    color: var(--accent);
+}
+
+.cta .url {
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 10.5px;
+    line-height: 1.7;
+    text-align: right;
+    color: rgba(233, 238, 246, 0.62);
+    white-space: nowrap;
+}
+
+/* ---------- 页脚 ---------- */
+
+.footer {
+    position: relative;
+    z-index: 2;
+    margin-top: 22px;
+    padding-top: 13px;
+    border-top: 1px solid rgba(255, 255, 255, 0.075);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 9.5px;
+    letter-spacing: 0.08em;
+    color: rgba(233, 238, 246, 0.42);
+}
+
+.footer b {
+    color: rgba(233, 238, 246, 0.66);
+    font-weight: 500;
+}
+
+.footer .page-no {
+    color: var(--accent);
+    opacity: 0.85;
+}
+
+/* 单行说明 / 注释 */
+.note {
+    position: relative;
+    z-index: 2;
+    margin-top: 14px;
+    font-size: 10.5px;
+    line-height: 1.6;
+    color: rgba(233, 238, 246, 0.42);
+}
+
+.note b {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+/* ---------- 数字统计条 ---------- */
+
+.stats {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-top: 22px;
+}
+
+.stat {
+    padding: 13px 15px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.stat .v {
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 23px;
+    line-height: 1;
+    color: var(--accent);
+    letter-spacing: -0.02em;
+}
+
+.stat .v small {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    opacity: 0.72;
+}
+
+.stat .k {
+    margin-top: 7px;
+    font-size: 10.5px;
+    line-height: 1.5;
+    color: rgba(233, 238, 246, 0.5);
+}
+
+/* ---------- 三列卡片 ---------- */
+
+.cards.three {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+}
+
+.cards.three .card {
+    padding: 13px 13px 12px;
+}
+
+.cards.three .card h3 {
+    font-size: 12.5px;
+}
+
+.cards.three .card p {
+    font-size: 10.2px;
+}
+
+/* ---------- 双图画廊 ---------- */
+
+.gallery {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 24px;
+}
+
+.gallery figure {
+    margin: 0;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    background: #0d1118;
+    overflow: hidden;
+    box-shadow: 0 18px 46px rgba(0, 0, 0, 0.45);
+}
+
+.gallery img {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.gallery figcaption {
+    padding: 8px 10px 9px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    font-size: 9.5px;
+    letter-spacing: 0.04em;
+    color: rgba(233, 238, 246, 0.44);
+}
+
+/* ---------- 紧凑版（内容较多时压缩垂直节奏） ---------- */
+
+.poster.compact .hero {
+    margin-top: 36px;
+}
+
+.poster.compact .shot {
+    margin-top: 24px;
+}
+
+.poster.compact .cards {
+    margin-top: 20px;
+}
+
+.poster.compact .card {
+    padding: 12px 14px 11px;
+}
+
+.poster.compact .card h3 {
+    margin: 6px 0 4px;
+}
+
+.poster.compact .footer {
+    margin-top: 16px;
+}
+
+.poster.compact .note {
+    margin-top: 10px;
+}
+
+/* ---------- 均匀分布版（内容偏少时把留白摊到各段之间） ---------- */
+
+.poster.spread {
+    justify-content: space-between;
+}
+
+.poster.spread .hero,
+.poster.spread .pills,
+.poster.spread .shot,
+.poster.spread .steps,
+.poster.spread .gallery,
+.poster.spread .cards,
+.poster.spread .stats,
+.poster.spread .note,
+.poster.spread .cta,
+.poster.spread .footer {
+    margin-top: 0;
+}
+
+/* 内容不足时把页脚推到底部 */
+.spacer {
+    flex: 1 1 auto;
+    min-height: 10px;
+}

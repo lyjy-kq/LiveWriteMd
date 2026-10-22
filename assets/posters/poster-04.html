@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=794, initial-scale=1">
+<title>LiveWriteMD 海报 04 · 工作流</title>
+<link rel="stylesheet" href="poster.css">
+</head>
+<body>
+<div class="poster accent-amber compact spread">
+
+    <!-- 页眉 -->
+    <div class="series">
+        <div class="brand"><span class="brand-mark"></span>LiveWriteMD</div>
+        <div class="rule"></div>
+        <div>Poster 04 / 04</div>
+    </div>
+
+    <!-- 主标题 -->
+    <div class="hero">
+        <div class="kicker"><i></i>03 · Workflow</div>
+        <h1 class="title">从草稿到交付，<br><em>一个窗口完成</em></h1>
+        <p class="subtitle">
+            写、梳理、调整、导出——<b>不用离开 VS Code，也不用换一套工具。</b>
+        </p>
+    </div>
+
+    <!-- 四步工作流 -->
+    <div class="steps">
+        <div class="step">
+            <div class="n">01</div>
+            <h4>写</h4>
+            <p>打开 .md 就是实时预览，标记语法随手敲。</p>
+        </div>
+        <div class="step">
+            <div class="n">02</div>
+            <h4>梳理</h4>
+            <p>一键切到导图，拖动节点理清结构。</p>
+        </div>
+        <div class="step">
+            <div class="n">03</div>
+            <h4>调整</h4>
+            <p>表格点边线、图表改源码、设置实时生效。</p>
+        </div>
+        <div class="step">
+            <div class="n">04</div>
+            <h4>交付</h4>
+            <p>HTML / PDF，或导图 PNG / SVG / PDF。</p>
+        </div>
+    </div>
+
+    <!-- 双图：设置面板 + 浅色导图 -->
+    <div class="gallery">
+        <figure>
+            <img src="../screenshot-settings-dark.png" alt="LiveWriteMD 设置面板">
+            <figcaption>设置面板 · 改完即生效</figcaption>
+        </figure>
+        <figure>
+            <img src="../screenshot-mindmap-light.png" alt="LiveWriteMD 浅色思维导图">
+            <figcaption>浅色导图 · 跟随 VS Code 主题</figcaption>
+        </figure>
+    </div>
+
+    <!-- 三条取舍 -->
+    <div class="cards three">
+        <div class="card">
+            <div class="num">WHY 01</div>
+            <h3>本地渲染</h3>
+            <p>文档不出本机；KaTeX 与 Mermaid 随扩展打包，不依赖 CDN。</p>
+        </div>
+        <div class="card">
+            <div class="num">WHY 02</div>
+            <h3>原生手感</h3>
+            <p>CodeMirror 6 驱动，输入、选择、撤销都是编辑器原生行为。</p>
+        </div>
+        <div class="card">
+            <div class="num">WHY 03</div>
+            <h3>源文件属于你</h3>
+            <p>纯 Markdown，无私有格式，随时可以换一个工具继续写。</p>
+        </div>
+    </div>
+
+    <!-- 行动号召 -->
+    <div class="cta">
+        <div>
+            <div class="label">Get started</div>
+            <div class="big">在扩展面板搜索 <span>LiveWriteMD</span></div>
+        </div>
+        <div class="url">
+            github.com/lyjy-kq<br>/livewrite-md-forvscode
+        </div>
+    </div>
+
+    <!-- 页脚 -->
+    <div class="footer">
+        <div><b>LiveWriteMD</b> · Visual Studio Code Marketplace</div>
+        <div class="page-no">04 / 04</div>
+    </div>
+
+</div>
+<script>
+    // 静态海报没有应用生命周期：等图片全部加载、字体就位后再放行截图脚本
+    window.addEventListener('load', () => {
+        setTimeout(() => {
+            window.__shotReady = true;
+        }, 300);
+    });
+</script>
+</body>
+</html>

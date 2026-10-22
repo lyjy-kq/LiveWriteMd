@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=794, initial-scale=1">
+<title>LiveWriteMD 海报 02 · 实时预览</title>
+<link rel="stylesheet" href="poster.css">
+</head>
+<body>
+<div class="poster accent-green">
+
+    <!-- 页眉 -->
+    <div class="series">
+        <div class="brand"><span class="brand-mark"></span>LiveWriteMD</div>
+        <div class="rule"></div>
+        <div>Poster 02 / 04</div>
+    </div>
+
+    <!-- 主标题 -->
+    <div class="hero">
+        <div class="kicker"><i></i>01 · Live Preview</div>
+        <h1 class="title">标记语法，<br>光标一走<em>就排版</em></h1>
+        <p class="subtitle">
+            看见的是排版，改的是源码。<b>中间没有预览页，也没有第二套滚动条。</b>
+        </p>
+    </div>
+
+    <!-- 浅色主题实拍 -->
+    <div class="shot">
+        <img src="../screenshot-live-light.png" alt="LiveWriteMD 浅色主题实时预览">
+        <span class="shot-tag">LIVE PREVIEW · LIGHT</span>
+    </div>
+
+    <!-- 三条核心体验 -->
+    <div class="cards three">
+        <div class="card">
+            <div class="num">01 / EDIT</div>
+            <h3>点哪行，改哪行</h3>
+            <p>单击渲染行展开源码，双击钉住；光标离开立刻恢复排版。标记符号只在你需要时出现。</p>
+        </div>
+        <div class="card">
+            <div class="num">02 / RENDER</div>
+            <h3>结构化内容原位出结果</h3>
+            <p>表格、代码高亮、KaTeX、Mermaid、脚注全部直接渲染；表格把鼠标移到边线，点「+」就能加行加列。</p>
+        </div>
+        <div class="card">
+            <div class="num">03 / WRITE</div>
+            <h3>为中文写作打磨</h3>
+            <p>拼音组词期间不重建装饰、不宽度跳变；彩虹缩进、续行悬挂对齐，中英文字体可以分别设置。</p>
+        </div>
+    </div>
+
+    <p class="note">
+        同一套渲染也运行在导图节点里 —— <b>导图不是缩略图，而是一份可编辑的文档。</b>
+    </p>
+
+    <!-- 页脚 -->
+    <div class="footer">
+        <div><b>LiveWriteMD</b> · Markdown 的所见即所得</div>
+        <div class="page-no">02 / 04</div>
+    </div>
+
+</div>
+<script>
+    // 静态海报没有应用生命周期：等图片全部加载、字体就位后再放行截图脚本
+    window.addEventListener('load', () => {
+        setTimeout(() => {
+            window.__shotReady = true;
+        }, 300);
+    });
+</script>
+</body>
+</html>

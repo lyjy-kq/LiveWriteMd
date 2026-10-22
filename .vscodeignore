@@ -18,6 +18,9 @@ scripts/**
 docs/**
 docx/**
 
+# README 用的截图与宣传海报，不随扩展发布
+assets/**
+
 # 包管理与仓库杂项
 pnpm-lock.yaml
 pnpm-workspace.yaml
