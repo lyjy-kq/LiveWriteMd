@@ -204,7 +204,7 @@ function applyOneToCss(key: string, value: SettingValue): void {
         case 'mindmapHiZoomContrast': {
             // 注意不能用 `|| 16` 兜底：0% 是合法取值（完全透明），会被 || 吃掉。
             const raw = Number(settingsState.get('mindmapNodeWash'));
-            const base = Number.isFinite(raw) ? raw : 16;
+            const base = Number.isFinite(raw) ? raw : 8;
             const boost = settingsState.getBoolean('mindmapHiZoomContrast');
             setVar('--lwm-node-wash', `${base}%`);
             setVar('--lwm-node-wash-hi', `${(base * (boost ? 0.35 : 1)).toFixed(2)}%`);

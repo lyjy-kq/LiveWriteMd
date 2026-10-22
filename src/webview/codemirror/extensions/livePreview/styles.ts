@@ -28,8 +28,8 @@ const CHECK_SVG =
  * 直接贴在任意主题背景上，而是保留原来的色相，只把颜色往当前主题的
  * 正文色方向混一部分：
  * - 深色主题的正文偏亮 → 语义色稍微提亮、降一点饱和，和正文处在同一亮度层（25%）；
- * - 浅色主题的正文偏暗 → 同一色相自动压深，白底上不会发虚（32%）；
- * - 黄色（h5）在浅色底上天然最难读，额外多压一点（42%），仍是黄 / 橄榄色系；
+ * - 浅色主题的正文偏暗 → 同一色相自动压深，白底上不会发虚（46%）；
+ * - 黄色（h5）在浅色底上天然最难读，额外多压一点（56%），仍是黄 / 橄榄色系；
  * - 只动明度 / 饱和度，不动色相：红仍是红、紫仍是紫、链接仍是绿色系。
  *
  * 用户自定义颜色不参与混合 —— 外层的 `var(--livewritemd-*-color, …)`
@@ -37,10 +37,10 @@ const CHECK_SVG =
  *
  * @param hue 原始语义色（深色主题下的基准色）
  * @param light 是否浅色主题版本（决定主题变量缺失时的兜底正文色）
- * @param lightAmount 浅色主题的混入比例（默认 32%，h5 单独调高）
+ * @param lightAmount 浅色主题的混入比例（默认 46%，h5 单独调高）
  * @returns 可用于 CSS 的颜色表达式
  */
-function tone(hue: string, light = false, lightAmount = 32): string {
+function tone(hue: string, light = false, lightAmount = 46): string {
     const amount = light ? lightAmount : 25;
     const fallback = light ? '#24292e' : '#d4d4d4';
     return `color-mix(in srgb, ${hue} ${100 - amount}%, var(--vscode-editor-foreground, ${fallback}) ${amount}%)`;
@@ -68,6 +68,19 @@ export function createBaseThemeStyles(): Extension {
             textDecoration: 'none',
             fontWeight: 'inherit',
             color: 'inherit',
+        },
+
+        // 浅色主题下正文再压深一档（往纯黑方向混 16%）。
+        // 标题 / 加粗 / 斜体的颜色都是「色相 + 正文色」混出来的，
+        // 正文本身偏灰的话整体观感都会发虚；这里只动浅色主题，
+        // 深色主题的正文保持 VS Code 给的浅灰不变。
+        // 选择器只能写「&light .cm-content」：`&light` 生成的是「祖先带主题
+        // class」的形式（.ͼ2 .xxx），而主题 class 挂在 .cm-editor 自身，所以
+        // `&light .cm-editor` 永远匹配不到；.cm-content 是它的后代才行。
+        // 重复一次类名把优先级抬到 (0,3,0)：theme.ts 里那条 `.cm-content
+        // { color: inherit }` 也是 (0,2,0)，同一优先级下靠顺序决胜负，赢不了。
+        '&light .cm-content.cm-content': {
+            color: `color-mix(in srgb, var(--vscode-editor-foreground, #24292e) 84%, #000)`,
         },
 
         // =================================================================
@@ -131,7 +144,7 @@ export function createBaseThemeStyles(): Extension {
         },
         '&light .cm-md-heading-5': {
             // 黄色系在白底上最吃亏，多混一点正文色，保证至少 3:1 的可读性
-            color: `var(--livewritemd-h5-color, ${tone('#dcbf61', true, 42)})`,
+            color: `var(--livewritemd-h5-color, ${tone('#dcbf61', true, 56)})`,
         },
         '&light .cm-md-heading-6': {
             color: `var(--livewritemd-h6-color, ${tone('#dda36a', true)})`,

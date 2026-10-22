@@ -612,7 +612,7 @@ export const SETTINGS_SCHEMA: SettingSection[] = [
                 description:
                     '节点背景色 = 标题色按该比例混入。比例越低，底色越淡、文字与底色的对比越强，笔画看起来更清晰；0 = 完全透明（只剩边框）。',
                 control: 'slider',
-                default: 16,
+                default: 8,
                 min: 0,
                 max: 40,
                 step: 1,

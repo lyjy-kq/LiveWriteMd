@@ -214,6 +214,11 @@ export const MINDMAP_CSS = `
     --lwm-link-color: #9aa5b1;
     --lwm-node-border: #d7dee6;
 }
+/* 浅色主题的节点文字 / 纯文本占位：和实时模式一样往纯黑方向压 16%，
+   否则节点里的正文会比编辑器正文淡一档（.lwm-node 的 color 会压过继承）。 */
+#mindmap[data-lwm-theme="light"] .lwm-node {
+    color: color-mix(in srgb, var(--vscode-editor-foreground, #24292e) 84%, #000);
+}
 .lwm-node .cm-editor {
     background: transparent !important;
 }
@@ -244,7 +249,7 @@ export const MINDMAP_CSS = `
        文字与底的对比度越高，笔画观感越锐利。16% 是默认值，0 即完全透明。
        注意这只是「对比度」旋钮，不是锐化滤镜 —— 字形栅格化路径不变，
        实测 16% → 0% 时同一段文字的 Laplacian 从 119 升到 133（+12%）。 */
-    background: color-mix(in srgb, var(--lwm-node-tint) var(--lwm-node-wash, 16%), transparent);
+    background: color-mix(in srgb, var(--lwm-node-tint) var(--lwm-node-wash, 8%), transparent);
     /* 边框颜色也跟着这个标题色，但透明度更高一些，轮廓才看得清 */
     border: 1px dotted color-mix(in srgb, var(--lwm-node-tint) 62%, transparent);
     border-radius: 8px;
@@ -279,7 +284,7 @@ export const MINDMAP_CSS = `
    开启 = 底色浓度 × 0.35（16% → 5.6%），关闭 = 与普通缩放相同。
    不要改成在 color-mix 里写 calc(...)：Chromium 会丢弃整条声明。 */
 .lwm-canvas.lwm-hi-zoom .lwm-node {
-    background: color-mix(in srgb, var(--lwm-node-tint) var(--lwm-node-wash-hi, 5.6%), transparent);
+    background: color-mix(in srgb, var(--lwm-node-tint) var(--lwm-node-wash-hi, 2.8%), transparent);
 }
 .lwm-node[data-depth="0"] {
     border: 3px solid color-mix(in srgb, var(--lwm-node-tint) 68%, transparent);
