@@ -2740,13 +2740,7 @@ export class MapCanvas {
         // 自己处理（按钮的 mousedown 由 CM 的 ignoreEvent 放行）。这里不能
         // 建 node 指针，否则 pointerup 会被当成「单击节点」——第一次点按钮
         // 选中节点，第二次就顺手进了编辑态，按钮看着像失灵。
-        // 表格边缘的「+」按钮也一样：它挂在编辑器根节点上（不在 .cm-content
-        // 里），不拦住的话 pointerup 会被当成单击节点，第二次点按钮就进编辑态。
-        if (
-            target?.closest?.(
-                '.cm-md-preview-actions, .cm-md-resize-actions, .cm-md-table-add'
-            )
-        ) {
+        if (target?.closest?.('.cm-md-preview-actions, .cm-md-resize-actions')) {
             return;
         }
 

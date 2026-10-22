@@ -599,7 +599,11 @@ export class ImageWidget extends WidgetType {
                     altText: this.alt,
                     titleText: this.alt || null,
                     onTitleCommit: commitTitle ? (title: string) => commitTitle(view, title) : undefined,
-                    mountHost: view.dom,
+                    // 与 mermaid 浮层同理：导图节点的 mini-CM 在变换层里，fixed 浮层
+                    // 挂 view.dom 会被变换祖先定位/裁剪，只能挂 body；再由 themeScope
+                    // 把 CodeMirror 的主题类带到 portal 上，否则浮层没有样式。
+                    mountHost: document.body,
+                    themeScope: view.dom,
                 });
             },
             async () => {
@@ -964,7 +968,10 @@ export class MermaidWidget extends WidgetType {
                     // position:fixed。fixed 在变换祖先下会相对该祖先定位、还会
                     // 被节点/画布的 overflow 裁掉 —— 放大查看在导图里直接失效。
                     // body 是文档根，无变换、无裁剪，live 与导图共用同一份。
+                    // themeScope 负责把 CM 的 `ͼN` 主题类搬进 portal：
+                    // 不传的话浮层在 body 下会丢掉全部 baseTheme 样式（无法放大显示）。
                     mountHost: document.body,
+                    themeScope: view.dom,
                 });
             },
             async () => {

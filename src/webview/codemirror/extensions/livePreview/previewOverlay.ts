@@ -32,6 +32,14 @@ export interface ImagePreviewOverlayOptions {
     onTitleCommit?: (title: string) => void;
     /** 浮层挂载容器，用于继承 CodeMirror baseTheme 样式作用域。 */
     mountHost: HTMLElement;
+    /**
+     * 主题作用域节点（编辑器根 `view.dom`）。
+     *
+     * 浮层挂到 `document.body` 时，祖先链上没有 CodeMirror 的 `ͼN` 主题类，
+     * 所有 baseTheme/theme 规则全部失效（position 退化成 static，浮层变成
+     * 文档流里的一块）。传入后会用一层 portal 把主题类带过去。
+     */
+    themeScope?: HTMLElement | null;
 }
 
 /**
@@ -48,6 +56,8 @@ export interface MermaidPreviewOverlayOptions {
     onSourceCommit?: (source: string) => void;
     /** 浮层挂载容器，用于继承 CodeMirror baseTheme 样式作用域。 */
     mountHost: HTMLElement;
+    /** 主题作用域节点（编辑器根 `view.dom`），见 {@link ImagePreviewOverlayOptions.themeScope}。 */
+    themeScope?: HTMLElement | null;
 }
 
 /**
@@ -898,6 +908,46 @@ function queuePreviewFit(fitToViewport: () => boolean): void {
 }
 
 /**
+ * 把浮层挂进宿主，并在必要时补一层「主题传送门」。
+ *
+ * CodeMirror 的 baseTheme / EditorView.theme 生成的 CSS 选择器都带
+ * `.<ͼN> ...` 作用域前缀（`ͼ` = U+037C，style-mod 自动生成的类名）。
+ * 浮层挂在 `view.dom` 里时天然继承这些类；但导图节点的 mini-CM 位于
+ * world(translate)+scaler(scale) 变换层，`position: fixed` 会相对变换祖先
+ * 定位并可能被裁掉，只能挂 `document.body` —— 此时祖先链上没有主题类，
+ * 浮层会退化成无样式的文档流块（放大按钮看起来「没反应」）。
+ *
+ * 这里复制编辑器根上的全部 `ͼ*` 主题类到一个 portal 上，既保住样式作用域，
+ * 又不把 `cm-editor`（position: relative / flex 布局）带到 body 上。
+ *
+ * @param host - 挂载容器
+ * @param root - 浮层根节点
+ * @param themeScope - 编辑器根节点（可选）
+ * @returns 实际挂进宿主的节点（portal 或 root），关闭时删它即可
+ */
+function mountOverlayRoot(
+    host: HTMLElement,
+    root: HTMLElement,
+    themeScope?: HTMLElement | null
+): HTMLElement {
+    // 宿主本身就在主题作用域里（live 模式挂 view.dom 的旧路径）→ 直接挂
+    if (!themeScope || themeScope.contains(host)) {
+        host.appendChild(root);
+        return root;
+    }
+
+    const portal = document.createElement('div');
+    portal.className = 'cm-md-preview-portal';
+    for (const cls of Array.from(themeScope.classList)) {
+        // 只搬 CodeMirror 自动生成的样式类，别把 cm-editor / cm-focused 带过去
+        if (cls.startsWith('ͼ')) portal.classList.add(cls);
+    }
+    portal.appendChild(root);
+    host.appendChild(portal);
+    return portal;
+}
+
+/**
  * 创建预览浮层的通用外壳。
  *
  * @param title - 浮层标题
@@ -1006,8 +1056,10 @@ export function openImagePreviewOverlay(options: ImagePreviewOverlayOptions): vo
     );
 
     const close = overlay.root;
-    cleanupBag.push(() => close.remove());
-    activeOverlayRoot = close;
+    // 挂载时可能套一层 portal（挂 body 的情况），关闭要连同 portal 一起删
+    const mounted = mountOverlayRoot(options.mountHost, close, options.themeScope);
+    cleanupBag.push(() => mounted.remove());
+    activeOverlayRoot = mounted;
 
     const contentHost = overlay.contentHost;
     const viewport = overlay.viewport;
@@ -1057,7 +1109,6 @@ export function openImagePreviewOverlay(options: ImagePreviewOverlayOptions): vo
     });
     contentHost.appendChild(actions);
 
-    options.mountHost.appendChild(close);
     close.tabIndex = -1;
     close.focus({ preventScroll: true });
 }
@@ -1089,7 +1140,6 @@ export function openMermaidPreviewOverlay(options: MermaidPreviewOverlayOptions)
     );
 
     const root = overlay.root;
-    activeOverlayRoot = root;
 
     const viewport = overlay.viewport;
     const stage = overlay.stage;
@@ -1227,7 +1277,8 @@ export function openMermaidPreviewOverlay(options: MermaidPreviewOverlayOptions)
         }
     });
 
-    options.mountHost.appendChild(root);
+    // 挂载（挂到 body 时自动套主题 portal，见 mountOverlayRoot）
+    activeOverlayRoot = mountOverlayRoot(options.mountHost, root, options.themeScope);
     root.tabIndex = -1;
     root.focus({ preventScroll: true });
 

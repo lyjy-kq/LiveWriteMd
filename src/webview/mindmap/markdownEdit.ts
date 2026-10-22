@@ -346,13 +346,47 @@ export function addNode(
     const targetRange = target.data._lineRange
         ? rangeOf(target)
         : { fromLine: Math.max(0, lines.length - 1), toLine: Math.max(0, lines.length - 1) };
-    // 插入位置：子节点 / 兄弟都追加到目标整棵子树之后
-    // （子节点=父章节末尾，兄弟=目标子树之后；顺序都正确）
-    const insertAt = placement === 'child' && targetKind === 'root'
-        ? lines.length
-        : targetRange.toLine + 1;
-    const newIndex = placement === 'child' ? parent.children.length : siblingIndex + 1;
-    const newUid = `${parent.data.uid}/${newIndex}`;
+
+    // —— 标题节点的插入位置 ——
+    //
+    // 标题的「直接子块」只可能出现在**标题行之后、第一个子标题之前**。
+    // 如果按整节末尾插入，块会落进最后一个子标题的章节里：
+    // 给 `## A`（有 `### A1`、`### A2`）加子节点，媒体块会变成 A2 的子节点，
+    // 用户看到的就是「加子节点跑到兄弟/更深层去了」。
+    // 同理，标题的「兄弟」如果是个段落/媒体块，Markdown 里根本无法成为标题的兄弟
+    // （顶层段落永远归属于它前面的标题），只能退化成标题的子节点。
+    // 所以：除了「插入同级标题」这种天然按级别解析的兄弟，其余一律锚定到
+    // 标题自身内容的末尾（最后一个非标题子节点的子树之后）。
+    const targetIsHeading = targetKind === 'heading';
+    // 标题兄弟 + heading spec：新标题行直接放到整节之后，按级别自然成为兄弟
+    const headingSiblingHeading = placement === 'sibling' && spec.type === 'heading';
+    // 标题下已有的「非标题子节点」（段落/列表/媒体），它们都在第一个子标题之前
+    const nonHeadingChildren = targetIsHeading
+        ? target.children.filter((child) => child.data._kind !== 'heading')
+        : [];
+    const lastNonHeadingChild = nonHeadingChildren[nonHeadingChildren.length - 1];
+    /** 标题自身内容（不含子标题）的结束行：setext 标题可能占两行。 */
+    const headingOwnEnd =
+        (target.data._selfLineRange as NodeLineRange | undefined)?.toLine ?? targetRange.fromLine;
+    // 新的内容块/新标题插入位置
+    const insertAt =
+        placement === 'child' && targetKind === 'root'
+            ? lines.length
+            : targetIsHeading && !headingSiblingHeading
+              ? (lastNonHeadingChild?.data._lineRange?.toLine ?? headingOwnEnd) + 1
+              : targetRange.toLine + 1;
+
+    // 预测新节点的 uid：必须和插入位置解析出来的树一致，否则 commit 会
+    // 选中/进入编辑一个**别的**节点（以前标题加兄弟就会跳到下一个标题）。
+    // 标题 + 非同级标题 spec：实际的父节点是**目标标题自己**（见上面的说明）。
+    const newIndex =
+        targetIsHeading && !headingSiblingHeading
+            ? nonHeadingChildren.length
+            : placement === 'child'
+              ? parent.children.length
+              : siblingIndex + 1;
+    // 标题兄弟退化成子节点时，父 uid 要用目标标题，而不是 found.parent
+    const newUid = `${targetIsHeading && !headingSiblingHeading ? target.data.uid : parent.data.uid}/${newIndex}`;
 
     // —— 列表上下文 ——
     //

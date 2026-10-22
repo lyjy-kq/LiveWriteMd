@@ -607,6 +607,9 @@ export function createBaseThemeStyles(): Extension {
             display: 'inline-block',
             flex: '0 0 auto',
             verticalAlign: 'top',
+            // 悬停边框时的「+」提示是 ::after 绝对定位，需要格子当包含块。
+            // inline-block + relative 不改变排版，只建立一个定位上下文。
+            position: 'relative',
             padding: '2px 10px',
             // 空格子（`|  |`、整行空、整列空）里没有任何内容，盒子会塌成一条线；
             // 给个下限让它和正常格子一样高（行高 + 上下内边距 4px + 上下边框 2px）
@@ -631,34 +634,49 @@ export function createBaseThemeStyles(): Extension {
         '.cm-md-tcell.cm-md-tcell-start': {
             marginLeft: '0',
         },
-        // 悬停右边框/下边框时那条边泛蓝（tableHoverControls 加的类）
+        // 悬停右边框/下边框时那条边泛蓝（tableHoverControls 加的类）。
+        // 这条线本身就是**点击热区**：按下去直接加列/加行，不再有浮动按钮
+        // （浮动按钮在导图节点的缩放变换里坐标会算错，到处乱飞）。
         '.cm-md-tcell-edge-col': {
             boxShadow: 'inset -2px 0 0 var(--vscode-focusBorder, #007fd4)',
+            cursor: 'copy',
         },
         '.cm-md-tcell-edge-row': {
             boxShadow: 'inset 0 -2px 0 var(--vscode-focusBorder, #007fd4)',
+            cursor: 'copy',
         },
-        // 边缘「+」按钮：绝对定位在 view.dom 里（编辑器是定位上下文），
-        // 尺寸/配色跟 live 的预览按钮保持一套视觉
-        '.cm-md-table-add': {
+        // 线中点叠一个纯 CSS 的「+」：只是提示，pointer-events:none 让点击
+        // 穿透到格子本身（命中检测在 tableHoverControls 里）。
+        '.cm-md-tcell-edge-col::after, .cm-md-tcell-edge-row::after': {
+            content: '"+"',
             position: 'absolute',
             zIndex: '20',
             width: '18px',
             height: '18px',
             borderRadius: '999px',
-            display: 'none',
+            display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             fontSize: '14px',
             lineHeight: '1',
-            cursor: 'pointer',
-            userSelect: 'none',
             color: '#ffffff',
             backgroundColor: 'var(--vscode-focusBorder, #007fd4)',
             boxShadow: '0 1px 5px rgba(0, 0, 0, 0.35)',
+            pointerEvents: 'none',
+            userSelect: 'none',
+            boxSizing: 'border-box',
         },
-        '.cm-md-table-add:hover': {
-            filter: 'brightness(1.12)',
+        // 右边界：加号骑在右边框上，纵向居中
+        '.cm-md-tcell-edge-col::after': {
+            right: '-9px',
+            top: '50%',
+            transform: 'translateY(-50%)',
+        },
+        // 下边界：加号骑在下边框上，横向居中
+        '.cm-md-tcell-edge-row::after': {
+            bottom: '-9px',
+            left: '50%',
+            transform: 'translateX(-50%)',
         },
         // 管道线：压 0 宽但保留在文档里（光标还能停上去，方向键能跨过去）
         // flex 容器里它也是个 item，靠 font-size:0 把宽度吃掉

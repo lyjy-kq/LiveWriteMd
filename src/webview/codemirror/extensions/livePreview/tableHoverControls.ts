@@ -1,5 +1,5 @@
 /**
- * 表格边缘的「+」按钮：悬停右边框加一列、下边框加一行。
+ * 表格边缘的「点线加行/列」。
  *
  * 表格在 live preview 里不是 widget，而是**行/格装饰**（见 tableRender.ts），
  * 所以这里不能像图片那样把按钮塞进 widget，只能：
@@ -7,10 +7,15 @@
  * 1. 在 contentDOM 上听 mousemove，用 `closest('.cm-md-tcell')` 找到鼠标下的
  *    格子（不用 posAtCoords —— 导图节点里 CM 的高度缓存常常是旧的，
  *    posAtCoords 会算错行）；
- * 2. 判断指针是否贴在这格的右边框（最后一列）或下边框（最后一行）；
- * 3. 把一个绝对定位的「+」按钮挂到 view.dom（编辑器的定位上下文）上，
- *    同时给格子加一个类让那条边泛蓝；
- * 4. 点击按钮时把光标位置（posAtDOM）交给 runTableCommand 加行/列。
+ * 2. 判断指针是否贴在这格的右边框（最后一列）或下边框（最后一行）：
+ *    贴边时给格子加类，CSS 把那条边画蓝并叠一个「+」提示；
+ * 3. **直接在这条线上按下鼠标**就加行/列（mousedown 捕获阶段处理，
+ *    抢在 CodeMirror 放置光标之前）。
+ *
+ * 为什么不再用浮动按钮：按钮要拿 `getBoundingClientRect()` 算位置，
+ * 导图节点的 mini-CM 外面套着 world(translate)+scaler(scale) 两层变换，
+ * rect 是**屏幕坐标**而 CSS `left/top` 是**节点局部坐标**，两者差一个缩放，
+ * 按钮就会随缩放比例乱飞。点线本身不需要任何坐标换算，全交给浏览器命中测试。
  *
  * 只读的导图节点怎么办？显示态 `EditorView.editable === false`，
  * runTableCommand 会直接拒绝。miniCm 通过 {@link tableEditBridge} facet
@@ -36,35 +41,47 @@ export const tableEditBridge = Facet.define<
     (command: TableCommand, pos: number) => boolean
 >();
 
-/** 按钮离边框的判定距离（px）：鼠标进入这条带子就算「悬停在边框上」。 */
+/** 贴边判定距离（px）：指针进入这条带子就算「悬停在边框上」。 */
 const EDGE_TOLERANCE = 5;
-
-/** 按钮尺寸（px）：以边框中点为圆心摆放。 */
-const BUTTON_SIZE = 18;
 
 /** 当前悬停的边类型。 */
 type EdgeKind = 'col' | 'row';
 
+/** 一次命中的结果。 */
+interface EdgeHit {
+    /** 命中的格子（悬停右边框时是最后一列格子，下边框时是最后一行格子）。 */
+    cell: HTMLElement;
+    /** 哪条边。 */
+    kind: EdgeKind;
+    /** 插入位置对应的文档位置。 */
+    pos: number;
+}
+
 /**
  * 创建表格边缘加行/加列的插件。
  *
- * 每个 EditorView 一份：按钮 DOM、hover 类、rAF 句柄都是实例私有的，
+ * 每个 EditorView 一份：hover 类、rAF 句柄都是实例私有的，
  * 多个节点同时显示时互不干扰。
  */
 export const tableHoverControls = ViewPlugin.fromClass(
     class {
-        /** 挂在 view.dom 上的「+」按钮（惰性创建，之后复用）。 */
-        private button: HTMLDivElement | null = null;
         /** 当前高亮的格子（悬停右边框时是最后一列格子，下边框时是最后一行格子）。 */
         private hoverCell: HTMLElement | null = null;
-        /** 当前悬停的边（null = 没贴边，按钮隐藏）。 */
+        /** 当前悬停的边（null = 没贴边）。 */
         private edge: EdgeKind | null = null;
-        /** 按钮对应的插入位置（文档位置）。 */
-        private targetPos = -1;
         /** 最近一次 mousemove 的坐标：一帧只处理一次，避免每 move 都量 DOM。 */
         private lastEvent: MouseEvent | null = null;
         /** 已排队的 rAF。 */
         private frame: number | null = null;
+        /**
+         * pointerdown 已经处理过这次按压 → 紧随其后的 mousedown 要吞掉。
+         *
+         * 导图画布在 canvasEl 上听的是 **pointerdown**（冒泡阶段），
+         * 而 CodeMirror 和选字逻辑吃的是 **mousedown** —— 两个事件都得拦：
+         * 只拦 mousedown 的话，画布仍会把「点线」当成单击节点（第二次点
+         * 还会进编辑态）。
+         */
+        private swallowMouseDown = false;
         /** 事件监听解绑函数。 */
         private cleanup: Array<() => void> = [];
 
@@ -81,14 +98,28 @@ export const tableHoverControls = ViewPlugin.fromClass(
                 });
             };
             const onLeave = (): void => this.hide();
-            // 滚动时表格位置变了，按钮按旧坐标会飘；直接收起，等下一次移动再出现
+            // 滚动时表格位置变了，旧的高亮/命中结果不再可信：直接收起
             const onScroll = (): void => this.hide();
+            // 捕获阶段 + pointerdown：抢在画布的节点单击/拖动判断之前
+            const onPointerDown = (event: PointerEvent): void => this.handlePointerDown(event);
+            // 捕获阶段 + mousedown：抢在 CodeMirror 放置光标/开始拖选之前
+            const onMouseDown = (event: MouseEvent): void => {
+                if (!this.swallowMouseDown) return;
+                this.swallowMouseDown = false;
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+            };
             content.addEventListener('mousemove', onMove);
             content.addEventListener('mouseleave', onLeave);
+            content.addEventListener('pointerdown', onPointerDown, true);
+            content.addEventListener('mousedown', onMouseDown, true);
             view.scrollDOM.addEventListener('scroll', onScroll, { passive: true });
             this.cleanup.push(() => {
                 content.removeEventListener('mousemove', onMove);
                 content.removeEventListener('mouseleave', onLeave);
+                content.removeEventListener('pointerdown', onPointerDown, true);
+                content.removeEventListener('mousedown', onMouseDown, true);
                 view.scrollDOM.removeEventListener('scroll', onScroll);
             });
         }
@@ -103,26 +134,11 @@ export const tableHoverControls = ViewPlugin.fromClass(
             this.cleanup = [];
             if (this.frame !== null) cancelAnimationFrame(this.frame);
             this.frame = null;
-            this.button?.remove();
-            this.button = null;
             this.hoverCell = null;
+            this.edge = null;
         }
 
-        /** 让一条边泛蓝（加类），并记录目标位置。 */
-        private setEdge(cell: HTMLElement, kind: EdgeKind, pos: number): void {
-            if (this.hoverCell !== cell || this.edge !== kind) {
-                this.clearHighlight();
-                cell.classList.add(
-                    kind === 'col' ? 'cm-md-tcell-edge-col' : 'cm-md-tcell-edge-row'
-                );
-                this.hoverCell = cell;
-                this.edge = kind;
-            }
-            this.targetPos = pos;
-            this.showButton();
-        }
-
-        /** 移除蓝色边。 */
+        /** 移除蓝色边 + 「+」提示。 */
         private clearHighlight(): void {
             if (!this.hoverCell) return;
             this.hoverCell.classList.remove(
@@ -133,83 +149,25 @@ export const tableHoverControls = ViewPlugin.fromClass(
             this.edge = null;
         }
 
-        /** 隐藏按钮 + 清掉蓝色边。 */
+        /** 清掉高亮。 */
         private hide(): void {
             this.clearHighlight();
-            this.targetPos = -1;
-            if (this.button) this.button.style.display = 'none';
         }
 
-        /** 惰性创建按钮（只绑一次事件）。 */
-        private ensureButton(): HTMLDivElement {
-            if (this.button) return this.button;
-            const button = document.createElement('div');
-            button.className = 'cm-md-table-add';
-            button.setAttribute('aria-hidden', 'true');
-            button.textContent = '+';
-            // 按钮在编辑器内部：mousedown 必须拦住，否则编辑器会把点击
-            // 当成放置光标/开始拖选，click 可能根本不触发。
-            button.addEventListener('mousedown', (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-            });
-            button.addEventListener('click', (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                const command: TableCommand = this.edge === 'row' ? 'row-below' : 'col-right';
-                const pos = this.targetPos;
-                const cell = this.hoverCell;
-                if (pos < 0) return;
-                // 先收起 UI 再改文档：命令会重排整张表，旧格子立即失效
-                this.hide();
-                // 主编辑器没有桥，且本来就 editable；导图节点由桥临时放开
-                const bridge = this.view.state.facet(tableEditBridge)[0];
-                if (bridge) {
-                    bridge(command, pos);
-                } else if (this.view.state.facet(EditorView.editable)) {
-                    runTableCommand(this.view, command, pos);
-                }
-                // cell 只用于读位置；命令后不再引用，避免误用失效 DOM
-                void cell;
-            });
-            this.view.dom.appendChild(button);
-            this.button = button;
-            return button;
-        }
-
-        /** 按当前 edge/targetPos 摆好按钮。 */
-        private showButton(): void {
-            if (!this.hoverCell || this.edge === null) return;
-            const button = this.ensureButton();
-            const cellRect = this.hoverCell.getBoundingClientRect();
-            const hostRect = this.view.dom.getBoundingClientRect();
-            const half = BUTTON_SIZE / 2;
-            // 两条边都用格子的 rect 算：给格子加类后边框颜色变了，尺寸不变。
-            // 按钮以「边框中点」为圆心摆放，所以两个方向都要退半个按钮。
-            let left: number;
-            let top: number;
-            if (this.edge === 'col') {
-                left = cellRect.right - hostRect.left - half;
-                top = cellRect.top - hostRect.top + cellRect.height / 2 - half;
-            } else {
-                left = cellRect.left - hostRect.left + cellRect.width / 2 - half;
-                top = cellRect.bottom - hostRect.top - half;
-            }
-            button.style.display = 'flex';
-            button.style.left = `${left}px`;
-            button.style.top = `${top}px`;
-            button.textContent = '+';
-            button.title = this.edge === 'col' ? '在右侧插入一列' : '在下方插入一行';
-        }
-
-        /** mousemove 主逻辑：找格子 → 判断贴哪条边 → 显示/隐藏。 */
-        private handleMove(event: MouseEvent): void {
+        /**
+         * 命中检测：指针是不是贴在某格的右边框/下边框上。
+         *
+         * 返回 null 表示没贴边。纯几何判断，鼠标移动和按下共用一套规则。
+         *
+         * @param event - 鼠标事件
+         * @returns 命中信息（格子 / 边 / 文档位置）
+         */
+        private resolveEdge(event: MouseEvent): EdgeHit | null {
             const target = event.target as Element | null;
+            // 只认格子本身：贴边带在格子 border-box 内侧，指针不会跑出格子
             const cell = target?.closest?.('.cm-md-tcell') as HTMLElement | null;
-            if (!cell) {
-                this.hide();
-                return;
-            }
+            if (!cell) return null;
+
             const rect = cell.getBoundingClientRect();
             const nearRight =
                 cell.classList.contains(CELL_LAST_CLASS) &&
@@ -218,6 +176,7 @@ export const tableHoverControls = ViewPlugin.fromClass(
                 event.clientY >= rect.top &&
                 event.clientY <= rect.bottom;
             const row = cell.closest('.cm-line');
+            // 下边框用格子的底边判断：最后一行的每个格子都贴边
             const nearBottom =
                 !!row?.classList.contains(ROW_LAST_CLASS) &&
                 event.clientY >= rect.bottom - EDGE_TOLERANCE &&
@@ -236,19 +195,12 @@ export const tableHoverControls = ViewPlugin.fromClass(
             } else if (nearBottom) {
                 kind = 'row';
             }
-            if (!kind) {
-                this.hide();
-                return;
-            }
-            // 只读且没有桥（viewer 模式 / 纯只读编辑器）：按钮点了也改不了文档，
-            // 干脆不出现，免得用户以为坏了。
-            const canEdit =
-                !!this.view.state.facet(tableEditBridge)[0] ||
-                this.view.state.facet(EditorView.editable);
-            if (!canEdit) {
-                this.hide();
-                return;
-            }
+            if (!kind) return null;
+
+            // 只读且没有桥（viewer 模式 / 纯只读编辑器）：点了也改不了文档，
+            // 干脆不高亮，免得用户以为坏了。
+            if (!this.canEdit()) return null;
+
             // posAtDOM 拿格子起点的文档位置（这个位置上一定在表格块内）
             let pos = -1;
             try {
@@ -256,11 +208,70 @@ export const tableHoverControls = ViewPlugin.fromClass(
             } catch {
                 pos = -1;
             }
-            if (pos < 0) {
+            if (pos < 0) return null;
+
+            return { cell, kind, pos };
+        }
+
+        /** 当前视图能不能执行表格命令（主编辑器可编辑 / 导图显示态有桥）。 */
+        private canEdit(): boolean {
+            return (
+                !!this.view.state.facet(tableEditBridge)[0] ||
+                this.view.state.facet(EditorView.editable)
+            );
+        }
+
+        /** mousemove 主逻辑：贴边就高亮那条线，离开就清掉。 */
+        private handleMove(event: MouseEvent): void {
+            const hit = this.resolveEdge(event);
+            if (!hit) {
                 this.hide();
                 return;
             }
-            this.setEdge(cell, kind, pos);
+            if (this.hoverCell !== hit.cell || this.edge !== hit.kind) {
+                this.clearHighlight();
+                hit.cell.classList.add(
+                    hit.kind === 'col' ? 'cm-md-tcell-edge-col' : 'cm-md-tcell-edge-row'
+                );
+                this.hoverCell = hit.cell;
+                this.edge = hit.kind;
+            }
+        }
+
+        /**
+         * pointerdown：正好按在线上 → 直接加行/列。
+         *
+         * 用 pointerdown 而不是 mousedown，是为了先于导图画布的
+         * 「单击选中 / 开始拖动」判断拿到事件（画布听的就是 pointerdown）。
+         *
+         * @param event - pointerdown 事件
+         */
+        private handlePointerDown(event: PointerEvent): void {
+            if (event.button !== 0) return;
+            const hit = this.resolveEdge(event);
+            if (!hit) return;
+
+            // 不放置光标、不开始拖选，也不让事件继续传给画布/CM
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            // 鼠标还会再补一个 mousedown（CM 的选字靠它），标记一下吞掉；
+            // 触摸端 preventDefault 后可能没有 mousedown，用 0ms 定时器清标记
+            this.swallowMouseDown = true;
+            window.setTimeout(() => {
+                this.swallowMouseDown = false;
+            }, 0);
+
+            const command: TableCommand = hit.kind === 'row' ? 'row-below' : 'col-right';
+            // 命令会重排整张表，旧格子立即失效；先收起 UI 再改文档
+            this.hide();
+            // 主编辑器没有桥，且本来就 editable；导图节点由桥临时放开
+            const bridge = this.view.state.facet(tableEditBridge)[0];
+            if (bridge) {
+                bridge(command, hit.pos);
+            } else if (this.view.state.facet(EditorView.editable)) {
+                runTableCommand(this.view, command, hit.pos);
+            }
         }
     }
 );
