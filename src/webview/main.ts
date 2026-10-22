@@ -370,6 +370,8 @@ function readMindmapSettings(): MindMapRuntimeSettings {
         // 缩放降级阈值（百分比）：0 不是合法值（等于任何时候都降级），兜底默认
         mindmapLiteZoom: settingsState.getNumber('mindmapLiteZoom') || 70,
         mindmapPlainZoom: settingsState.getNumber('mindmapPlainZoom') || 40,
+        // 手势期清晰度优先：默认关闭（关闭 = 手势期提升合成层，帧率优先）
+        mindmapGestureCrisp: settingsState.getBoolean('mindmapGestureCrisp'),
     };
 }
 

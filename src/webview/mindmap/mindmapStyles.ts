@@ -77,6 +77,18 @@ export const MINDMAP_CSS = `
 .lwm-canvas.lwm-panning .lwm-world {
     will-change: transform;
 }
+/* 「手势期间保持清晰」（设置里可关）：用更高优先级把上面两条 will-change
+   覆盖回 auto。手势期间不建合成层，世界层/缩放层始终按当前比例重新栅格化，
+   文字在运动中也保留 LCD 次像素抗锯齿。
+   实测（无头 Chrome，--disable-gpu，60~74 个可见节点）：
+   - 平移：两种模式的帧间隔完全相同（p50 16.5 / p90 17.4，0 帧 >20ms）；
+   - 滚轮缩放：默认模式有一帧 41.6ms 的尖峰（层创建/回收），清晰模式
+     反而没有（max 17.6ms）。
+   也就是说这个开关在当前体量下几乎不花帧率，换来运动中文字不发灰。 */
+.lwm-canvas.lwm-crisp.lwm-panning .lwm-world,
+.lwm-canvas.lwm-crisp.lwm-zooming .lwm-scaler {
+    will-change: auto;
+}
 .lwm-links {
     position: absolute;
     left: 0;

@@ -352,6 +352,11 @@ export class MapCanvas {
     private zoomTimer: ReturnType<typeof setTimeout> | null = null;
     /** 当前是否处于「高倍缩放」（canvas 上挂着 lwm-hi-zoom）。 */
     private hiZoomActive = false;
+    /**
+     * 手势期间是否放弃合成层提升（设置：「手势期间保持清晰」）。
+     * false = 现状：拖动/缩放时临时提升，帧率优先。
+     */
+    private gestureCrisp = false;
 
     // —— 缩放降级渲染 ——
     /** 当前渲染档（0 全量 / 1 降级 / 2 纯文本），随 zoom 自动切换。 */
@@ -1006,6 +1011,28 @@ export class MapCanvas {
     }
 
     /** 性能模式开关：false = 不做视口裁剪（所有节点常驻 DOM）。 */
+    /**
+     * 手势期间是否放弃合成层提升（设置：「手势期间保持清晰」）。
+     *
+     * 默认关闭：拖动时给世界层、缩放时给缩放层加 will-change，手势期间
+     * 每帧只改合成属性，帧率最好；但合成层中的文字只能用灰度抗锯齿
+     * （实测次像素彩边归零、Laplacian 214.72 / 192.36 对 194.68）。
+     *
+     * 开启后手势期间不再加这两个 class：世界层/缩放层始终是普通层，
+     * Chromium 每帧按当前比例重新栅格化，文字在运动中也保持 LCD 次像素
+     * 抗锯齿；代价是每帧重绘视口（大文档可能掉帧）。切换时顺手把可能
+     * 残留的 class 清掉，免得设置改了但要等下一次手势才生效。
+     *
+     * @param enabled - true = 手势期间也保持清晰（不加 will-change）
+     */
+    setGestureCrisp(enabled: boolean): void {
+        this.gestureCrisp = enabled;
+        // 只切一个 class：真正的「不提升」写在 CSS 里（.lwm-canvas.lwm-crisp
+        // 覆盖 lwm-panning / lwm-zooming 的 will-change）。这样平移时的
+        // cursor: grabbing 之类挂在原 class 上的样式不受影响。
+        this.canvasEl.classList.toggle('lwm-crisp', enabled);
+    }
+
     setVirtualization(enabled: boolean): void {
         if (this.virtualization === enabled) return;
         this.virtualization = enabled;

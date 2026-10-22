@@ -630,6 +630,17 @@ export const SETTINGS_SCHEMA: SettingSection[] = [
                 default: true,
             },
             {
+                // 手势期间默认提升合成层（帧率优先）。打开后不要提升：
+                // 文字在拖动/缩放过程中也保持 LCD 次像素抗锯齿并按当前比例
+                // 重新栅格化，代价是每帧重绘视口，大文档可能掉帧。
+                key: 'mindmapGestureCrisp',
+                label: '手势期间保持清晰',
+                description:
+                    '开启（默认）时，拖动和滚轮缩放期间不提升合成层，文字在运动中也按当前比例重新栅格化、保留次像素抗锯齿；关闭后手势期间临时提升合成层换帧率，运动中的文字是缓存位图（略灰）。实测 60~74 个可见节点时两者帧间隔相同。',
+                control: 'toggle',
+                default: true,
+            },
+            {
                 key: 'mindmapNodeMaxWidth',
                 label: '节点最大宽度',
                 description:

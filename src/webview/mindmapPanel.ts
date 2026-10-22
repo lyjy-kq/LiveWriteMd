@@ -64,6 +64,8 @@ function readMindmapSettings(
         // 缩放降级阈值（百分比）
         mindmapLiteZoom: Number(pick('mindmapLiteZoom')) || 70,
         mindmapPlainZoom: Number(pick('mindmapPlainZoom')) || 40,
+        // 手势期清晰度优先：默认关闭
+        mindmapGestureCrisp: Boolean(pick('mindmapGestureCrisp')),
     };
 }
 

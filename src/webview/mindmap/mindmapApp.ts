@@ -79,6 +79,9 @@ const DEFAULT_RUNTIME_SETTINGS: MindMapRuntimeSettings = {
     // 缩放降级阈值（百分比）：与 settingsSchema 默认值一致
     mindmapLiteZoom: 70,
     mindmapPlainZoom: 40,
+    // 手势期清晰度优先：默认开启。实测平移帧间隔与提升模式一致、
+    // 滚轮缩放反而少了 41ms 的建层尖峰，所以默认不提升。
+    mindmapGestureCrisp: true,
 };
 
 /**
@@ -323,6 +326,11 @@ export class MindMapApp {
         if (previous.mindmapTheme !== this.settings.mindmapTheme) {
             this.canvas.setTheme(this.resolveTheme());
         }
+
+        // ② 手势期清晰度：无条件同步一次。不能只在「值变了」时调用 ——
+        // 默认值是 true，初始化时 previous 与 settings 相同，画布就永远
+        // 拿不到 .lwm-crisp。setGestureCrisp 内部是 classList.toggle，幂等。
+        this.canvas.setGestureCrisp(this.settings.mindmapGestureCrisp);
 
         const performanceChanged =
             previous.mindmapPerformanceMode !== this.settings.mindmapPerformanceMode;

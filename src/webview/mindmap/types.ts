@@ -121,6 +121,17 @@ export interface MindMapRuntimeSettings {
      * 保证超大文档在很小缩放下拖动/缩放仍然跟手。
      */
     mindmapPlainZoom: number;
+    /**
+     * 手势期间是否放弃合成层提升（清晰度优先）。
+     *
+     * 关闭（默认）= 拖动 / 滚轮缩放期间给世界层或缩放层加 will-change，
+     * 每帧只改合成属性，帧率最好，但合成层里的文字只能用灰度抗锯齿
+     * （实测次像素彩边归零）。
+     *
+     * 开启 = 手势期间也保持非合成层：文字始终按当前比例重新栅格化、
+     * 保留 LCD 次像素抗锯齿，代价是每帧要重绘视口内容，大文档可能掉帧。
+     */
+    mindmapGestureCrisp: boolean;
 }
 
 /** 导图编辑回调：把导图操作算出的新全文交回宿主（CM dispatch / CONTENT_CHANGE）。 */
