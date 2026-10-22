@@ -166,7 +166,11 @@ export function createBaseThemeStyles(): Extension {
             // settingsState 写入 700；这样默认状态下加粗只靠颜色区分。
             fontWeight: 'var(--livewritemd-bold-weight, inherit)',
             lineHeight: '1',
-            color: `var(--livewritemd-bold-color, ${tone('#d9a37a')})`,
+            // 深色主题直接用纯金：暗底上金色（#ffd700）亮度足够、对比约 12:1，
+            // 再和正文色混反而变成灰扑扑的土黄。浅色主题的白底上纯金几乎
+            // 不可读（对比不到 1.3:1），所以浅色覆盖仍然混成暗金，见下面
+            // `&light .cm-md-bold` —— 两套主题不再共用同一个混比。
+            color: 'var(--livewritemd-bold-color, #ffd700)',
         },
         // 斜体默认只变色、不倾斜：合成斜体（italic）默认约 14°，斜得过头。
         // fontStyle 走变量，设置里开启「斜体真倾斜」时由应用层改为 italic。

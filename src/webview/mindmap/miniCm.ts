@@ -105,6 +105,16 @@ export interface NodeDisplay {
     readonly sentinel: boolean;
     /** 当前是否处于编辑态（翻转中）。 */
     readonly editing: boolean;
+    /**
+     * 是否已销毁。
+     *
+     * 销毁后的 EditorView 仍然接受 dispatch（只是内部不再更新 DOM），但
+     * 拿旧选区/旧文档位置继续派发会让后续 transaction 的 startState
+     * 处于不一致状态，表现为 CM 内部 `lineAt` 读到越界行、抛
+     * `Cannot read properties of undefined (reading 'length')`。
+     * 所有对外的派发入口先看这个标记。
+     */
+    readonly destroyed: boolean;
     /** 选区复位（P1 失焦恢复：被点开的行内元素收回渲染态）。 */
     resetSelection: () => void;
     /** 销毁（节点被永久移除/替换后清理）。 */
@@ -244,6 +254,7 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
 
     // —— 翻转状态 ——
     let editing = false;
+    let destroyed = false;
     let blurHandler: (() => void) | null = null;
 
     /** 事件截断（编辑态专用，防拖选文字触发节点/画布拖拽）。 */
@@ -257,22 +268,35 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
         get editing(): boolean {
             return editing;
         },
+        get destroyed(): boolean {
+            return destroyed;
+        },
         resetSelection: (): void => {
+            if (destroyed) return;
             try {
+                // 已经在文末的空选区就不用再派发：每次选中节点都会对**所有**
+                // 显示实例调用一次，几十个 CM 各跑一轮完整 update（语法树、
+                // 装饰、测量）白白占掉一次点击的时间，删完节点后尤其明显。
+                const main = view.state.selection.main;
+                const end = view.state.doc.length;
+                if (main.empty && main.anchor === end) return;
                 // 与初始选区一致：一律复位到文末（理由见 createNodeDisplay 注释）
-                view.dispatch({ selection: { anchor: view.state.doc.length } });
+                view.dispatch({ selection: { anchor: end } });
             } catch {
                 /* 视图已销毁：忽略 */
             }
         },
-        destroy: () => view.destroy(),
+        destroy: () => {
+            destroyed = true;
+            view.destroy();
+        },
         contentHeight: (): number => {
             // contentDOM 的 rect 含 .cm-content 的上下 padding（2px 0），
             // 正好等于节点盒子里需要留给内容的高度
             return view.contentDOM.getBoundingClientRect().height;
         },
         enterEdit: ({ kind, onCommit, onShiftEnter, onDocChanged }): void => {
-            if (editing) return;
+            if (editing || destroyed) return;
             editing = true;
             container.classList.add('lwm-node-editing');
             container.closest('.lwm-node')?.classList.add('lwm-node-editing');
@@ -374,6 +398,8 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
             view.contentDOM.addEventListener('blur', blurHandler);
         },
         withEditable: <T>(fn: (view: EditorView) => T): T => {
+            // 已销毁：不再派发任何重配事务（见 NodeDisplay.destroyed）
+            if (destroyed) return undefined as unknown as T;
             // 已经在编辑会话里就是可编辑的，不重复重配（重配会多跑一轮
             // Compartment 更新，还会把会话键位顺序打乱）
             const wasEditable = view.state.facet(EditorView.editable);
@@ -400,7 +426,7 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
             }
         },
         exitEdit: (): void => {
-            if (!editing) return;
+            if (!editing || destroyed) return;
             editing = false;
             container.classList.remove('lwm-node-editing');
             container.closest('.lwm-node')?.classList.remove('lwm-node-editing');
@@ -427,7 +453,7 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
             return sentinel && text.endsWith('\n') ? text.slice(0, -1) : text;
         },
         focusAt: (x?: number, y?: number): void => {
-            if (!editing) return;
+            if (!editing || destroyed) return;
             view.focus();
             let pos: number | null = null;
             if (x !== undefined && y !== undefined) {

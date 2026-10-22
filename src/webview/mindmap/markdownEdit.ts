@@ -483,6 +483,54 @@ export function deleteNode(
 }
 
 /**
+ * 删除多个节点（Ctrl 点 / Ctrl 框选之后按 Delete）。
+ *
+ * 关键点：
+ * - 祖先与后代同时选中时只删祖先 —— 否则后删祖先会把已经删掉的区间
+ *   再删一遍，行号整体错位；
+ * - 行区间从后往前删，避免前面的删除影响后面的行号；
+ * - 空行折叠规则与单节点删除完全一致。
+ *
+ * @param markdown 源全文
+ * @param tree 当前导图树
+ * @param uids 待删除的 uid 集合
+ * @returns 新全文（root 与不存在的 uid 自动忽略）
+ */
+export function deleteNodes(
+    markdown: string,
+    tree: MindMapTreeNode,
+    uids: Iterable<string>
+): EditResult {
+    const unique = [...new Set(uids)];
+    const all = unique
+        .map((uid) => findNodeByUid(tree, uid))
+        .filter((found): found is FoundNode => !!found && !!found.parent)
+        .filter((found) => found.node.data._kind !== 'root');
+    if (all.length === 0) return { text: markdown };
+    // 去掉「祖先也在选中集合里」的后代，避免同一段行区间被删两次
+    const roots = all.filter(
+        (found) =>
+            !all.some(
+                (other) =>
+                    other !== found &&
+                    found.node.data.uid.startsWith(`${other.node.data.uid}/`)
+            )
+    );
+    const ranges = roots
+        .map((found) => rangeOf(found.node))
+        .sort((a, b) => b.fromLine - a.fromLine);
+    const lines = markdown.split('\n');
+    for (const range of ranges) {
+        lines.splice(range.fromLine, range.toLine - range.fromLine + 1);
+    }
+    const joined = lines
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .replace(/^\n+/, '');
+    return { text: joined };
+}
+
+/**
  * §6.4 拖拽移动（类型不变、各走各的链）。
  *
  * @param dragUid 被拖节点 uid

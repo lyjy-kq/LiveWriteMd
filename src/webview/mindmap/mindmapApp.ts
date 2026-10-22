@@ -55,6 +55,7 @@ import {
     addSiblingNode,
     countSubtreeNodes,
     deleteNode,
+    deleteNodes,
     findNodeByUid as findTreeNodeByUid,
     isMediaKind,
     moveNode,
@@ -194,6 +195,16 @@ export class MindMapApp {
      */
     private pendingDeleteUid: string | null = null;
     private pendingDeleteTimer: ReturnType<typeof setTimeout> | null = null;
+    /**
+     * 多选集合（Ctrl 点切换 / Ctrl 拖拽框选）。
+     *
+     * 和 selectedUid 并存：selectedUid 决定工具条锚在哪个节点上，
+     * multiSelected 决定 Delete 一次删哪些。框选结束后把 selectedUid
+     * 置为最后命中的一个，工具条仍可用。
+     */
+    private multiSelected = new Set<string>();
+    /** 多选删除的「再按一次确认」状态（复用 4 秒自动复位）。 */
+    private pendingDeleteMulti = false;
     /** 右键菜单。 */
     private contextMenuEl: HTMLDivElement | null = null;
     /**
@@ -250,6 +261,7 @@ export class MindMapApp {
             onDrop: (payload) => this.handleDrop(payload),
             onViewChange: () => this.positionToolbar(),
             canDrop: (dragUid, parentUid) => this.validateDropParent(dragUid, parentUid),
+            onMarqueeSelect: (uids) => this.applyMarqueeSelection(uids),
         } satisfies MapCanvasOptions);
 
         this.applyNodeSizeVars();
@@ -298,6 +310,12 @@ export class MindMapApp {
         this.fileName = fileName;
         const tree = buildMindMapTree(markdown, fileName);
         this.currentTree = tree;
+        // 外部文档更新可能已删掉 / 移动了节点：多选集合里的 uid 不再可信，
+        // 留着会让 Delete 删到同名路径上的另一个节点，直接清空。
+        if (this.multiSelected.size > 0) {
+            this.multiSelected.clear();
+            this.canvas.setMultiSelected(this.multiSelected);
+        }
         // 编辑中（输入法组合态）：外部更新延后，保护编辑 DOM
         if (this.editSession) {
             this.pendingTree = tree;
@@ -630,9 +648,50 @@ export class MindMapApp {
         const uid = node.uid;
         // 正在编辑这个节点：让 mini-CM 自己处理这次点击（定位光标）
         if (this.editSession?.uid === uid) return;
+        // Ctrl / Cmd 点：切换多选，不进入编辑（用户正在组一批节点做批量删除）
+        if (event.ctrlKey || event.metaKey) {
+            this.toggleMultiSelection(uid);
+            return;
+        }
         this.selectNode(uid);
         if (node.kind === 'root') return;
         this.startEdit(uid, event.clientX, event.clientY);
+    }
+
+    /**
+     * Ctrl 点：把一个节点加入 / 移出多选集合。
+     *
+     * 集合为空时回落到普通单选，避免「取消最后一个多选后什么都点不了」。
+     */
+    private toggleMultiSelection(uid: string): void {
+        if (this.multiSelected.has(uid)) this.multiSelected.delete(uid);
+        else this.multiSelected.add(uid);
+        this.canvas.setMultiSelected(this.multiSelected);
+        if (this.multiSelected.size > 0) {
+            // 工具条仍锚在最后点的节点上（删除按钮会按整个集合删）
+            this.selectedUid = uid;
+            this.canvas.setSelected(uid);
+            this.showToolbar(uid);
+        } else {
+            this.clearSelection();
+        }
+    }
+
+    /**
+     * 框选结果（画布每次 pointermove 回调）。
+     *
+     * 框选期间直接覆盖集合；松手后集合保留，按 Delete 删除。
+     * 单选 selectedUid 同步到最后一个命中项，工具条跟随。
+     */
+    private applyMarqueeSelection(uids: string[]): void {
+        this.multiSelected = new Set(uids);
+        this.canvas.setMultiSelected(this.multiSelected);
+        // 多选时不显示工具条：按钮语义（＋子节点 / ＋兄弟）对一批节点没有
+        // 意义，删除走键盘 Delete 或右键；这里只同步逻辑选中项。
+        // 框选过程中每次都隐藏（可能上一次单选留下的工具条还挂着）。
+        this.selectedUid = uids.length > 0 ? uids[uids.length - 1] : null;
+        this.canvas.setSelected(this.selectedUid);
+        if (this.toolbarEl) this.toolbarEl.style.display = 'none';
     }
 
     /** 选中节点、显示工具条、联动大纲。 */
@@ -640,6 +699,11 @@ export class MindMapApp {
         // 换了节点：上一条「待确认删除」作废，避免红按钮跟到别的节点上
         if (this.pendingDeleteUid !== null && this.pendingDeleteUid !== uid) {
             this.clearPendingDelete();
+        }
+        // 普通点击 = 回到单选，清掉上一轮框选
+        if (this.multiSelected.size > 0) {
+            this.multiSelected.clear();
+            this.canvas.setMultiSelected(this.multiSelected);
         }
         this.selectedUid = uid;
         this.canvas.setSelected(uid);
@@ -671,6 +735,9 @@ export class MindMapApp {
     private clearSelection(): void {
         // 取消选中 = 取消待确认删除（红按钮不该留在屏幕上）
         this.clearPendingDelete();
+        this.multiSelected.clear();
+        this.pendingDeleteMulti = false;
+        this.canvas.setMultiSelected(this.multiSelected);
         this.selectedUid = null;
         this.canvas.setSelected(null);
         this.resetDisplaySelections(null);
@@ -988,6 +1055,11 @@ export class MindMapApp {
             return;
         }
         this.commitEditSession();
+        // 进入编辑 = 回到单节点操作，框选集合清掉
+        if (this.multiSelected.size > 0) {
+            this.multiSelected.clear();
+            this.canvas.setMultiSelected(this.multiSelected);
+        }
         // 占位节点 / 被 LRU 逐出的节点：强制建一个真实显示实例。
         // ensureEditDisplay 无视缩放降级档，保证拿到的是**全量**实例
         // （轻量档没有 live preview 显示扩展，纯文本档根本没有实例）。
@@ -1024,8 +1096,13 @@ export class MindMapApp {
             // 回车换行 / 自动折行让内容变高时撑高盒子。
             onDocChanged: () => this.scheduleGrowEditingNode(session),
         });
-        // 等一帧让 CM 完成重配与布局，再按点击坐标落光标（不全选）
-        requestAnimationFrame(() => display.focusAt(x, y));
+        // 等一帧让 CM 完成重配与布局，再按点击坐标落光标（不全选）。
+        // 这一帧里会话可能已经被提交/重建（外部 UPDATE、整树 setData），
+        // 那时旧 display 已销毁，再 focusAt 会向已销毁视图派发选区事务。
+        requestAnimationFrame(() => {
+            if (this.editSession !== session) return;
+            display.focusAt(x, y);
+        });
     }
 
     /**
@@ -1084,7 +1161,10 @@ export class MindMapApp {
         const session = this.editSession;
         if (!session || session.uid !== uid) return;
         requestAnimationFrame(() => {
-            if (this.editSession !== session) return;
+            // 会话可能已经结束，或者显示实例在 rAF 之前被 setData / 换档
+            // 销毁（销毁后的 view 仍接受 dispatch，但会带着旧文档位置把
+            // CM 的内部状态搞坏，后续 lineAt 越界）。两种情况都直接放弃。
+            if (this.editSession !== session || session.display.destroyed) return;
             const view = session.display.view;
             let selection = saved ?? view.state.selection;
             try {
@@ -1210,6 +1290,11 @@ export class MindMapApp {
      * 用户看到的就是「点删除没反应」。
      */
     private deleteSelected(): void {
+        // 多选优先：Ctrl 点 / 框选之后 Delete 一次删一批（二次确认见下）
+        if (this.multiSelected.size > 0) {
+            this.deleteMultiSelected();
+            return;
+        }
         if (!this.selectedUid || !this.currentTree) return;
         // 删除前先结束编辑：否则 commit() 只写 pendingTree，点了删除看不到变化
         this.endEditBeforeStructuralOp();
@@ -1227,6 +1312,66 @@ export class MindMapApp {
         this.clearPendingDelete();
         this.clearSelection();
         this.commit(deleteNode(this.markdown, this.currentTree, uid));
+    }
+
+    /**
+     * 删除多选集合。
+     *
+     * 与单节点删除同样的「两步确认」：第一次只提示并变红，4 秒内再按一次
+     * 才真正删除。框选常常一次选中十几个节点，误删的代价比单节点大得多，
+     * 所以不提供「一按就删」。
+     */
+    private deleteMultiSelected(): void {
+        if (!this.currentTree) return;
+        this.endEditBeforeStructuralOp();
+        // 根节点永远不可删；祖先 + 后代同时选中时 deleteNodes 会去重
+        const uids = [...this.multiSelected].filter((uid) => {
+            const found = findTreeNodeByUid(this.currentTree!, uid);
+            return !!found && found.parent && found.node.data._kind !== 'root';
+        });
+        if (uids.length === 0) {
+            this.clearSelection();
+            return;
+        }
+        if (!this.pendingDeleteMulti) {
+            this.pendingDeleteMulti = true;
+            this.showMultiDeleteHint(uids.length);
+            if (this.pendingDeleteTimer !== null) clearTimeout(this.pendingDeleteTimer);
+            this.pendingDeleteTimer = setTimeout(() => {
+                this.pendingDeleteTimer = null;
+                this.pendingDeleteMulti = false;
+                this.removeMultiDeleteHint();
+            }, 4000);
+            return;
+        }
+        this.pendingDeleteMulti = false;
+        this.removeMultiDeleteHint();
+        if (this.pendingDeleteTimer !== null) {
+            clearTimeout(this.pendingDeleteTimer);
+            this.pendingDeleteTimer = null;
+        }
+        // 先清选中再重建：setData 后旧 uid 已失效，留着只会选中错节点
+        const tree = this.currentTree;
+        this.multiSelected.clear();
+        this.canvas.setMultiSelected(this.multiSelected);
+        this.selectedUid = null;
+        this.canvas.setSelected(null);
+        this.clearPendingDelete();
+        if (this.toolbarEl) this.toolbarEl.style.display = 'none';
+        this.commit(deleteNodes(this.markdown, tree, uids));
+    }
+
+    /** 多选删除的提示条（复用 perf-notice 的浮层样式）。 */
+    private showMultiDeleteHint(count: number): void {
+        this.removeMultiDeleteHint();
+        const hint = document.createElement('div');
+        hint.className = 'lwm-perf-notice lwm-multi-delete-hint';
+        hint.textContent = `已选中 ${count} 项，再按一次 Delete 确认删除`;
+        this.container.appendChild(hint);
+    }
+
+    private removeMultiDeleteHint(): void {
+        this.container.querySelectorAll('.lwm-multi-delete-hint').forEach((el) => el.remove());
     }
 
     /** 把删除按钮切成红色「确认删除」态（4 秒后自动复位）。 */
@@ -1261,6 +1406,9 @@ export class MindMapApp {
             button.classList.remove('lwm-danger');
             button.textContent = '删除';
         }
+        // 多选删除的待确认态一并复位（否则提示条会留在屏幕上）
+        this.pendingDeleteMulti = false;
+        this.removeMultiDeleteHint();
     }
 
     /** 展开按钮事件：同步 collapsedUids 与数据树的 expand 标记。 */

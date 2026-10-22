@@ -169,6 +169,12 @@ export interface MapCanvasOptions {
     onViewChange(): void;
     /** 落点预校验（类型规则由上层决定；返回 false 不高亮）。 */
     canDrop?(dragUid: string, parentUid: string): boolean;
+    /**
+     * Ctrl + 拖拽框选的结果（每次移动都会回调，松手后保留）。
+     *
+     * @param uids 当前框住的节点 uid（按视图顺序）
+     */
+    onMarqueeSelect?(uids: string[]): void;
 }
 
 /** 指针状态。 */
@@ -189,7 +195,24 @@ type PointerState =
           startX: number;
           startY: number;
           moved: boolean;
+          /** 按下点是否落在 CM 正文里（决定拖动时是选文字还是拖节点）。 */
+          fromContent: boolean;
           event: PointerEvent;
+      }
+    | {
+          /**
+           * Ctrl + 拖拽框选。
+           *
+           * 从节点上按下也算：没拖动 = Ctrl 点切换选中；拖了 = 从该点开始框选。
+           * 这样既不占用「拖节点移动」（普通拖动），也不和「拖选文字」冲突。
+           */
+          kind: 'marquee';
+          pointerId: number;
+          startX: number;
+          startY: number;
+          moved: boolean;
+          /** 按下时落在哪个节点上（Ctrl 点切换选中用）；空白处为 null。 */
+          fromNode: { uid: string; event: PointerEvent } | null;
       }
     | null;
 
@@ -382,6 +405,10 @@ export class MapCanvas {
     private pointer: PointerState = null;
     private drag: DragState | null = null;
     private dropCandidate: DropCandidate | null = null;
+    /** Ctrl 框选的矩形层（屏幕坐标，不参与缩放）。 */
+    private readonly marqueeEl: HTMLDivElement;
+    /** 多选中的节点 uid（Ctrl 点 / 框选）。与 selectedUid 叠加显示。 */
+    private multiSelected = new Set<string>();
     private autoPanTimer: ReturnType<typeof setTimeout> | null = null;
     private autoPanDx = 0;
     private autoPanDy = 0;
@@ -418,6 +445,12 @@ export class MapCanvas {
         this.dropLine.className = 'lwm-drop-line';
         this.dropLine.style.display = 'none';
         this.nodeLayer.appendChild(this.dropLine);
+        // 框选矩形挂在未缩放的 canvasEl 上：坐标直接用 client 坐标减画布原点，
+        // 不需要再做世界坐标换算
+        this.marqueeEl = document.createElement('div');
+        this.marqueeEl.className = 'lwm-marquee';
+        this.marqueeEl.style.display = 'none';
+        this.canvasEl.appendChild(this.marqueeEl);
         container.appendChild(this.canvasEl);
 
         // 缩略图挂在容器上（不是 .lwm-canvas 里）：它的指针事件
@@ -524,6 +557,45 @@ export class MapCanvas {
             for (const [from, to] of opts.uidRemap) reverseRemap.set(to, from);
         }
 
+        // 内容指纹索引：删除一个节点后，后面所有兄弟的路径式 uid 会整体
+        // 前移（0/2 → 0/1），只按 uid 复用的话等于「所有后续兄弟都换了个
+        // 人」，wrapper / mini-CM 全部销毁重建 —— 用户看到的就是删一个
+        // 节点、整排兄弟和它们的子树闪一下，删得越多越卡。
+        //
+        // 这里给旧节点按「类型 + 文本 + 标题级别 + 列表类型 + 语言」建索引，
+        // 新节点找不到同 uid 的旧节点时按内容认领（先到先得），删一个节点
+        // 就只销毁被删的那棵子树，其余节点原地复用。
+        const oldNodesInOrder: MapNode[] = [];
+        if (oldRoot) walkAll(oldRoot, (node) => oldNodesInOrder.push(node));
+        const contentKeyOf = (node: MapNode): string =>
+            [
+                node.kind,
+                node.text,
+                node.data._headingLevel ?? '',
+                node.data._listOrdered ? 1 : 0,
+                node.data._language ?? '',
+                node.data._imageUrl ?? '',
+            ].join('\u0000');
+        const oldByContent = new Map<string, MapNode[]>();
+        for (const old of oldNodesInOrder) {
+            const key = contentKeyOf(old);
+            const bucket = oldByContent.get(key);
+            if (bucket) bucket.push(old);
+            else oldByContent.set(key, [old]);
+        }
+        /** 已经被新模型认领的旧节点（防止同一个 DOM/CM 被认领两次）。 */
+        const claimedOldNodes = new Set<MapNode>();
+        /** 按内容认领一个还没被用掉的旧节点。 */
+        const takeByContent = (node: MapNode): MapNode | undefined => {
+            const bucket = oldByContent.get(contentKeyOf(node));
+            if (!bucket) return undefined;
+            while (bucket.length > 0) {
+                const candidate = bucket.shift()!;
+                if (!claimedOldNodes.has(candidate)) return candidate;
+            }
+            return undefined;
+        };
+
         // 1. 建新模型
         const newRoot = buildMapModel(tree);
         this.root = newRoot;
@@ -546,7 +618,21 @@ export class MapCanvas {
         const claimedDisplays = new Set<NodeDisplay>();
         walkAll(newRoot, (node) => {
             const sourceUid = reverseRemap.get(node.uid) ?? node.uid;
-            const oldNode = oldByUid.get(sourceUid);
+            // 认领顺序（越靠前越可信）：
+            //   1. 拖动映射 / 同 uid 且内容完全相同；
+            //   2. 内容指纹（删除导致的 uid 整体前移）；
+            //   3. 同 uid（改名：内容变了，但 wrapper 还能原地复用）。
+            const byUid = oldByUid.get(sourceUid);
+            let oldNode: MapNode | undefined;
+            if (byUid && !claimedOldNodes.has(byUid) && contentKeyOf(byUid) === contentKeyOf(node)) {
+                oldNode = byUid;
+            }
+            if (!oldNode) oldNode = takeByContent(node);
+            if (!oldNode) {
+                const sameUid = oldByUid.get(node.uid);
+                if (sameUid && !claimedOldNodes.has(sameUid)) oldNode = sameUid;
+            }
+            if (oldNode) claimedOldNodes.add(oldNode);
             if (oldNode?.wrapper && !claimedWrappers.has(oldNode.wrapper)) {
                 node.wrapper = oldNode.wrapper;
                 claimedWrappers.add(oldNode.wrapper);
@@ -555,7 +641,7 @@ export class MapCanvas {
                 node.height = oldNode.height;
                 transferredWrappers.add(oldNode.wrapper);
             }
-            const entry = oldDisplays.get(sourceUid);
+            const entry = oldNode ? oldDisplays.get(oldNode.uid) : undefined;
             // 显示实例跟着它原来的 wrapper 走：实例只能被认领一次。
             //
             // 注意不要写成「wrapper 被认领过就跳过」——上面按 uid 复用
@@ -590,9 +676,12 @@ export class MapCanvas {
         });
 
         // 3. 销毁未复用的显示实例 / 移除未复用的 wrapper
+        //    先建一份「活着的实例」集合：以前对每个旧实例都扫一遍新表，
+        //    N 个节点就是 O(N²)，删掉一个节点后特别明显。
+        const liveDisplays = new Set<NodeDisplay>();
+        for (const item of displays.values()) liveDisplays.add(item.display);
         for (const [uid, entry] of oldDisplays) {
-            const alive = Array.from(displays.values()).some((item) => item.display === entry.display);
-            if (!alive) {
+            if (!liveDisplays.has(entry.display)) {
                 entry.display.destroy();
                 // wrapper 可能已经被新节点接手，绝不能误删
                 if (!transferredWrappers.has(entry.wrapper)) entry.wrapper.remove();
@@ -734,6 +823,28 @@ export class MapCanvas {
         this.selectedUid = uid;
         if (previous) this.refreshWrapperClasses(this.byUid.get(previous));
         if (uid) this.refreshWrapperClasses(this.byUid.get(uid));
+    }
+
+    /**
+     * 设置多选集合（Ctrl 点 / Ctrl 框选）。
+     *
+     * 多选和单选是两套独立的标记：框选时 selectedUid 可能还停在某个节点上，
+     * 但删除要按整个集合来。这里只负责刷类名，集合本身由上层（mindmapApp）
+     * 持有 —— 构造新树、删除节点后上层要重新给一次。
+     */
+    setMultiSelected(uids: Iterable<string>): void {
+        const next = new Set(uids);
+        // 先刷新失去多选标记的节点，再刷新新标记的
+        for (const uid of this.multiSelected) {
+            if (!next.has(uid)) this.refreshWrapperClasses(this.byUid.get(uid));
+        }
+        this.multiSelected = next;
+        for (const uid of next) this.refreshWrapperClasses(this.byUid.get(uid));
+    }
+
+    /** 当前多选集合（副本）。 */
+    getMultiSelected(): string[] {
+        return [...this.multiSelected];
     }
 
     /** 设置编辑中的节点（编辑期间不被虚拟化卸下）。 */
@@ -1114,7 +1225,9 @@ export class MapCanvas {
         const classes = ['lwm-node', `lwm-node-${node.kind}`];
         if (this.expandedFlags.has(node.uid)) classes.push('lwm-node-expanded');
         if (this.editingUid === node.uid) classes.push('lwm-node-editing');
-        if (this.selectedUid === node.uid) classes.push('lwm-node-selected');
+        if (this.selectedUid === node.uid || this.multiSelected.has(node.uid)) {
+            classes.push('lwm-node-selected');
+        }
         if (this.searchHits.has(node.uid)) classes.push('lwm-search-hit');
         if (this.searchCurrent === node.uid) classes.push('lwm-search-current');
         if (this.drag?.uid === node.uid) classes.push('lwm-node-dragging');
@@ -1391,19 +1504,33 @@ export class MapCanvas {
         // 是 widget 渲染，源码态宽度没有意义。
         const restoreSelections: Array<{
             view: NodeDisplay['view'];
+            display: NodeDisplay;
             selection: EditorSelection;
         }> = [];
         for (const item of pending) {
             const display = item.node.display;
-            // 编辑中的节点绝对不能动选区（会打断输入 / 输入法组合态）
-            if (!display || display.editing || !TEXT_KINDS.has(item.node.kind)) continue;
-            const docLength = display.view.state.doc.length;
-            if (docLength === 0) continue;
-            const selection = display.view.state.selection;
-            display.view.dispatch({
-                selection: EditorSelection.single(0, docLength),
-            });
-            restoreSelections.push({ view: display.view, selection });
+            // 编辑中的节点绝对不能动选区（会打断输入 / 输入法组合态）；
+            // 已销毁的实例更不能派发 —— 旧 position 落到已换掉的文档上会
+            // 把 CM 的 state 搞坏（后续 update 里 lineAt 越界）。
+            if (
+                !display ||
+                display.destroyed ||
+                display.editing ||
+                !TEXT_KINDS.has(item.node.kind)
+            ) {
+                continue;
+            }
+            try {
+                const docLength = display.view.state.doc.length;
+                if (docLength === 0) continue;
+                const selection = display.view.state.selection;
+                display.view.dispatch({
+                    selection: EditorSelection.single(0, docLength),
+                });
+                restoreSelections.push({ view: display.view, display, selection });
+            } catch {
+                /* 视图在测量过程中被销毁：忽略 */
+            }
         }
 
         // 第一遍：文本态。先全部挂好再统一读取（一次布局，后面读缓存）
@@ -1411,6 +1538,7 @@ export class MapCanvas {
 
         // 选区复位：显示态重新隐藏标记；尺寸取两遍的最大值
         for (const item of restoreSelections) {
+            if (item.display.destroyed) continue;
             try {
                 item.view.dispatch({ selection: item.selection });
             } catch {
@@ -1515,9 +1643,17 @@ export class MapCanvas {
             // 字体/图片影响所有节点，且可能改变任意节点：量全部可见节点
             walkVisible(this.root, consider);
         } else {
-            for (const uid of this.settleUids) {
+            for (const uid of [...this.settleUids]) {
                 const node = this.byUid.get(uid);
-                if (node) consider(node);
+                // 已删除节点的 uid 不会自己从集合里消失：以前只跳过不删除，
+                // 长时间反复增删之后这个集合只涨不落，每次 settle 都要白跑
+                // 一遍。顺手清掉（uid 是路径式的，别的节点可能重新用上它，
+                // 但那会重新 add，不影响正确性）。
+                if (!node) {
+                    this.settleUids.delete(uid);
+                    continue;
+                }
+                consider(node);
             }
         }
         if (targets.length === 0) return;
@@ -1805,6 +1941,18 @@ export class MapCanvas {
         this.mounted.add(node.uid);
         // 挂载集合真的变了才升级版本（可见性同步据此去重）
         if (!alreadyMounted) this.mountedVersion += 1;
+        // 兜底：挂到画布上的 wrapper 必须真的有内容。
+        //
+        // setTheme 会清空所有 wrapper，然后只给「当时已挂载」的节点重建；
+        // 而主题设置是即时生效的（导图隐藏 / 首屏还没挂载时也会走）。那些
+        // 当时没挂载的节点就成了空壳，且 measured 还是 true，setActive 的
+        // 「需要重量」判断不会触发重建 —— 切回导图只看到一片空白。
+        //
+        // 这里按「既没有 display 也没有 placeholder」判断空壳，正好不会
+        // 碰正常的占位节点（placeholder=true）和真实实例（display!=null）。
+        if (!node.display && !node.placeholder && !node.wrapper.firstElementChild) {
+            this.ensureContent(node);
+        }
         this.positionNode(node);
         // 占位节点进入视口：排队换真。
         //
@@ -2476,10 +2624,32 @@ export class MapCanvas {
         }
 
         const wrapper = target?.closest?.('.lwm-node[data-uid]') as HTMLElement | null;
-        if (wrapper && wrapper.parentElement === this.nodeLayer) {
-            const uid = wrapper.dataset.uid ?? '';
-            // 编辑中的节点：CM 自己处理选字/光标
-            if (uid === this.editingUid) return;
+        const inNode = !!wrapper && wrapper.parentElement === this.nodeLayer;
+        const uid = inNode ? (wrapper!.dataset.uid ?? '') : '';
+        // 编辑中的节点：CM 自己处理选字/光标（含拖动选择）
+        if (inNode && uid === this.editingUid) return;
+
+        // Ctrl / Cmd + 按下：进入「框选或切换选中」手势。
+        // 不抢占文字选择：落在 CM 正文里且没拖动时，交给上层当 Ctrl 点处理。
+        if (event.ctrlKey || event.metaKey) {
+            this.pointer = {
+                kind: 'marquee',
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startY: event.clientY,
+                moved: false,
+                fromNode: inNode ? { uid, event } : null,
+            };
+            this.capturePointer(event.pointerId);
+            return;
+        }
+
+        if (inNode) {
+            // 关键：这里**不能** setPointerCapture。
+            // 指针一旦被画布捕获，浏览器会把后续 mousedown/mousemove 也重定向到
+            // 画布元素，CodeMirror 挂在 contentDOM 上的 mousedown 收不到事件 ——
+            // 表现就是节点里的文字（包括加粗 / 斜体 / 代码 / 表格）怎么拖都
+            // 选不中。改为真正开始拖节点时再捕获（见 handlePointerMove）。
             this.pointer = {
                 kind: 'node',
                 pointerId: event.pointerId,
@@ -2487,9 +2657,10 @@ export class MapCanvas {
                 startX: event.clientX,
                 startY: event.clientY,
                 moved: false,
+                // 落在正文里 = 用户可能是想拖选文字；没按 Alt 时不启动节点拖动
+                fromContent: !!target?.closest?.('.cm-content'),
                 event,
             };
-            this.capturePointer(event.pointerId);
             return;
         }
 
@@ -2532,15 +2703,30 @@ export class MapCanvas {
             return;
         }
 
+        // Ctrl 框选：超过阈值才开始画框；没拖动就是一次 Ctrl 点（切换选中）
+        if (pointer.kind === 'marquee') {
+            if (!pointer.moved) {
+                if (Math.abs(dx) + Math.abs(dy) <= 3) return;
+                pointer.moved = true;
+            }
+            this.updateMarquee(pointer.startX, pointer.startY, event.clientX, event.clientY);
+            return;
+        }
+
         // node：超过阈值才进入拖动
         if (!this.drag) {
             if (Math.abs(dx) + Math.abs(dy) <= DRAG_THRESHOLD) return;
             pointer.moved = true;
+            // 从 CM 正文里按下：让浏览器/CodeMirror 完成文字拖选。
+            // Alt+拖动是「我就是要挪这个节点」的显式覆盖。
+            if (pointer.fromContent && !event.altKey) return;
             const node = this.byUid.get(pointer.uid);
             if (!node) {
                 this.pointer = null;
                 return;
             }
+            // 确认是拖节点而不是选文字，这时才捕获指针（见 handlePointerDown）
+            this.capturePointer(event.pointerId);
             this.drag = {
                 uid: pointer.uid,
                 node,
@@ -2555,6 +2741,49 @@ export class MapCanvas {
             node.wrapper?.classList.add('lwm-node-dragging');
         }
         this.updateDrag(event);
+    }
+
+    /**
+     * 更新 Ctrl 框选矩形并回调命中节点。
+     *
+     * 用屏幕坐标和 getBoundingClientRect 相交判断：节点少（可见节点通常
+     * 几十个）、且框选本身是低频手势，没必要再维护一套世界坐标换算。
+     */
+    private updateMarquee(startX: number, startY: number, endX: number, endY: number): void {
+        const rect = this.canvasEl.getBoundingClientRect();
+        const left = Math.min(startX, endX) - rect.left;
+        const top = Math.min(startY, endY) - rect.top;
+        const width = Math.abs(endX - startX);
+        const height = Math.abs(endY - startY);
+        const style = this.marqueeEl.style;
+        style.display = 'block';
+        style.left = `${left}px`;
+        style.top = `${top}px`;
+        style.width = `${width}px`;
+        style.height = `${height}px`;
+
+        // 与画布可见节点的屏幕矩形求交
+        const box = {
+            left: rect.left + left,
+            top: rect.top + top,
+            right: rect.left + left + width,
+            bottom: rect.top + top + height,
+        };
+        const hits: string[] = [];
+        for (const uid of this.mounted) {
+            const wrapper = this.byUid.get(uid)?.wrapper;
+            if (!wrapper) continue;
+            const r = wrapper.getBoundingClientRect();
+            if (
+                r.right >= box.left &&
+                r.left <= box.right &&
+                r.bottom >= box.top &&
+                r.top <= box.bottom
+            ) {
+                hits.push(uid);
+            }
+        }
+        this.options.onMarqueeSelect?.(hits);
     }
 
     /** 拖动中：移动节点、算落点、边缘自动平移。 */
@@ -2711,8 +2940,28 @@ export class MapCanvas {
             this.scheduleWorldLayer();
             this.pointer = null;
             if (!pointer.moved) this.options.onCanvasClick();
+        } else if (pointer?.kind === 'marquee') {
+            this.pointer = null;
+            this.marqueeEl.style.display = 'none';
+            if (!pointer.moved) {
+                if (pointer.fromNode) {
+                    // Ctrl 点节点 = 切换该节点的多选状态（上层按 ctrlKey 判断）
+                    const node = this.byUid.get(pointer.fromNode.uid);
+                    if (node) {
+                        this.options.onNodeClick(
+                            node,
+                            pointer.fromNode.event as unknown as MouseEvent
+                        );
+                    }
+                } else {
+                    // Ctrl 点空白 = 清空多选
+                    this.options.onCanvasClick();
+                }
+            }
         } else if (pointer?.kind === 'node') {
             this.pointer = null;
+            // 拖选文字时 moved 也会置位：此时绝不能上报「单击节点」，
+            // 否则上层会立刻进入编辑态并把刚选好的选区塌成光标。
             if (!pointer.moved) {
                 const node = this.byUid.get(pointer.uid);
                 if (node) this.options.onNodeClick(node, event as unknown as MouseEvent);
@@ -2739,6 +2988,7 @@ export class MapCanvas {
             this.positionNode(drag.node);
         }
         this.pointer = null;
+        this.marqueeEl.style.display = 'none';
         this.canvasEl.classList.remove('lwm-panning');
         this.scheduleWorldLayer();
         try {

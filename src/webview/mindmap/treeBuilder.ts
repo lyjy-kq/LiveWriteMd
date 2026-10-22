@@ -58,7 +58,11 @@ interface BuildNode {
  * @returns simple-mind-map 树数据
  */
 export function buildMindMapTree(markdown: string, fileName: string): MindMapTreeNode {
-    const doc = markdown.length > 0 ? markdown : '';
+    const raw = markdown.length > 0 ? markdown : '';
+    // 先修正「缩进不够」的嵌套列表，再解析（见 normalizeNestedListIndent）。
+    // 注意后续所有文本切片都用修正后的 doc：行数不变、只有行首空白变了，
+    // 行号映射仍然有效；显示侧 dedentListSource 会把补出来的缩进去掉。
+    const doc = normalizeNestedListIndent(raw);
     const tree = mindmapParser.parse(doc);
     const lines = collectLineStarts(doc);
     const lineOf = (pos: number): number => positionToLine(lines, pos);
@@ -527,6 +531,99 @@ function detectFrontMatterEndLine(doc: string): number {
         }
     }
     return -1;
+}
+
+/**
+ * 修正「缩进不足」的嵌套列表（导图容错）。
+ *
+ * 背景（用户实际写法 / test/全能测试.md）：
+ * ```
+ * 1. 有序一级          ← 内容列是第 3 列（"1. " 占 3 格）
+ *   1. 有序二级        ← 只缩进 2 格
+ *     1. 有序三级      ← 缩进 4 格
+ * ```
+ * CommonMark 规定子列表必须缩进到父项的内容列（3 格），2 格会被当成
+ * 上一项的**懒续行**：整块文字塞进同一个列表项，导图里就出现一个
+ * 把子项和后续兄弟全部吞进去的大格子。用户显然是想表达嵌套，这里在
+ * 解析前把「比父项内容列浅」的列表标记行补到父项内容列。
+ *
+ * 规则：
+ * - 维护一个「打开的列表标记」栈，父项 = 前一个缩进更浅的列表标记行；
+ * - 子项目标缩进 = 父项缩进 + 父项标记宽度（"- " 2 格、"1. " 3 格）；
+ * - 只补不删（本来就够深的不动），因此不会破坏已写对的文档；
+ * - 跳过围栏代码块与 front matter —— 里面的 `- xxx` 是内容，不是列表。
+ *
+ * 行数严格不变，行号 → 源文档的映射继续有效。
+ *
+ * @param markdown 原始全文
+ * @returns 修正行首缩进后的全文（行数、行序不变）
+ */
+function normalizeNestedListIndent(markdown: string): string {
+    const lines = markdown.split('\n');
+    /** 打开中的列表项：缩进列 + 标记宽度（含标记后的空白）。 */
+    const stack: Array<{ indent: number; width: number }> = [];
+    /** 围栏代码块状态（```/~~~，含闭合长度判断）。 */
+    let fence: { char: string; length: number } | null = null;
+    /** front matter 范围（首行 --- 到结束行），里面的 YAML 列表不动。 */
+    let frontMatterEnd = -1;
+    if (lines[0]?.trim() === '---') {
+        for (let i = 1; i < lines.length; i += 1) {
+            const t = lines[i].trim();
+            if (t === '---' || t === '...') {
+                frontMatterEnd = i;
+                break;
+            }
+        }
+    }
+
+    const columnOf = (text: string): number => {
+        let col = 0;
+        for (const ch of text) {
+            if (ch === '\t') col += 4 - (col % 4);
+            else col += 1;
+        }
+        return col;
+    };
+
+    for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (index <= frontMatterEnd) continue;
+
+        // —— 围栏代码块：只做开关，绝不改内容 ——
+        if (fence) {
+            const close = /^[ \t]*(`{3,}|~{3,})[ \t]*$/.exec(line);
+            if (close && close[1][0] === fence.char && close[1].length >= fence.length) {
+                fence = null;
+            }
+            continue;
+        }
+        const open = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+        if (open) {
+            fence = { char: open[1][0], length: open[1].length };
+            continue;
+        }
+
+        const match = /^([ \t]*)([-*+]|\d{1,9}[.)])([ \t]+)/.exec(line);
+        if (!match) continue;
+        const indent = columnOf(match[1]);
+        // 标记宽度 = 标记本身 + 跟随的空白（空白按列宽算，Tab 对齐到 4）
+        const markerWidth =
+            match[2].length + Math.max(1, columnOf(match[3]));
+
+        // 父项 = 最近的、缩进严格更浅的列表标记
+        while (stack.length > 0 && stack[stack.length - 1].indent >= indent) {
+            stack.pop();
+        }
+        const parent = stack[stack.length - 1];
+        const required = parent ? parent.indent + parent.width : 0;
+        const finalIndent = Math.max(indent, required);
+        if (finalIndent !== indent) {
+            // 只替换行首空白，标记与正文原样保留
+            lines[index] = ' '.repeat(finalIndent) + line.slice(match[1].length);
+        }
+        stack.push({ indent: finalIndent, width: markerWidth });
+    }
+    return lines.join('\n');
 }
 
 /** 预计算每行起始偏移。 */

@@ -40,6 +40,13 @@ import { isTableLikeBlock } from './tableRender.js';
  */
 export function getSourceRange(state: EditorState): ILineRange {
     const main = state.selection.main;
+    // 兜底：选区位置理论上永远落在文档内，但导图节点的 mini-CM 在
+    // 「实例刚销毁 / 文档被整体替换」的瞬间可能把旧位置带进一次更新。
+    // doc.lineAt 收到越界位置时，CM 内部的 lineInner 会去读不存在的行，
+    // 抛 `Cannot read properties of undefined (reading 'length')` ——
+    // 整个装饰 StateField 更新跟着炸掉。这里把两端夹到合法区间，
+    // 正常情况下 Math.min/max 不产生任何行为变化。
+    const clamp = (pos: number): number => Math.max(0, Math.min(pos, state.doc.length));
 
     // 拖拽展开行：鼠标移动超阈值后整行已展开，直接返回该行区间。
     // 优先级保持最高，与 mousedown 时记录锚点的逻辑（见 lineForce.ts）互不干扰
@@ -61,7 +68,10 @@ export function getSourceRange(state: EditorState): ILineRange {
     if (main.empty) return getMarkdownBlockRange(state);
 
     // 选区的两端各取所在行的行首 / 行尾：选区中间那些行整行都算进来
-    return { from: state.doc.lineAt(main.from).from, to: state.doc.lineAt(main.to).to };
+    return {
+        from: state.doc.lineAt(clamp(main.from)).from,
+        to: state.doc.lineAt(clamp(main.to)).to,
+    };
 }
 
 /**
@@ -99,9 +109,11 @@ export function isSetextBeforeFence(state: EditorState, from: number, to: number
  */
 export function getMarkdownBlockRange(state: EditorState): ILineRange {
     const { main } = state.selection;
-    const pos = main.head;
     const tree = syntaxTree(state);
     const doc = state.doc;
+    // 同 getSourceRange：防止越界位置把 doc.lineAt 打进 CM 内部崩溃分支。
+    // 越界只可能来自「状态本身已经不一致」的瞬时更新，夹一下即可。
+    const pos = Math.max(0, Math.min(main.head, doc.length));
 
     // 双击进过源码模式的块（表格 / 图片 / Mermaid）：聚焦范围就给**整块**。
     // 这样按行扫描的那些收集器（公式、复选框、图片…）会整块跳过，
@@ -229,7 +241,9 @@ export function getMarkdownBlockRange(state: EditorState): ILineRange {
  */
 export function isInCodeBlock(state: EditorState, pos: number): boolean {
     const doc = state.doc;
-    const target = doc.lineAt(pos);
+    // 调用方可能把「外部传进来的位置」直接递进来（widget 回调、持久化的
+    // 选区），文档缩短后它就超界了。夹一下，避免 lineAt 抛内部 TypeError。
+    const target = doc.lineAt(Math.max(0, Math.min(pos, doc.length)));
     let inCodeBlock = false;
 
     for (let ln = 1; ln <= target.number; ln++) {

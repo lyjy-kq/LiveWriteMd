@@ -296,6 +296,24 @@ export const MINDMAP_CSS = `
     border: 1px solid color-mix(in srgb, var(--lwm-node-tint) 62%, transparent);
 }
 
+/* 选中 / 多选：统一用焦点色描边。
+   以前选中只体现在工具条上，节点本身没有任何视觉反馈；框选多选之后
+   必须能一眼看出哪些节点会被删掉，所以选中态直接画在节点外圈。
+   用 outline 而不是 border：不参与盒模型，不会让节点尺寸/布局跳一下。 */
+.lwm-node.lwm-node-selected {
+    outline: 2px solid var(--vscode-focusBorder, #007fd4);
+    outline-offset: 2px;
+}
+/* 框选矩形（屏幕坐标层，见 MapCanvas.updateMarquee）。 */
+.lwm-marquee {
+    position: absolute;
+    z-index: 20;
+    pointer-events: none;
+    border: 1px solid var(--vscode-focusBorder, #007fd4);
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 12%, transparent);
+}
+
 /* =================================================================
  * 缩放降级档（容器 data-lwm-tier，由 MapCanvas 随缩放写入）
  * 2 = 纯文本档：节点内容已是纯文本占位，这里再去掉投影和圆角装饰，
@@ -338,7 +356,12 @@ export const MINDMAP_CSS = `
  * ================================================================= */
 .lwm-node-display {
     width: 100%;
-    /* 显示态文字不参与节点选择态的 user-select 限制（CM 选区要用） */
+    /* 显示态文字不参与节点选择态的 user-select 限制（CM 选区要用）。
+       .lwm-node 上的 user-select: none 会继承到整棵子树，只给容器改不够 ——
+       必须在这里显式写 text，节点里的加粗 / 斜体 / 代码 / 表格文字才能
+       像 live 模式一样用鼠标拖选。 */
+    user-select: text;
+    -webkit-user-select: text;
     text-align: left;
     /* 布局隔离：导图全树渲染时库会逐节点量尺寸，每次强排都是全文档布局；
        contain 把每个节点的布局成本锁在自己子树内，避免 O(n²) 抖动 */
@@ -411,6 +434,31 @@ export const MINDMAP_CSS = `
     overflow: hidden;
     white-space: normal;
     align-items: flex-start;
+}
+/* 媒体节点：用内容本身当节点，不再套一层导图外框。
+   代码块 / 表格 / 图片 / mermaid 在 live 里已经各自带边框和底色，
+   再叠一层半透明色块 + 点线框，视觉上就是「卡片里又套一张卡片」。
+   这里只去掉导图给的装饰；选中态 outline / 搜索高亮仍然生效。
+   两个类名叠加是为了压过 .lwm-node[data-depth="0|1|2"] 的边框规则。 */
+.lwm-node.lwm-node-code,
+.lwm-node.lwm-node-table,
+.lwm-node.lwm-node-image,
+.lwm-node.lwm-node-math,
+.lwm-node.lwm-node-mermaid {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+}
+/* 高倍缩放条规则的「画布 + 高倍 + 节点」是 3 个类，
+   特异性高于上面 2 个类的媒体规则；放大到 150% 时媒体节点又会冒出
+   导图底色，所以这里要再用同等特异性压一次。 */
+.lwm-canvas.lwm-hi-zoom .lwm-node.lwm-node-code,
+.lwm-canvas.lwm-hi-zoom .lwm-node.lwm-node-table,
+.lwm-canvas.lwm-hi-zoom .lwm-node.lwm-node-image,
+.lwm-canvas.lwm-hi-zoom .lwm-node.lwm-node-math,
+.lwm-canvas.lwm-hi-zoom .lwm-node.lwm-node-mermaid {
+    background: transparent;
 }
 /* 代码块节点：上限 40 列 × 20 行；
    最小宽度走设置 mindmapCodeMinWidth（容器变量 --lwm-code-min-width） */
