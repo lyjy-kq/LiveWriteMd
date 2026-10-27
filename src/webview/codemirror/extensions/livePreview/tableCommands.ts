@@ -18,13 +18,9 @@
 
 import type { ChangeSpec, EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
-import {
-    cellAt,
-    splitRowText,
-    tableBlockAt,
-    type TableBlock,
-    type TableLine,
-} from './tableRender.js';
+import { cellAt, tableBlockAt } from './tableCellSelection.js';
+import { splitRowText } from './tableDetect.js';
+import type { TableBlock, TableLine } from './tableTypes.js';
 
 /** 右键菜单里的表格操作。 */
 export type TableCommand =

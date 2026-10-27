@@ -23,7 +23,7 @@
 
 import type { EditorState } from '@codemirror/state';
 import type { SyntaxNode } from '@lezer/common';
-import { getMeasureContext } from './helpers.js';
+import { getMeasureContext } from './textMeasure.js';
 import { fontSpec, MeasureBatch } from './layoutMetrics.js';
 
 /**

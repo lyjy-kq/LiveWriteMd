@@ -45,7 +45,7 @@ import {
     getPinnedForceRange,
     lineForceEffect,
 } from './state.js';
-import { tableBlockAt } from './tableRender.js';
+import { tableBlockAt } from './tableCellSelection.js';
 
 /**
  * 「有自己的点击语义、整行待选不能打扰」的 widget 元素选择器。

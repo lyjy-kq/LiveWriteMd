@@ -22,7 +22,8 @@ import {
 } from '../codemirror/extensions/keymap.js';
 // 表格右键菜单复用 live 模式的那一套：菜单项文案 + 落格解析 + 增删行列命令
 import { TABLE_MENU_ITEMS } from '../editing/editorContextMenu.js';
-import { cellAt, splitRowText } from '../codemirror/extensions/livePreview/tableRender.js';
+import { cellAt } from '../codemirror/extensions/livePreview/tableCellSelection.js';
+import { splitRowText } from '../codemirror/extensions/livePreview/tableDetect.js';
 import {
     runTableCommand,
     type TableCommand,

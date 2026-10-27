@@ -30,25 +30,12 @@ import {
     strikethroughMarkDeco,
 } from './decorations.js';
 import { ensureTokenColorCss, liveWriteMdTokenHighlight } from './tokenColors.js';
-import {
-    extractFencedCodeContent,
-    extractFencedCodeLanguage,
-    extractSafeFontStyles,
-    createCodeBlockIndentStyle,
-    createListIndentStyle,
-    type IndentGuide,
-    detectIndentUnit,
-    getCodeBlockIndentInfo,
-    parseListMarkerLine,
-    type ListMarkerInfo,
-    measureWhitespacePx,
-    measureBaselineInset,
-    measureIndentUnitPx,
-    measureEnvFromElement,
-    measureTextIn,
-    type MeasureEnv,
-    splitMarkdownImageDestination,
-} from './helpers.js';
+import { createCodeBlockIndentStyle, getCodeBlockIndentInfo } from './codeIndent.js';
+import { createListIndentStyle, detectIndentUnit, parseListMarkerLine, measureWhitespacePx, measureBaselineInset, measureIndentUnitPx } from './listIndent.js';
+import type { IndentGuide, ListMarkerInfo } from './listIndent.js';
+import { extractFencedCodeContent, extractFencedCodeLanguage, extractSafeFontStyles, splitMarkdownImageDestination } from './sourceParse.js';
+import { measureEnvFromElement, measureTextIn } from './textMeasure.js';
+import type { MeasureEnv } from './textMeasure.js';
 import {
     collectFocusDecorations,
     computeFocusSignature,
@@ -76,17 +63,11 @@ import {
     collectMathSourceRanges,
 } from './mathCollect.js';
 import { scrollPreserverExtension } from './scrollHack.js';
-import {
-    hasUnmeasuredTables,
-    collectTableDecorations,
-    isInTableCell,
-    isTableLikeBlock,
-    tableCellSelection,
-    tableCompositionHandler,
-    tablePipeEscaper,
-    tableResizePlugin,
-    tableSourceModeHandler,
-} from './tableRender.js';
+import { tableCellSelection } from './tableCellSelection.js';
+import { collectTableDecorations } from './tableDecorations.js';
+import { isTableLikeBlock } from './tableDetect.js';
+import { isInTableCell, tableCompositionHandler, tablePipeEscaper, tableSourceModeHandler } from './tableLocate.js';
+import { hasUnmeasuredTables, tableResizePlugin } from './tableWiring.js';
 import { autoPairBrackets } from './autoPair.js';
 import {
     exitPinnedForceIfOutside,
@@ -108,20 +89,10 @@ import { lineForcePlugin, nativeAnchoredMouseSelection } from './lineForce.js';
 import { tableHoverControls } from './tableHoverControls.js';
 import { createBaseThemeStyles } from './styles.js';
 import type { ILineRange } from './types.js';
-import {
-    BulletWidget,
-    CheckboxWidget,
-    CodeBlockCopyWidget,
-    DetailsWidget,
-    FootnoteDefWidget,
-    FootnoteRefWidget,
-    HorizontalRuleWidget,
-    HtmlBlockWidget,
-    ImageWidget,
-    InlineHtmlImageWidget,
-    FontTextWidget,
-    MermaidWidget,
-} from './widgets.js';
+import { HtmlBlockWidget } from './htmlBlockWidget.js';
+import { ImageWidget, InlineHtmlImageWidget } from './mediaWidgets.js';
+import { MermaidWidget } from './mermaidWidget.js';
+import { BulletWidget, CheckboxWidget, CodeBlockCopyWidget, DetailsWidget, FootnoteDefWidget, FootnoteRefWidget, HorizontalRuleWidget, FontTextWidget } from './simpleWidgets.js';
 import { parseInlineImageTag } from './inlineEngine.js';
 
 /**

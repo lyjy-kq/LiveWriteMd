@@ -27,12 +27,7 @@
 
 import { Facet } from '@codemirror/state';
 import { EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
-import {
-    CELL_LAST_CLASS,
-    DELIMITER_CLASS,
-    ROW_CLASS,
-    ROW_LAST_CLASS,
-} from './tableRender.js';
+import { CELL_LAST_CLASS, DELIMITER_CLASS, ROW_CLASS, ROW_LAST_CLASS } from './tableTypes.js';
 import { runTableCommand, type TableCommand } from './tableCommands.js';
 
 /**

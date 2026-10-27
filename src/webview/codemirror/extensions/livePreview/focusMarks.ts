@@ -74,7 +74,7 @@ import {
     srcMarkActiveDeco,
     srcMarkDeco,
 } from './decorations.js';
-import { extractFencedCodeContent, extractFencedCodeLanguage } from './helpers.js';
+import { extractFencedCodeContent, extractFencedCodeLanguage } from './sourceParse.js';
 import {
     computeOpenScales,
     describeOpenElement,
@@ -86,13 +86,13 @@ import {
     createOpenWrapContext,
     openWrapEligible,
 } from './openWrap.js';
-import { isTableLikeBlock, splitRowText } from './tableRender.js';
+import { isTableLikeBlock, splitRowText } from './tableDetect.js';
 // 引用聚焦的悬挂缩进要叠在「正文与行号线距离」之上（.cm-line 的默认左内边距）
 import { settingsState } from '../../../settings/settingsState.js';
 import { isSetextBeforeFence } from './ranges.js';
 import { isForcedSourceRange } from './state.js';
 import { inlineMathFocusSignature } from './mathCollect.js';
-import { CodeBlockCopyWidget } from './widgets.js';
+import { CodeBlockCopyWidget } from './simpleWidgets.js';
 import type { ILineRange } from './types.js';
 
 /** Decoration.range 的返回类型，直接拿来当数组元素类型用。 */
