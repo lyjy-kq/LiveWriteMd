@@ -88,7 +88,7 @@ import {
 } from './openWrap.js';
 import { isTableLikeBlock, splitRowText } from './tableRender.js';
 // 引用聚焦的悬挂缩进要叠在「正文与行号线距离」之上（.cm-line 的默认左内边距）
-import { settingsState } from '../../../settingsState.js';
+import { settingsState } from '../../../settings/settingsState.js';
 import { isSetextBeforeFence } from './ranges.js';
 import { isForcedSourceRange } from './state.js';
 import { inlineMathFocusSignature } from './mathCollect.js';

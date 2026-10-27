@@ -10,7 +10,7 @@
  */
 
 import { MindMapApp } from './mindmap/mindmapApp.js';
-import { settingsState } from './settingsState.js';
+import { settingsState } from './settings/settingsState.js';
 import { MESSAGE_TYPES } from '../shared/messageTypes.js';
 import { getDefaultSettings, type SettingValue } from '../shared/settings/index.js';
 import type { MindMapRuntimeSettings } from './mindmap/types.js';

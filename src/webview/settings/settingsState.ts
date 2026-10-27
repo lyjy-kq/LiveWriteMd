@@ -17,7 +17,7 @@
 import {
     getDefaultSettings,
     type SettingValue,
-} from '../shared/settings/index.js';
+} from '../../shared/settings/index.js';
 
 /** 根元素（:root）。 */
 const root = document.documentElement;

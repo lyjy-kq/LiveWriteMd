@@ -39,7 +39,7 @@ import { EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
 import type { Tree } from '@lezer/common';
 import { isInlineFormatNode } from './openScale.js';
 import { isInCodeBlock } from './ranges.js';
-import { settingsState } from '../../../settingsState.js';
+import { settingsState } from '../../../settings/settingsState.js';
 import {
     getPendingForceRange,
     getPinnedForceRange,

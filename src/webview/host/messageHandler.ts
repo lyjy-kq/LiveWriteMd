@@ -37,11 +37,11 @@ import type {
     SearchHistoryState,
     SettingsChangeMessage,
     SystemFontsMessage,
-} from '../shared/types.js';
-import type { SettingValue } from '../shared/settings/index.js';
-import { MESSAGE_TYPES } from '../shared/messageTypes.js';
-import { debounce } from '../shared/utils.js';
-import { DEFAULT_CONFIG } from '../shared/types.js';
+} from '../../shared/types.js';
+import type { SettingValue } from '../../shared/settings/index.js';
+import { MESSAGE_TYPES } from '../../shared/messageTypes.js';
+import { debounce } from '../../shared/utils.js';
+import { DEFAULT_CONFIG } from '../../shared/types.js';
 
 // =============================================================================
 // Type Declarations

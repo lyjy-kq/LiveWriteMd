@@ -15,7 +15,7 @@ import type { SyntaxNode, Tree } from '@lezer/common';
 import { findFileLinkAtText, findFileLinkMatches } from '../../../../shared/link/fileLink.js';
 import { matchHeadingIndex } from '../../../../shared/link/internalLink.js';
 // 列表引导线横坐标要读「正文与行号线距离」设置（lineGutterGap）
-import { settingsState } from '../../../settingsState.js';
+import { settingsState } from '../../../settings/settingsState.js';
 
 import {
     blockquoteLevelDecos,

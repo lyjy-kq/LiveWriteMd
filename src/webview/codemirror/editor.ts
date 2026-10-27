@@ -68,7 +68,7 @@ import { createLivePreviewExtension } from './extensions/livePreview/index.js';
 import { tableRemeasureEffect } from './extensions/livePreview/state.js';
 import { gutterFold } from './extensions/gutterFold.js';
 import { listEnterExtension } from './extensions/listEnter.js';
-import { settingsState } from '../settingsState.js';
+import { settingsState } from '../settings/settingsState.js';
 import { searchMatchCount } from './extensions/searchMatchCount.js';
 // 搜索 / 替换面板：Ctrl+F / Ctrl+H 命令、中文词条与卡片式重设计
 import { searchPanelTheme, searchPanelKeymap, searchPanelPhrases } from './extensions/searchPanel.js';
