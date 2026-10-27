@@ -4,7 +4,7 @@
  * @module webview/codemirror/extensions/livePreview/frontmatterWidget
  */
 
-import { rememberWidgetHeight, widgetHeightCache } from './state.js';
+import { rememberWidgetHeight, widgetHeightCache } from '../state.js';
 import { EditorView, WidgetType } from '@codemirror/view';
 
 // =============================================================================

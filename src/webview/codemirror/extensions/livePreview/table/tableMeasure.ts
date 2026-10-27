@@ -5,8 +5,8 @@
  */
 
 import { columnWidthCache } from './tableColumns.js';
-import { renderInlineMarkdown } from './inlineEngine.js';
-import { getMeasureContext } from './textMeasure.js';
+import { renderInlineMarkdown } from '../inline/inlineEngine.js';
+import { getMeasureContext } from '../measure/textMeasure.js';
 import type { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 

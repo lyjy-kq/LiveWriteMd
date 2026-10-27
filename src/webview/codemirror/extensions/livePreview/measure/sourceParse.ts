@@ -9,7 +9,7 @@
 
 import type { EditorState } from '@codemirror/state';
 import type { SyntaxNode } from '@lezer/common';
-import type { FrontmatterProperty } from './types.js';
+import type { FrontmatterProperty } from '../types.js';
 
 export function escapeHtml(text: string): string {
     return text

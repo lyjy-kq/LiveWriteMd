@@ -4,12 +4,12 @@
  * @module webview/codemirror/extensions/livePreview/simpleWidgets
  */
 
-import { measureBulletYCorrection } from './bulletAlign.js';
-import { renderInlineMarkdown } from './inlineEngine.js';
-import { applySafeFontStyles } from './sourceParse.js';
-import { copyToClipboard, foldToggleEffect, foldedLinesOf, rememberWidgetHeight, widgetHeightCache } from './state.js';
-import { measureBulletWidth, measureTextIn } from './textMeasure.js';
-import type { MeasureEnv } from './textMeasure.js';
+import { measureBulletYCorrection } from '../measure/bulletAlign.js';
+import { renderInlineMarkdown } from '../inline/inlineEngine.js';
+import { applySafeFontStyles } from '../measure/sourceParse.js';
+import { copyToClipboard, foldToggleEffect, foldedLinesOf, rememberWidgetHeight, widgetHeightCache } from '../state.js';
+import { measureBulletWidth, measureTextIn } from '../measure/textMeasure.js';
+import type { MeasureEnv } from '../measure/textMeasure.js';
 import { Transaction } from '@codemirror/state';
 import { EditorView, WidgetType } from '@codemirror/view';
 

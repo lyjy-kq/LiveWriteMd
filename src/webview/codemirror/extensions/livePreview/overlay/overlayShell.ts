@@ -4,7 +4,7 @@
  * @module webview/codemirror/extensions/livePreview/overlayShell
  */
 
-import { copyToClipboard } from './state.js';
+import { copyToClipboard } from '../state.js';
 
 export interface ImagePreviewOverlayOptions {
     /** 原始图片地址，用于复制。 */

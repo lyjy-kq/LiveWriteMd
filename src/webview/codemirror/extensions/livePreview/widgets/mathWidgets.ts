@@ -13,7 +13,7 @@ import { EditorView, WidgetType } from '@codemirror/view';
 import katex from 'katex';
 // KaTeX 样式注入与字符串渲染统一放在 mathRender.ts，表格单元格那边的公式
 // 走的是同一个入口，样式只注入一次。
-import { ensureKatexCss } from './mathRender.js';
+import { ensureKatexCss } from '../math/mathRender.js';
 
 /**
  * 「探针色」：KaTeX 用它去画自己没认下来的部分（未定义命令、解析错误）。

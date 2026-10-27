@@ -28,9 +28,9 @@
  */
 
 import type { SyntaxNode } from '@lezer/common';
-import { tunedMarkdownLanguage } from '../markdownParser.js';
-import { renderMathToHtml } from './mathRender.js';
-import { resolvePreviewImageUrl } from './state.js';
+import { tunedMarkdownLanguage } from '../../markdownParser.js';
+import { renderMathToHtml } from '../math/mathRender.js';
+import { resolvePreviewImageUrl } from '../state.js';
 
 /** 共享 parser（tunedMarkdownLanguage 的 Setext 修正对单行行内解析无影响）。 */
 const parser = tunedMarkdownLanguage.parser;

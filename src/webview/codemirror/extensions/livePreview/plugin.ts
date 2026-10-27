@@ -28,21 +28,21 @@ import {
     italicMarkDeco,
     hiddenSourceDeco,
     strikethroughMarkDeco,
-} from './decorations.js';
-import { ensureTokenColorCss, liveWriteMdTokenHighlight } from './tokenColors.js';
-import { createCodeBlockIndentStyle, getCodeBlockIndentInfo } from './codeIndent.js';
-import { createListIndentStyle, detectIndentUnit, parseListMarkerLine, measureWhitespacePx, measureBaselineInset, measureIndentUnitPx } from './listIndent.js';
-import type { IndentGuide, ListMarkerInfo } from './listIndent.js';
-import { extractFencedCodeContent, extractFencedCodeLanguage, extractSafeFontStyles, splitMarkdownImageDestination } from './sourceParse.js';
-import { measureEnvFromElement, measureTextIn } from './textMeasure.js';
-import type { MeasureEnv } from './textMeasure.js';
+} from './decor/decorations.js';
+import { ensureTokenColorCss, liveWriteMdTokenHighlight } from './decor/tokenColors.js';
+import { createCodeBlockIndentStyle, getCodeBlockIndentInfo } from './measure/codeIndent.js';
+import { createListIndentStyle, detectIndentUnit, parseListMarkerLine, measureWhitespacePx, measureBaselineInset, measureIndentUnitPx } from './measure/listIndent.js';
+import type { IndentGuide, ListMarkerInfo } from './measure/listIndent.js';
+import { extractFencedCodeContent, extractFencedCodeLanguage, extractSafeFontStyles, splitMarkdownImageDestination } from './measure/sourceParse.js';
+import { measureEnvFromElement, measureTextIn } from './measure/textMeasure.js';
+import type { MeasureEnv } from './measure/textMeasure.js';
 import {
     collectFocusDecorations,
     computeFocusSignature,
     findActiveInlineNode,
     isInlineRenderable,
     isWithinActiveInline,
-} from './focusMarks.js';
+} from './inline/focusMarks.js';
 import {
     DEFAULT_MEDIA_WIDTH_PERCENT,
     formatMediaWidthAttribute,
@@ -61,14 +61,14 @@ import {
     collectCodeSpanMathDecorations,
     collectMathDecorations,
     collectMathSourceRanges,
-} from './mathCollect.js';
-import { scrollPreserverExtension } from './scrollHack.js';
-import { tableCellSelection } from './tableCellSelection.js';
-import { collectTableDecorations } from './tableDecorations.js';
-import { isTableLikeBlock } from './tableDetect.js';
-import { isInTableCell, tableCompositionHandler, tablePipeEscaper, tableSourceModeHandler } from './tableLocate.js';
-import { hasUnmeasuredTables, tableResizePlugin } from './tableWiring.js';
-import { autoPairBrackets } from './autoPair.js';
+} from './math/mathCollect.js';
+import { scrollPreserverExtension } from './interaction/scrollHack.js';
+import { tableCellSelection } from './table/tableCellSelection.js';
+import { collectTableDecorations } from './table/tableDecorations.js';
+import { isTableLikeBlock } from './table/tableDetect.js';
+import { isInTableCell, tableCompositionHandler, tablePipeEscaper, tableSourceModeHandler } from './table/tableLocate.js';
+import { hasUnmeasuredTables, tableResizePlugin } from './table/tableWiring.js';
+import { autoPairBrackets } from './inline/autoPair.js';
 import {
     exitPinnedForceIfOutside,
     exitSourceModeIfOutside,
@@ -85,15 +85,15 @@ import {
     sourceModeEffect,
     tableRemeasureEffect,
 } from './state.js';
-import { lineForcePlugin, nativeAnchoredMouseSelection } from './lineForce.js';
-import { tableHoverControls } from './tableHoverControls.js';
-import { createBaseThemeStyles } from './styles.js';
+import { lineForcePlugin, nativeAnchoredMouseSelection } from './interaction/lineForce.js';
+import { tableHoverControls } from './table/tableHoverControls.js';
+import { createBaseThemeStyles } from './decor/styles.js';
 import type { ILineRange } from './types.js';
-import { HtmlBlockWidget } from './htmlBlockWidget.js';
-import { ImageWidget, InlineHtmlImageWidget } from './mediaWidgets.js';
-import { MermaidWidget } from './mermaidWidget.js';
-import { BulletWidget, CheckboxWidget, CodeBlockCopyWidget, DetailsWidget, FootnoteDefWidget, FootnoteRefWidget, HorizontalRuleWidget, FontTextWidget } from './simpleWidgets.js';
-import { parseInlineImageTag } from './inlineEngine.js';
+import { HtmlBlockWidget } from './widgets/htmlBlockWidget.js';
+import { ImageWidget, InlineHtmlImageWidget } from './widgets/mediaWidgets.js';
+import { MermaidWidget } from './widgets/mermaidWidget.js';
+import { BulletWidget, CheckboxWidget, CodeBlockCopyWidget, DetailsWidget, FootnoteDefWidget, FootnoteRefWidget, HorizontalRuleWidget, FontTextWidget } from './widgets/simpleWidgets.js';
+import { parseInlineImageTag } from './inline/inlineEngine.js';
 
 /**
  * 使用源文本中的范围替换指定区间内容。

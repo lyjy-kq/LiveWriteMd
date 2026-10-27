@@ -28,7 +28,7 @@ import { tunedMarkdownLanguage } from './extensions/markdownParser.js';
 import { getSourceRange } from './extensions/livePreview/ranges.js';
 import { createThemeExtension } from './extensions/theme';
 import { markdownKeymap } from './extensions/keymap.js';
-import { codeBlockSelectionPlugin } from './extensions/livePreview/codeBlockSelection.js';
+import { codeBlockSelectionPlugin } from './extensions/livePreview/decor/codeBlockSelection.js';
 import { createLivePreviewExtension } from './extensions/livePreview/index.js';
 import { tableRemeasureEffect } from './extensions/livePreview/state.js';
 import { gutterFold } from './extensions/gutterFold.js';

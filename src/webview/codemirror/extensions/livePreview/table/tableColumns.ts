@@ -7,7 +7,7 @@
 import { tableCompositionHandler } from './tableLocate.js';
 import { CellMeasureRequest, measureCells } from './tableMeasure.js';
 import { CELL_OVERHEAD, MAX_SACRIFICE_LINES, MIN_COL_PX, MIN_EMPTY_COL_PX, TableBlock } from './tableTypes.js';
-import { getMeasureContext, measureText } from './textMeasure.js';
+import { getMeasureContext, measureText } from '../measure/textMeasure.js';
 import type { EditorState } from '@codemirror/state';
 
 /**

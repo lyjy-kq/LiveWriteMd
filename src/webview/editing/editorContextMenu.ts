@@ -5,7 +5,7 @@
  * 不处理大纲、标题栏或其它辅助 UI 的菜单逻辑。
  */
 
-import type { TableCommand } from '../codemirror/extensions/livePreview/tableCommands.js';
+import type { TableCommand } from '../codemirror/extensions/livePreview/table/tableCommands.js';
 
 // 编辑器模式联合类型集中定义在 shared/types，webview 与扩展共用一份。
 import type { EditorMode as SharedEditorMode } from '../../shared/types.js';

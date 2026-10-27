@@ -4,12 +4,12 @@
  * @module webview/codemirror/extensions/livePreview/mermaidWidget
  */
 
-import { DEFAULT_MEDIA_WIDTH_PERCENT } from './mediaWidth.js';
-import { renderMermaidSvg } from './mermaidRender.js';
-import { openMermaidPreviewOverlay } from './mermaidPreview.js';
-import { createPreviewActionGroup } from './overlayControls.js';
-import { copyMermaidRenderedImageSafely } from './overlayShell.js';
-import { mermaidHeightCache, mermaidSvgCache, sourceModeEffect } from './state.js';
+import { DEFAULT_MEDIA_WIDTH_PERCENT } from '../mediaWidth.js';
+import { renderMermaidSvg } from '../mermaidRender.js';
+import { openMermaidPreviewOverlay } from '../overlay/mermaidPreview.js';
+import { createPreviewActionGroup } from '../overlay/overlayControls.js';
+import { copyMermaidRenderedImageSafely } from '../overlay/overlayShell.js';
+import { mermaidHeightCache, mermaidSvgCache, sourceModeEffect } from '../state.js';
 import { EditorView, WidgetType } from '@codemirror/view';
 
 // =============================================================================

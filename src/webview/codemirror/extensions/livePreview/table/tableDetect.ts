@@ -6,7 +6,7 @@
 
 import { readRow } from './tableRead.js';
 import { TableBlock, TableLine } from './tableTypes.js';
-import { parseAlignments } from './sourceParse.js';
+import { parseAlignments } from '../measure/sourceParse.js';
 import type { EditorState } from '@codemirror/state';
 import type { SyntaxNode, Tree } from '@lezer/common';
 

@@ -4,7 +4,7 @@
  * @module webview/codemirror/extensions/livePreview/mermaidPreview
  */
 
-import { getMermaidTheme, mermaidInitialized, mermaidRenderPromises, mermaidSvgCache, rememberMermaidSvg, setMermaidInitialized } from './state.js';
+import { getMermaidTheme, mermaidInitialized, mermaidRenderPromises, mermaidSvgCache, rememberMermaidSvg, setMermaidInitialized } from '../state.js';
 import { MermaidPreviewOverlayOptions, closeActivePreviewOverlay, copyMermaidRenderedImageSafely, createOverlayShell, mountOverlayRoot, resolvePreviewTitle, setActiveOverlayRoot } from './overlayShell.js';
 import { attachPanZoom, createPreviewActionGroup, queuePreviewFit } from './overlayControls.js';
 

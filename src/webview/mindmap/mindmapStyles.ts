@@ -5,7 +5,7 @@
  * 这里只管本项目自定义节点内容 / 容器 / 后续编辑浮层。
  */
 
-import { ensureTokenColorCss } from '../codemirror/extensions/livePreview/tokenColors.js';
+import { ensureTokenColorCss } from '../codemirror/extensions/livePreview/decor/tokenColors.js';
 
 export const MINDMAP_CSS = `
 /* 导图挂载点填满 #editor-pane */

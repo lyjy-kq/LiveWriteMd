@@ -5,7 +5,7 @@
  */
 
 import { columnWidthsFor } from './tableColumns.js';
-import { sourceModeEffect, tableRemeasureEffect } from './state.js';
+import { sourceModeEffect, tableRemeasureEffect } from '../state.js';
 import { syntaxTree } from '@codemirror/language';
 import type { EditorState } from '@codemirror/state';
 import { Decoration, EditorView } from '@codemirror/view';

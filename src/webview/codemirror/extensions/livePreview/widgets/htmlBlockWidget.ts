@@ -4,7 +4,7 @@
  * @module webview/codemirror/extensions/livePreview/htmlBlockWidget
  */
 
-import { resolvePreviewImageUrl } from './state.js';
+import { resolvePreviewImageUrl } from '../state.js';
 import { EditorView, WidgetType } from '@codemirror/view';
 
 // =============================================================================

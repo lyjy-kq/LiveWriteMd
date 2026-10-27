@@ -37,15 +37,15 @@ import { syntaxTree } from '@codemirror/language';
 import { EditorSelection, type EditorState, type Line } from '@codemirror/state';
 import { EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
 import type { Tree } from '@lezer/common';
-import { isInlineFormatNode } from './openScale.js';
-import { isInCodeBlock } from './ranges.js';
-import { settingsState } from '../../../settings/settingsState.js';
+import { isInlineFormatNode } from '../inline/openScale.js';
+import { isInCodeBlock } from '../ranges.js';
+import { settingsState } from '../../../../settings/settingsState.js';
 import {
     getPendingForceRange,
     getPinnedForceRange,
     lineForceEffect,
-} from './state.js';
-import { tableBlockAt } from './tableCellSelection.js';
+} from '../state.js';
+import { tableBlockAt } from '../table/tableCellSelection.js';
 
 /**
  * 「有自己的点击语义、整行待选不能打扰」的 widget 元素选择器。

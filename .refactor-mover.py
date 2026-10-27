@@ -26,7 +26,12 @@ mv('interaction', ['scrollHack', 'lineForce'])
 for d in ['decor', 'inline', 'measure', 'table', 'widgets', 'overlay', 'math', 'interaction']:
     os.makedirs(LP + d, exist_ok=True)
 for old, new in MOVE.items():
-    subprocess.run(['git', 'mv', old, new], check=True)
+    if os.path.exists(old):
+        subprocess.run(['git', 'mv', old, new], check=True)
+    elif os.path.exists(new):
+        pass  # 已搬过（上次部分运行），跳过
+    else:
+        raise AssertionError('missing: ' + old)
 
 # 2. 反向映射：新路径 → 旧路径（用于解析该文件 import 的原始基准目录）
 inv = {v: k for k, v in MOVE.items()}

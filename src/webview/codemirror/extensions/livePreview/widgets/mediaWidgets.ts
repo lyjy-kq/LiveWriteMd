@@ -4,11 +4,11 @@
  * @module webview/codemirror/extensions/livePreview/mediaWidgets
  */
 
-import { renderInlineMarkdown } from './inlineEngine.js';
-import { DEFAULT_MEDIA_WIDTH_PERCENT, stepMediaWidthPercent } from './mediaWidth.js';
-import { openImagePreviewOverlay } from './imagePreview.js';
-import { createMediaResizeGroup, createPreviewActionGroup } from './overlayControls.js';
-import { resolvePreviewImageUrl, sourceModeEffect } from './state.js';
+import { renderInlineMarkdown } from '../inline/inlineEngine.js';
+import { DEFAULT_MEDIA_WIDTH_PERCENT, stepMediaWidthPercent } from '../mediaWidth.js';
+import { openImagePreviewOverlay } from '../overlay/imagePreview.js';
+import { createMediaResizeGroup, createPreviewActionGroup } from '../overlay/overlayControls.js';
+import { resolvePreviewImageUrl, sourceModeEffect } from '../state.js';
 import { EditorView, WidgetType } from '@codemirror/view';
 
 // =============================================================================

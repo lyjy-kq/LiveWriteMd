@@ -23,8 +23,8 @@
 
 import { setDocumentBaseUri } from './codemirror/extensions/livePreview/index.js';
 import { setPostMessage } from './codemirror/extensions/livePreview/state.js';
-import { cellAt } from './codemirror/extensions/livePreview/tableCellSelection.js';
-import { runTableCommand } from './codemirror/extensions/livePreview/tableCommands.js';
+import { cellAt } from './codemirror/extensions/livePreview/table/tableCellSelection.js';
+import { runTableCommand } from './codemirror/extensions/livePreview/table/tableCommands.js';
 import { WebviewMessageHandler } from './host/messageHandler.js';
 import { OutlinePanel } from './outline/outlinePanel.js';
 import { EditorContextMenu, type EditorMode } from './editing/editorContextMenu.js';

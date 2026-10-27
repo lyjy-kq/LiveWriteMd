@@ -15,10 +15,10 @@ import {
     widgetHeightCache,
     mermaidRenderPromises,
 } from './codemirror/extensions/livePreview/state.js';
-import { tableCacheStats } from './codemirror/extensions/livePreview/tableMeasure.js';
-import { openScaleCacheSize } from './codemirror/extensions/livePreview/openScale.js';
-import { openWrapCacheStats } from './codemirror/extensions/livePreview/openWrap.js';
-import { mathScaleCacheSize } from './codemirror/extensions/livePreview/mathWidgets.js';
+import { tableCacheStats } from './codemirror/extensions/livePreview/table/tableMeasure.js';
+import { openScaleCacheSize } from './codemirror/extensions/livePreview/inline/openScale.js';
+import { openWrapCacheStats } from './codemirror/extensions/livePreview/inline/openWrap.js';
+import { mathScaleCacheSize } from './codemirror/extensions/livePreview/widgets/mathWidgets.js';
 
 /** 汇总当前 webview 的内存相关计数。 */
 export function collectMemoryStats(opts: {

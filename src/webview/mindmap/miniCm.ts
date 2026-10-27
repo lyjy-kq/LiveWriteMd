@@ -38,13 +38,13 @@ import {
     createLivePreviewDisplayExtension,
     livePreviewEditAddons,
 } from '../codemirror/extensions/livePreview/plugin.js';
-import { codeBlockSelectionPlugin } from '../codemirror/extensions/livePreview/codeBlockSelection.js';
-import { tableEditBridge } from '../codemirror/extensions/livePreview/tableHoverControls.js';
-import { runTableCommand } from '../codemirror/extensions/livePreview/tableCommands.js';
+import { codeBlockSelectionPlugin } from '../codemirror/extensions/livePreview/decor/codeBlockSelection.js';
+import { tableEditBridge } from '../codemirror/extensions/livePreview/table/tableHoverControls.js';
+import { runTableCommand } from '../codemirror/extensions/livePreview/table/tableCommands.js';
 import {
     ensureTokenColorCss,
     liveWriteMdTokenHighlight,
-} from '../codemirror/extensions/livePreview/tokenColors.js';
+} from '../codemirror/extensions/livePreview/decor/tokenColors.js';
 import type { ThemeType } from '../../shared/types.js';
 
 /**

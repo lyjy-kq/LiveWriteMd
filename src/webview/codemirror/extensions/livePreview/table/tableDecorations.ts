@@ -7,8 +7,8 @@
 import { columnWidthsFor } from './tableColumns.js';
 import { CELL_CLASS, CELL_FIRST_CLASS, CELL_LAST_CLASS, CELL_SELECTED_CLASS, DELIMITER_CLASS, GAP_CLASS, HEADER_CLASS, MIN_COL_PX, ROW_CLASS, ROW_LAST_CLASS, STRIPE_CLASS } from './tableTypes.js';
 import { availableWidth } from './tableWiring.js';
-import { HorizontalRuleWidget } from './simpleWidgets.js';
-import { isInSourceMode } from './state.js';
+import { HorizontalRuleWidget } from '../widgets/simpleWidgets.js';
+import { isInSourceMode } from '../state.js';
 import type { EditorState } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType } from '@codemirror/view';
 import type { Tree } from '@lezer/common';

@@ -35,10 +35,10 @@ import { WrapSim } from './wrapSim.js';
 import type { EditorState } from '@codemirror/state';
 import type { SyntaxNode, Tree } from '@lezer/common';
 import { EditorView } from '@codemirror/view';
-import { detectIndentUnit, getListIndent, measureIndentUnitPx } from './listIndent.js';
-import { getMeasureContext } from './textMeasure.js';
-import { fontSpec } from './layoutMetrics.js';
-import { availableTableWidth } from './tableWiring.js';
+import { detectIndentUnit, getListIndent, measureIndentUnitPx } from '../measure/listIndent.js';
+import { getMeasureContext } from '../measure/textMeasure.js';
+import { fontSpec } from '../decor/layoutMetrics.js';
+import { availableTableWidth } from '../table/tableWiring.js';
 import {
     describeOpenElement,
     INLINE_CODE_FONT_EM,

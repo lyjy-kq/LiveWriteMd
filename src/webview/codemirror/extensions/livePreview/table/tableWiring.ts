@@ -6,7 +6,7 @@
 
 import { columnWidthCache, columnWidthsFor, distributeColumns } from './tableColumns.js';
 import { TableBlock } from './tableTypes.js';
-import { tableRemeasureEffect } from './state.js';
+import { tableRemeasureEffect } from '../state.js';
 import type { EditorState } from '@codemirror/state';
 import { EditorView, ViewPlugin } from '@codemirror/view';
 

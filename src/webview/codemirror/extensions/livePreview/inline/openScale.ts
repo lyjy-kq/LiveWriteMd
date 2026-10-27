@@ -23,8 +23,8 @@
 
 import type { EditorState } from '@codemirror/state';
 import type { SyntaxNode } from '@lezer/common';
-import { getMeasureContext } from './textMeasure.js';
-import { fontSpec, MeasureBatch } from './layoutMetrics.js';
+import { getMeasureContext } from '../measure/textMeasure.js';
+import { fontSpec, MeasureBatch } from '../decor/layoutMetrics.js';
 
 /**
  * 行内格式节点 → 标记子节点名、渲染态字重、渲染态额外宽度、以及「是不是行内代码」。

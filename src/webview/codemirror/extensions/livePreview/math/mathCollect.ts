@@ -20,11 +20,11 @@ import { Decoration } from '@codemirror/view';
 import type { EditorState } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
 import type { Tree } from '@lezer/common';
-import { hiddenSourceDeco } from './decorations.js';
-import { windowLines } from './ranges.js';
-import { isForcedSourceRange } from './state.js';
-import type { ILineRange } from './types.js';
-import { BlockMathWidget, InlineMathWidget } from './mathWidgets.js';
+import { hiddenSourceDeco } from '../decor/decorations.js';
+import { windowLines } from '../ranges.js';
+import { isForcedSourceRange } from '../state.js';
+import type { ILineRange } from '../types.js';
+import { BlockMathWidget, InlineMathWidget } from '../widgets/mathWidgets.js';
 
 /** 收集器统一往这个数组里塞装饰，类型和 plugin.ts 里的一致。 */
 type DecoArray = Array<ReturnType<Decoration['range']>>;

@@ -17,7 +17,7 @@ import {
     getPinnedForceRange,
     getSourceModeRange,
 } from './state.js';
-import { isTableLikeBlock } from './tableDetect.js';
+import { isTableLikeBlock } from './table/tableDetect.js';
 
 /**
  * 取当前「该显示源码」的区间。

@@ -4,7 +4,7 @@
  * @module webview/codemirror/extensions/livePreview/overlayControls
  */
 
-import { canStepMediaWidth } from './mediaWidth.js';
+import { canStepMediaWidth } from '../mediaWidth.js';
 import { PreviewActionOptions, flashButtonState, showPreviewActionStatus } from './overlayShell.js';
 
 function createPreviewActionButton(options: PreviewActionOptions): HTMLButtonElement {

@@ -44,7 +44,7 @@ import { getSourceRange } from './extensions/livePreview/ranges.js';
 
 import { createThemeExtension } from './extensions/theme';
 import { markdownKeymap } from './extensions/keymap.js';
-import { codeBlockSelectionPlugin } from './extensions/livePreview/codeBlockSelection.js';
+import { codeBlockSelectionPlugin } from './extensions/livePreview/decor/codeBlockSelection.js';
 import { createLivePreviewExtension } from './extensions/livePreview/index.js';
 // lineGutterGap 设置变化时，列表引导线装饰要按新横坐标重建
 import { tableRemeasureEffect } from './extensions/livePreview/state.js';
