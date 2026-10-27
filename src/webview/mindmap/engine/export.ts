@@ -197,3 +197,143 @@ function bytesToBase64(bytes: Uint8Array): string {
     }
     return btoa(binary);
 }
+
+
+// =============================================================================
+// SVG 导出构建（从 canvas.ts 拆出，原 MapCanvas.buildExportSvg 方法）
+// =============================================================================
+
+
+// ==================================================================
+// 导出
+// ==================================================================
+
+/**
+ * 生成导出用 SVG 文本。
+ *
+ * 步骤：
+ * 1. 临时关掉虚拟化，把全部可见节点挂进 DOM 并换成真实显示实例
+ *    （占位的纯文本导出去没有意义）；
+ * 2. 把世界层整体克隆进一个 foreignObject；
+ * 3. 把页面上全部 <style> 与容器上的 CSS 变量一起塞进去 —— 我们的
+ *    .lwm-* 样式与 token 颜色都不是内联的，不注入就会全丢；
+ * 4. 恢复虚拟化，按视口重新裁剪。
+ *
+ * @returns SVG 文本与逻辑尺寸
+ */
+export function buildExportSvg(c: MapCanvas) : { svg: string; width: number; height: number } {
+    const fallback = {
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>',
+        width: 1,
+        height: 1,
+    };
+    if (!c.root) return fallback;
+
+    const wasVirtual = c.virtualization;
+    // 导出中途可能抛错（克隆/序列化）；用 finally 保证临时关闭的
+    // 虚拟化一定恢复，否则画布会永远全量挂载、内存回落不了。
+    try {
+    c.virtualization = false;
+    walkVisible(c.root, (node) => {
+        c.ensureWrapper(node);
+        // 导出前把占位换成真实显示（上限 500 个，超大文档保留占位保底）
+        if (!node.display && c.displays.size < 500) {
+            c.createDisplay(node);
+            c.measureNode(node);
+        }
+        c.mountNode(node);
+    });
+    c.relayout();
+    c.updateViewport();
+
+    const bounds = computeBounds(c.root);
+    const padding = 40;
+    const width = Math.max(1, Math.ceil(bounds.width + padding * 2));
+    const height = Math.max(1, Math.ceil(bounds.height + padding * 2));
+
+    const clone = c.worldEl.cloneNode(true) as HTMLDivElement;
+    clone.style.transform = `translate3d(${padding - bounds.left}px, ${
+        padding - bounds.top
+    }px, 0)`;
+    // 缩放层带着运行时的 scale（屏幕缩放），导出必须还原成世界坐标：
+    // 导出图由外层 wrapper 决定尺寸，内容应保持 1:1。
+    clone.querySelector<HTMLElement>('.lwm-scaler')?.style.setProperty(
+        'transform',
+        ''
+    );
+    // 交互用的浮层不参与导出
+    clone
+        .querySelectorAll('.lwm-expand-btn, .lwm-drop-line')
+        .forEach((el) => el.remove());
+    // CodeMirror 的 .cm-widgetBuffer 是无 src 的布局占位 <img>：
+    // SVG 作为 <img> 解码时，foreignObject 里的 <img> 会让画布被 taint，
+    // 导致 PNG/PDF 导出抛 SecurityError。它们只是空占位，删掉不影响排版。
+    clone.querySelectorAll('img.cm-widgetBuffer').forEach((el) => el.remove());
+    // 视口裁剪时留下 display:none 的连线/节点一律恢复显示（此时都已挂载）
+    clone.querySelectorAll<HTMLElement>('.lwm-links path').forEach((path) => {
+        path.style.display = '';
+    });
+    // 连线层是嵌套 <svg>：克隆体已经按当前包围盒给了尺寸，但导出图
+    // 额外加了 padding 且可能被平移，这里统一放大到整张导出图的范围，
+    // 并显式允许溢出，避免 foreignObject 把超出视口的线裁掉。
+    const linksClone = clone.querySelector('.lwm-links') as SVGSVGElement | null;
+    if (linksClone) {
+        linksClone.setAttribute('width', String(width));
+        linksClone.setAttribute('height', String(height));
+        linksClone.style.overflow = 'visible';
+    }
+
+    // 页面全部样式（含 CodeMirror 注入的 StyleModule 与 token 色表）
+    const styleText = Array.from(document.querySelectorAll('style'))
+        .map((el) => el.textContent ?? '')
+        .join('\n');
+
+    // 容器上的 CSS 变量逐条抄进导出根节点：var(--vscode-*) / 字体缩放
+    // 这些都定义在 webview 根/容器上，克隆体自己继承不到
+    const computed = getComputedStyle(c.container);
+    let vars = '';
+    for (let i = 0; i < computed.length; i += 1) {
+        const name = computed[i];
+        if (!name.startsWith('--')) continue;
+        vars += `${name}:${computed.getPropertyValue(name)};`;
+    }
+    const background =
+        computed.getPropertyValue('--vscode-editor-background').trim() || '#1e1e1e';
+
+    const wrapper = document.createElementNS('http://www.w3.org/1999/xhtml', 'div');
+    wrapper.setAttribute(
+        'style',
+        `position:relative;width:${width}px;height:${height}px;overflow:hidden;` +
+            `background:${background};${vars}`
+    );
+    const styleEl = document.createElement('style');
+    styleEl.textContent = styleText;
+    wrapper.appendChild(styleEl);
+    wrapper.appendChild(clone);
+
+    const svgRoot = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svgRoot.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    svgRoot.setAttribute('width', String(width));
+    svgRoot.setAttribute('height', String(height));
+    svgRoot.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    const foreignObject = document.createElementNS(
+        'http://www.w3.org/2000/svg',
+        'foreignObject'
+    );
+    foreignObject.setAttribute('x', '0');
+    foreignObject.setAttribute('y', '0');
+    foreignObject.setAttribute('width', String(width));
+    foreignObject.setAttribute('height', String(height));
+    foreignObject.appendChild(wrapper);
+    svgRoot.appendChild(foreignObject);
+
+    const svg = new XMLSerializer().serializeToString(svgRoot);
+
+    return { svg, width, height };
+    } finally {
+        // 恢复性能模式：按视口重新裁剪，顺带把导出时多创建的实例收进 LRU
+        c.virtualization = wasVirtual;
+        if (wasVirtual) c.updateViewport();
+        c.enforceDisplayCap();
+    }
+}
