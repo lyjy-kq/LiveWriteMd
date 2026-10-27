@@ -36,6 +36,7 @@ import { tunedMarkdownLanguage } from './extensions/markdownParser.js';
 import { LanguageDescription, syntaxTree } from '@codemirror/language';
 // 代码块语言表拆到同目录 codeLanguages.ts；re-export 保持调用方不变
 import { codeLanguages } from './codeLanguages.js';
+import { createEditorView } from './editorCreate.js';
 export { codeLanguages } from './codeLanguages.js';
 // 调试句柄用（installDebugHandle）：聚焦区间诊断
 import { getSourceRange } from './extensions/livePreview/ranges.js';
@@ -67,24 +68,6 @@ import type { LiveWriteMdEditorSettings } from '../../shared/types.js';
 type ContentChangeCallback = (content: string) => void;
 
 /**
- * 检测 VS Code 当前主题类型。
- *
- * VS Code 会在 webview 的 <body> 上自动挂 `vscode-light` / `vscode-dark` /
- * `vscode-high-contrast` / `vscode-high-contrast-light` 类。
- * 默认按深色兜底（与 VS Code 默认主题一致）。
- */
-function detectVsCodeTheme(): 'light' | 'dark' {
-    const body = document.body;
-    if (
-        body.classList.contains('vscode-light') ||
-        body.classList.contains('vscode-high-contrast-light')
-    ) {
-        return 'light';
-    }
-    return 'dark';
-}
-
-/**
  * 光标行变化回调。
  *
  * @param lineNumber - 当前光标所在行号，从 1 开始。
@@ -100,18 +83,6 @@ type SelectionLineChangeCallback = (lineNumber: number) => void;
  */
 type ViewportLineChangeCallback = (lineNumber: number) => void;
 
-
-/**
- * Copy text to clipboard via Extension's vscode.env.clipboard API.
- * This is the most reliable method in VS Code webviews.
- */
-function copyTextToClipboard(text: string): void {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const vscodeApi = (window as any).__vscodeApi;
-    if (vscodeApi) {
-        vscodeApi.postMessage({ type: 'copyToClipboard', text });
-    }
-}
 
 /**
  * Error thrown when editor operations are attempted before initialization.
@@ -154,16 +125,16 @@ class InvalidContainerError extends Error {
  */
 export class CodeMirrorEditor {
     /** The container element where the editor is mounted */
-    private readonly container: HTMLElement;
+    public readonly container: HTMLElement;
 
     /** The CodeMirror EditorView instance */
-    private view: EditorView | null = null;
+    public view: EditorView | null = null;
 
     /** Callback for content changes */
-    private onChangeCallback: ContentChangeCallback | undefined;
+    public onChangeCallback: ContentChangeCallback | undefined;
 
     /** Callback for active line changes. */
-    private onSelectionChangeCallback: SelectionLineChangeCallback | undefined;
+    public onSelectionChangeCallback: SelectionLineChangeCallback | undefined;
 
     /** 视口阅读行变化回调，用于正文滚动驱动外部大纲关注点。 */
     private onViewportLineChangeCallback: ViewportLineChangeCallback | undefined;
@@ -175,34 +146,34 @@ export class CodeMirrorEditor {
     private lastReportedViewportLine: number | null = null;
 
     /** Flag to suppress onChange during programmatic updates */
-    private suppressOnChange: boolean = false;
+    public suppressOnChange: boolean = false;
 
     /** Compartment for dynamic editable reconfiguration */
-    private editableCompartment = new Compartment();
+    public editableCompartment = new Compartment();
 
     /** Compartment for dynamic live preview reconfiguration */
-    private livePreviewCompartment = new Compartment();
+    public livePreviewCompartment = new Compartment();
 
     /** Compartment for dynamic theme (light/dark) reconfiguration */
-    private themeCompartment = new Compartment();
+    public themeCompartment = new Compartment();
 
     /** Observer for VS Code theme kind changes */
-    private themeObserver: MutationObserver | null = null;
+    public themeObserver: MutationObserver | null = null;
 
     /** Compartment for dynamic line wrapping reconfiguration */
-    private lineWrappingCompartment = new Compartment();
+    public lineWrappingCompartment = new Compartment();
 
     /** Compartment for dynamic line numbers reconfiguration */
-    private lineNumbersCompartment = new Compartment();
+    public lineNumbersCompartment = new Compartment();
 
     /** Compartment for active-line highlight toggle */
-    private activeLineCompartment = new Compartment();
+    public activeLineCompartment = new Compartment();
 
     /** Compartment for whitespace marker toggle */
-    private whitespaceCompartment = new Compartment();
+    public whitespaceCompartment = new Compartment();
 
     /** External paste handler for image paste support (DES-API-003) */
-    private pasteHandler: ((event: ClipboardEvent, view: EditorView) => boolean) | null = null;
+    public pasteHandler: ((event: ClipboardEvent, view: EditorView) => boolean) | null = null;
     /** 字体缩放变化回调，用于把 Ctrl+滚轮的结果同步回扩展侧配置。 */
     private fontScaleChangeHandler: ((fontScale: number) => void) | null = null;
 
@@ -255,7 +226,7 @@ export class CodeMirrorEditor {
      * @param deltaY - 滚轮的垂直位移，负数表示放大，正数表示缩小
      * @returns void
      */
-    private adjustFontScale(deltaY: number): void {
+    public adjustFontScale(deltaY: number): void {
         const previousScale = this.fontScale;
         const direction = deltaY < 0 ? 1 : -1;
         const nextScale = this.fontScale + direction * CodeMirrorEditor.FONT_SCALE_STEP;
@@ -275,7 +246,7 @@ export class CodeMirrorEditor {
      * @param view - 当前 CodeMirror 编辑器视图。
      * @returns void
      */
-    private scheduleViewportLineReport(view: EditorView): void {
+    public scheduleViewportLineReport(view: EditorView): void {
         if (!this.onViewportLineChangeCallback) {
             return;
         }
@@ -296,7 +267,7 @@ export class CodeMirrorEditor {
      * @param view - 当前 CodeMirror 编辑器视图。
      * @returns void
      */
-    private reportViewportLine(view: EditorView): void {
+    public reportViewportLine(view: EditorView): void {
         if (!this.onViewportLineChangeCallback) {
             return;
         }
@@ -312,268 +283,21 @@ export class CodeMirrorEditor {
     }
 
     /**
-     * Creates and initializes the CodeMirror EditorView.
+     * Destroys the editor and cleans up resources.
      *
-     * Sets up the editor with Markdown language support, history (undo/redo),
-     * and default keybindings.
+     * Safe to call multiple times or before create().
+     */
+    /**
+     * Create and initialize the CodeMirror editor.
+     * 实现已拆到 editorCreate.ts（扩展装配太长，独立成文件），这里只做转发。
      *
      * @param initialContent - Optional initial content to populate the editor
      * @returns Promise that resolves when the editor is ready
      */
     create(initialContent: string = ''): Promise<void> {
-        // If already created, destroy first
-        if (this.view) {
-            this.destroy();
-        }
-
-        // Build extensions list
-        const extensions: Extension[] = [
-            // Editable state (dynamically reconfigurable for viewer mode)
-            this.editableCompartment.of(EditorView.editable.of(true)),
-
-            // Line wrapping (dynamically reconfigurable via settings)
-            this.lineWrappingCompartment.of(EditorView.lineWrapping),
-
-            // Visual rendering: active-line / whitespace are settings-driven compartments
-            this.activeLineCompartment.of(
-                settingsState.getBoolean('highlightActiveLine') ? highlightActiveLine() : []
-            ),
-            this.whitespaceCompartment.of([
-                highlightSpecialChars(),
-                settingsState.getBoolean('highlightWhitespace') ? highlightWhitespace() : [],
-            ]),
-            this.lineNumbersCompartment.of([lineNumbers(), gutterFold]),
-
-            // Multiple selections / cursors (required for rectangular selection)
-            EditorState.allowMultipleSelections.of(true),
-            drawSelection(),
-            // Selection highlight via mark decorations (all modes).
-            // Hides drawSelection's selectionLayer and uses inline marks instead,
-            // ensuring selection is always visible above element backgrounds.
-            codeBlockSelectionPlugin,
-
-            // Rectangular selection (Alt+Shift+Drag, matching VS Code behavior)
-            rectangularSelection({ eventFilter: (e) => e.altKey && e.shiftKey }),
-            crosshairCursor({ key: 'Alt' }),
-
-            // Fast scroll (Alt+Wheel) - 5x speed, matching VS Code behavior
-            EditorView.domEventHandlers({
-                wheel: (event: WheelEvent, view: EditorView) => {
-                    if (event.ctrlKey || event.metaKey) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        this.adjustFontScale(event.deltaY);
-                        return true;
-                    }
-                    if (event.altKey) {
-                        event.preventDefault();
-                        view.scrollDOM.scrollTop += event.deltaY * 5;
-                        return true;
-                    }
-                    return false;
-                },
-                scroll: (_event: Event, view: EditorView) => {
-                    this.scheduleViewportLineReport(view);
-                    return false;
-                },
-                // Focus support for Viewer Mode (editable: false)
-                // When contenteditable=false, clicking doesn't grant focus to the editor.
-                // VS Code requires webview focus to activate the editor tab.
-                // 但搜索面板和表单控件需要保留自身焦点，不能被正文编辑器强行接管。
-                mousedown(event: MouseEvent, view: EditorView) {
-                    if (!view.state.facet(EditorView.editable)) {
-                        const target = event.target;
-                        if (
-                            target instanceof Element &&
-                            target.closest(
-                                '.cm-search, input, textarea, select, button, [contenteditable="true"]'
-                            )
-                        ) {
-                            return false;
-                        }
-
-                        if (!view.dom.hasAttribute('tabindex')) {
-                            view.dom.setAttribute('tabindex', '0');
-                        }
-                        view.dom.focus({ preventScroll: true });
-                    }
-                    return false;
-                },
-                // Ctrl+C / Cmd+C copy support for Viewer Mode (editable: false)
-                // Table cell copy is handled by the global capture-phase handler in main.ts.
-                // This handler covers non-table text copy in Viewer mode, where the browser's
-                // native copy doesn't fire because contenteditable=false.
-                keydown(event: KeyboardEvent, view: EditorView) {
-                    if ((event.ctrlKey || event.metaKey) && event.key === 'c' && !event.shiftKey) {
-                        if (!view.state.facet(EditorView.editable)) {
-                            const { from, to } = view.state.selection.main;
-                            if (from !== to) {
-                                const selectedText = view.state.sliceDoc(from, to);
-                                event.preventDefault();
-                                copyTextToClipboard(selectedText);
-                                return true;
-                            }
-                        }
-                    }
-                    return false;
-                },
-            }),
-
-            // History support (undo/redo)
-            history(),
-
-            // Search support (Ctrl+F find / Ctrl+H replace) with a top-anchored panel.
-            search({ top: true }),
-            searchMatchCount,
-            // 搜索面板的卡片式视觉主题；中文文案通过 EditorState.phrases 注入。
-            // （快捷键在下面的 keymap.of 里，需排在 searchKeymap 前面优先命中。）
-            searchPanelTheme,
-            EditorState.phrases.of(searchPanelPhrases),
-
-            // Keybindings
-            listEnterExtension,
-            keymap.of([
-                indentWithTab,
-                ...markdownKeymap,
-                ...searchPanelKeymap,
-                ...searchKeymap,
-                ...defaultKeymap,
-                ...historyKeymap,
-            ]),
-
-            // Markdown language support with code block syntax highlighting
-            markdown({
-                base: tunedMarkdownLanguage,
-                codeLanguages,
-                addKeymap: true,
-            }),
-
-            // Theme extension (light/dark, follows VS Code theme kind)
-            this.themeCompartment.of(
-                createThemeExtension(detectVsCodeTheme())
-            ),
-
-            // Live Preview (Obsidian-style Markdown rendering, dynamically reconfigurable)
-            this.livePreviewCompartment.of(createLivePreviewExtension()),
-
-            // Content change listener
-            // Skip during IME composition — compositionend handler below
-            // takes care of notifying after composition finishes.
-            EditorView.updateListener.of((update) => {
-                if (update.docChanged) {
-                    console.debug(
-                        `[LiveWriteMD] updateListener: docChanged=true suppressOnChange=${this.suppressOnChange} composing=${update.view.composing} hasCallback=${!!this.onChangeCallback}`
-                    );
-                }
-                if (
-                    update.docChanged &&
-                    !this.suppressOnChange &&
-                    !update.view.composing &&
-                    this.onChangeCallback
-                ) {
-                    console.debug(
-                        `[LiveWriteMD] updateListener: calling onChangeCallback (docLen=${update.state.doc.length})`
-                    );
-                    this.onChangeCallback(update.state.doc.toString());
-                }
-
-                if ((update.docChanged || update.selectionSet) && this.onSelectionChangeCallback) {
-                    const activeLine = update.state.doc.lineAt(update.state.selection.main.head).number;
-                    this.onSelectionChangeCallback(activeLine);
-                }
-
-                if (update.docChanged || update.viewportChanged) {
-                    this.scheduleViewportLineReport(update.view);
-                }
-            }),
-
-            // IME composition end handler
-            // CM6 applies doc changes during composition but the updateListener
-            // above blocks them (composing=true). After compositionend, CM6 does
-            // NOT fire another updateListener (no state change), so we catch it
-            // here at the DOM level and send the final content.
-            EditorView.domEventHandlers({
-                compositionend: (_event: CompositionEvent, view: EditorView) => {
-                    setTimeout(() => {
-                        if (!this.suppressOnChange && this.onChangeCallback && !view.composing) {
-                            this.onChangeCallback(view.state.doc.toString());
-                        }
-                    }, 20);
-                    return false;
-                },
-                paste: (event: ClipboardEvent, view: EditorView) => {
-                    if (this.pasteHandler) {
-                        return this.pasteHandler(event, view);
-                    }
-                    return false;
-                },
-            }),
-        ];
-
-        // Create EditorState
-        const state = EditorState.create({
-            doc: initialContent,
-            extensions,
-        });
-
-        // Create EditorView and mount to container
-        this.view = new EditorView({
-            state,
-            parent: this.container,
-        });
-
-        // 初始化字号缩放变量，确保编辑器正文从默认倍率开始渲染。
-        this.applyFontScale();
-        this.reportViewportLine(this.view);
-        this.installDebugHandle();
-
-        // 监听 VS Code 主题切换：body 类变化时重配主题（深浅色同步切换）
-        this.startThemeObserver();
-
-        return Promise.resolve();
+        return createEditorView(this, initialContent);
     }
 
-    /**
-     * 调试句柄：常驻挂到 window.__lwmDebug（不挂设置开关 —— 开关的传播链
-     * 本身就是故障点，排查时多一个变量）。句柄是惰性的：不被调用就零开销。
-     *
-     * buildStamp 用于一眼分辨 webview 跑的是不是最新构建。
-     * 供 Webview 开发者工具控制台抓现场：视图 / 语法树 / 聚焦区间
-     * （装饰、聚焦问题在探针环境复现不了时用它定位）。
-     */
-    private installDebugHandle(): void {
-        (window as unknown as Record<string, unknown>).__lwmDebug = {
-            buildStamp: '2026-10-26T2100+quote-fix',
-            view: this.view,
-            syntaxTree: () => syntaxTree(this.view!.state),
-            getSourceRange: () => getSourceRange(this.view!.state),
-        };
-    }
-
-    /** 监听 document.body 上的 VS Code 主题类变化，动态切换编辑器主题。 */
-    private startThemeObserver(): void {
-        let current = detectVsCodeTheme();
-        this.themeObserver = new MutationObserver(() => {
-            const next = detectVsCodeTheme();
-            if (next === current || !this.view) return;
-            current = next;
-            this.view.dispatch({
-                effects: this.themeCompartment.reconfigure(
-                    createThemeExtension(next)
-                ),
-            });
-        });
-        this.themeObserver.observe(document.body, {
-            attributes: true,
-            attributeFilter: ['class'],
-        });
-    }
-
-    /**
-     * Destroys the editor and cleans up resources.
-     *
-     * Safe to call multiple times or before create().
-     */
     destroy(): void {
         if (this.themeObserver) {
             this.themeObserver.disconnect();
