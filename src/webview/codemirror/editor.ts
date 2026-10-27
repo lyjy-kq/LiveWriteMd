@@ -73,8 +73,17 @@ import { searchMatchCount } from './extensions/searchMatchCount.js';
 // 搜索 / 替换面板：Ctrl+F / Ctrl+H 命令、中文词条与卡片式重设计
 import { searchPanelTheme, searchPanelKeymap, searchPanelPhrases } from './extensions/searchPanel.js';
 
-import type { ContentChangeCallback } from './types';
 import type { LiveWriteMdEditorSettings } from '../../shared/types.js';
+
+/**
+ * 文档内容变化回调。
+ *
+ * 原本从 './types' 导入，但该模块并不存在（幽灵 import，esbuild 对 type-only
+ * import 不做解析所以一直没暴露）。签名按实际调用点确定为全文字符串单参。
+ *
+ * @param content - 变化后的 Markdown 全文。
+ */
+type ContentChangeCallback = (content: string) => void;
 
 /**
  * 检测 VS Code 当前主题类型。
