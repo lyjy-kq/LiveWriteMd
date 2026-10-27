@@ -14,12 +14,12 @@
 
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { MESSAGE_TYPES } from '../shared/messageTypes.js';
+import { MESSAGE_TYPES } from '../../shared/messageTypes.js';
 import { ConfigManager } from './configManager.js';
 import { getMindmapPanelHtml } from './webviewContent.js';
 import { getThemeType } from './editorProvider.js';
-import { saveMindmapExport } from './mindmapExport.js';
-import { Logger } from './logger.js';
+import { saveMindmapExport } from '../export/mindmapExport.js';
+import { Logger } from '../logger.js';
 
 /** 面板 viewType（普通 WebviewPanel，无需在 package.json 注册）。 */
 const PANEL_VIEW_TYPE = 'liveWriteMd.mindmapPanel';

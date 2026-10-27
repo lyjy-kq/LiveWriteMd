@@ -19,13 +19,13 @@
 
 import * as vscode from 'vscode';
 
-import { LiveWriteMdEditorProvider, VIEW_TYPE } from './editorProvider.js';
-import { MindmapPanelManager } from './mindmapPanelManager.js';
+import { LiveWriteMdEditorProvider, VIEW_TYPE } from './editor/editorProvider.js';
+import { MindmapPanelManager } from './editor/mindmapPanelManager.js';
 import { Logger } from './logger.js';
 import { BUILD_STAMP } from '../shared/buildStamp.js';
-import { ConfigManager } from './configManager.js';
-import { exportMarkdownAsHtml } from './htmlExporter.js';
-import { exportMarkdownAsPdf } from './pdfExporter.js';
+import { ConfigManager } from './editor/configManager.js';
+import { exportMarkdownAsHtml } from './export/htmlExporter.js';
+import { exportMarkdownAsPdf } from './export/pdfExporter.js';
 
 // =============================================================================
 // Constants

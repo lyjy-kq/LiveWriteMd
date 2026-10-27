@@ -7,7 +7,7 @@
  */
 
 import * as vscode from 'vscode';
-import { Logger } from './logger';
+import { Logger } from '../logger';
 
 /** webview 发来的导图导出载荷。 */
 export interface MindmapExportPayload {

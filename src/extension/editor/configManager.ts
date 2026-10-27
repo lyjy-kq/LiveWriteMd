@@ -12,11 +12,11 @@
  */
 
 import * as vscode from 'vscode';
-import type { LiveWriteMdEditorSettings } from '../shared/types.js';
+import type { LiveWriteMdEditorSettings } from '../../shared/types.js';
 import {
     ALL_SETTING_ITEMS,
     type SettingValue,
-} from '../shared/settings/index.js';
+} from '../../shared/settings/index.js';
 
 // =============================================================================
 // Custom Error Types

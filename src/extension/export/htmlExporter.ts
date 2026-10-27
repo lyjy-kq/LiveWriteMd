@@ -12,7 +12,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import katex from 'katex';
 import { LIGHT_THEME_CSS } from './htmlExportStyles.js';
-import { Logger } from './logger.js';
+import { Logger } from '../logger.js';
 
 // =============================================================================
 // Constants

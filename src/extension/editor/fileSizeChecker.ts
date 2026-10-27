@@ -18,7 +18,7 @@
 
 import * as vscode from 'vscode';
 import { ConfigManager } from './configManager';
-import { Logger } from './logger';
+import { Logger } from '../logger';
 
 // =============================================================================
 // Constants

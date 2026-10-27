@@ -12,8 +12,8 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { Logger } from './logger.js';
-import { ConfigManager } from './configManager.js';
+import { Logger } from '../logger.js';
+import { ConfigManager } from '../editor/configManager.js';
 
 // =============================================================================
 // Public API

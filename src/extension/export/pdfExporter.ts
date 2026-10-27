@@ -16,7 +16,7 @@ import { pathToFileURL } from 'url';
 import { execFile } from 'child_process';
 import * as vscode from 'vscode';
 import { renderMarkdownFile, resolveMarkdownTargetUri } from './htmlExporter.js';
-import { Logger } from './logger.js';
+import { Logger } from '../logger.js';
 
 // =============================================================================
 // 常量
