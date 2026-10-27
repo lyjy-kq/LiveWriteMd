@@ -18,6 +18,7 @@ import {
 import { settingsState } from './settingsState.js';
 import { PANEL_STYLES } from './settingsPanelStyles.js';
 import { renderControl, fontListTargets, pendingEdits } from './settingsControls.js';
+import { appendFontOptions, setKnownSystemFonts } from './settingsControls.js';
 
 /** 设置改动回调：把单项设置持久化。 */
 export type SettingChangeHandler = (key: string, value: SettingValue) => void;
@@ -209,10 +210,10 @@ class SettingsPanelImpl {
             .map((name) => name.trim())
             .filter((name) => name.length > 0);
         if (clean.length === 0) return;
-        systemFonts = clean;
+        setKnownSystemFonts(clean);
         for (const list of fontListTargets) {
             list.innerHTML = '';
-            appendFontOptions(list, systemFonts);
+            appendFontOptions(list, clean);
         }
     }
 

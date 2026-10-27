@@ -9,6 +9,7 @@
 import type { MindMapApp } from '../mindmapApp.js';
 import { extractSubtreeText, insertSubtreeFromText } from '.././edit/clipboard.js';
 import type { MindMapTreeNode } from '.././types.js';
+import { findNodeByUid as findTreeNodeByUid } from '../edit/shared.js';
 
 
 /**

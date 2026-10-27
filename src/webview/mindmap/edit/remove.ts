@@ -8,8 +8,10 @@
 
 import { extendRangeOverHr } from './add.js';
 import { listIndentOf } from './move.js';
+import { shiftHeadingLevel } from './clipboard.js';
 import { EditResult, FoundNode, findNodeByUid, rangeOf } from './shared.js';
 import type { MindMapTreeNode, NodeLineRange } from '../types.js';
+import { reindentLines } from './move.js';
 
 
 /**

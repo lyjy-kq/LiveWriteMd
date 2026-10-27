@@ -88,21 +88,21 @@ type ClipboardItemConstructorWithPromise = new (
  *
  * 用于在复制失败时给出可见提示，不必把状态逻辑散落到调用处。
  */
-const previewActionStatusByGroup = new WeakMap<HTMLElement, HTMLElement>();
+export const previewActionStatusByGroup = new WeakMap<HTMLElement, HTMLElement>();
 
 /**
  * 预览复制失败时显示的统一状态文案。
  *
  * 该文案用于图片与 Mermaid 预览的复制失败场景，保持提示简短且不过度打扰内容区域。
  */
-const previewCopyFailureText = '复制失败';
+export const previewCopyFailureText = '复制失败';
 
 /**
  * 预览标题的占位文本。
  *
  * 当没有可展示的名称时，使用这段文案提醒用户当前内容没有命名信息。
  */
-const previewTitleFallbackText = '未命名预览';
+export const previewTitleFallbackText = '未命名预览';
 
 /**
  * 浮层根节点引用。
@@ -249,7 +249,7 @@ async function copyImageSafely(imageUrl: string | null): Promise<boolean> {
  * @param blob - 需要复制的图片 Blob
  * @returns 图片复制是否成功
  */
-async function copyBlobImageSafely(blob: Blob): Promise<boolean> {
+export async function copyBlobImageSafely(blob: Blob): Promise<boolean> {
     try {
         if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
             return false;

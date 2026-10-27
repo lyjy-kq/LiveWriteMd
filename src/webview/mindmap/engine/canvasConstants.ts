@@ -96,7 +96,7 @@ export const TEXT_KINDS = new Set<string>(['heading', 'list', 'para', 'quote']);
  * - 1 降级：文本节点用轻量 mini-CM（不挂 live preview），媒体节点只显示摘要；
  * - 2 纯文本：不建任何 mini-CM，所有节点显示纯文本占位，只保留节点框与连线。
  */
-type RenderTier = 0 | 1 | 2;
+export type RenderTier = 0 | 1 | 2;
 
 /**
  * 标题色板 h1~h6 的基准色（色相与 live 的默认色一致；live 会把它们

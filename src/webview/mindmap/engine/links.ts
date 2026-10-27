@@ -6,7 +6,11 @@
  * @module webview/mindmap/engine/links
  */
 
+import { revealUid } from './flags.js';
+import { computeInternalLinkGeometry } from './internalLinkGeometry.js';
 import type { MapCanvas } from './canvas.js';
+import { H_GAP, layoutMap } from './layout.js';
+import { walkVisible } from './model.js';
 
 
 // ==================================================================

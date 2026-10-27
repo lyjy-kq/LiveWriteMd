@@ -12,6 +12,8 @@ import { EditorSelection } from '@codemirror/state';
 import type { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import type { MouseSelectionStyle } from '@codemirror/view';
+import { findTables } from './tableRead.js';
+import { findTextTables } from './tableDetect.js';
 
 // =============================================================================
 // 框选单元格

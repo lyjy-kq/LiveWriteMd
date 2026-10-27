@@ -13,6 +13,7 @@ import type { DropPayload } from '.././engine/canvas.js';
 import type { MapNode } from '.././engine/model.js';
 import { buildMindMapTree } from '.././treeBuilder.js';
 import type { MindMapTreeNode } from '.././types.js';
+import { findNodeByUid as findTreeNodeByUid } from '../edit/shared.js';
 
 
 // ==================================================================

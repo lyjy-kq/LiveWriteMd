@@ -4,6 +4,8 @@
  * @module webview/mindmap/engine/internalLinkGeometry
  */
 
+import type { MapNode } from './model.js';
+
 /**
  * 内链箭头几何：起止点取「中心连线与节点矩形边框的交点」（不穿节点），
  * 中间一个微弯的二次贝塞尔，目标端沿末端切线画小实心三角。

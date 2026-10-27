@@ -151,6 +151,11 @@ function renderColor(item: SettingItem, ctx: ControlContext): HTMLElement {
  */
 let systemFonts: string[] = [];
 
+/** 面板收到扩展宿主下发的字体列表时更新（settingsPanel 调）。 */
+export function setKnownSystemFonts(fonts: string[]): void {
+    systemFonts = fonts;
+}
+
 /** 当前渲染出来的 datalist；字体列表晚到时就地填充，不重建面板。 */
 export const fontListTargets = new Set<HTMLDataListElement>();
 
@@ -164,7 +169,7 @@ export const fontListTargets = new Set<HTMLDataListElement>();
 export const pendingEdits = new Map<string, SettingValue>();
 
 /** 把字体名写进 datalist。 */
-function appendFontOptions(list: HTMLDataListElement, names: string[]): void {
+export function appendFontOptions(list: HTMLDataListElement, names: string[]): void {
     for (const name of names) {
         const opt = document.createElement('option');
         opt.value = name;

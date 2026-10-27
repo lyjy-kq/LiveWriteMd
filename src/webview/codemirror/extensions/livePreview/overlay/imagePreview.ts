@@ -6,6 +6,8 @@
 
 import { ImagePreviewOverlayOptions, closeActivePreviewOverlay, createOverlayShell, extractPreviewDisplayName, mountOverlayRoot, setActiveOverlayRoot } from './overlayShell.js';
 import { attachPanZoom, createPreviewActionGroup, queuePreviewFit } from './overlayControls.js';
+import { previewTitleFallbackText, copyBlobImageSafely } from './overlayShell.js';
+import { createPreviewFallback } from './mermaidPreview.js';
 
 export function openImagePreviewOverlay(options: ImagePreviewOverlayOptions): void {
     closeActivePreviewOverlay();

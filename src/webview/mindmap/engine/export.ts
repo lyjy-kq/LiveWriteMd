@@ -11,6 +11,10 @@
  *      （JPEG 可以直接以 /DCTDecode 嵌入，不需要额外的图像编码库）。
  */
 
+import type { MapCanvas } from './canvas.js';
+import { walkVisible } from './model.js';
+import { computeBounds } from './layout.js';
+
 /** 栅格化结果。 */
 export interface RasterResult {
     /** 画布（像素尺寸 = SVG 尺寸 × scale）。 */

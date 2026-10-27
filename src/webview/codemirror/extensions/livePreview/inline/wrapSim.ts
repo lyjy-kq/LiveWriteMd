@@ -7,6 +7,8 @@
  * @module webview/codemirror/extensions/livePreview/wrapSim
  */
 
+import type { ISegment, ILineGeometry, IProbeRead } from './openWrap.js';
+
 /**
  * 折行模拟器：往一个隐藏容器里登记「前缀段 + 探针」的模拟行，一次性读出
  * 全部探针的「行数 + 末行右端」。

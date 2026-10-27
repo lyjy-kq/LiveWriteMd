@@ -8,6 +8,7 @@
  */
 
 import { measureTextIn, type MeasureEnv } from './textMeasure.js';
+import { getMeasureContext, measureText, measureTextIn, type MeasureEnv } from './textMeasure.js';
 
 // =============================================================================
 // 列表缩进（层级引导线 + 空格/Tab 对齐）

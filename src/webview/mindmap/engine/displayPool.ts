@@ -6,9 +6,15 @@
  * @module webview/mindmap/engine/displayPool
  */
 
+import { DISPLAY_CACHE_CAP, HEADING_TINT_FALLBACKS, PROGRESSIVE_BATCH, PUMP_PAUSE_MS, TEXT_KINDS, WHEEL_ACTIVE_MS } from './canvasConstants.js';
+import { relayout } from './links.js';
+import { mountNode } from './mounting.js';
 import type { MapCanvas } from './canvas.js';
+import { createNodeDisplay } from '../miniCm.js';
 import type { NodeDisplay } from '../miniCm.js';
+import { walkAll, walkVisible } from './model.js';
 import type { MapNode } from './model.js';
+import { EditorSelection } from '@codemirror/state';
 
 
 // ==================================================================

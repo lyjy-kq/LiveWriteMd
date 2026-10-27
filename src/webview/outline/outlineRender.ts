@@ -8,6 +8,7 @@
  */
 
 import type { OutlinePanel, OutlineNode } from './outlinePanel.js';
+import { settingsState } from '../settings/settingsState.js';
 
 /**
  * 娓叉煋澶х翰瑙嗗浘銆?     *

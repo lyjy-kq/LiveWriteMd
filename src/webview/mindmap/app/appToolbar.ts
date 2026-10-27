@@ -11,6 +11,7 @@ import { addNode } from '.././edit/add.js';
 import type { NewNodeSpec } from '.././edit/add.js';
 import { isMediaKind } from '.././edit/rename.js';
 import { countSubtreeNodes } from '.././edit/shared.js';
+import { findNodeByUid as findTreeNodeByUid } from '../edit/shared.js';
 
 
 /**

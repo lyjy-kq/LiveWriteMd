@@ -12,6 +12,8 @@ import { isInSourceMode } from '../state.js';
 import type { EditorState } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType } from '@codemirror/view';
 import type { Tree } from '@lezer/common';
+import { findTables } from './tableRead.js';
+import { findTextTables } from './tableDetect.js';
 
 // =============================================================================
 // 装饰

@@ -107,7 +107,7 @@ const DEFAULT_RUNTIME_SETTINGS: MindMapRuntimeSettings = {
  * 文本节点：编辑中内容变高（回车换行 / 长行折行）时要把单元格撑高。
  * 代码、表格、公式等媒体节点不在此列 —— 它们编辑时保持盒内滚动。
  */
-const TEXT_NODE_KINDS = new Set<MindMapNodeKind>(['heading', 'list', 'para', 'quote']);
+export const TEXT_NODE_KINDS = new Set<MindMapNodeKind>(['heading', 'list', 'para', 'quote']);
 
 /** 导图应用构造参数。 */
 export interface MindMapAppOptions {
@@ -134,7 +134,7 @@ export interface MindmapExportPayload {
 }
 
 /** 进行中的编辑会话。 */
-interface EditSession {
+export interface EditSession {
     uid: string;
     kind: MindMapNodeKind;
     initialText: string;
@@ -161,7 +161,7 @@ interface EditSession {
  * mini-CM 的 blur 处理器会立刻把编辑会话提交掉（editSession 变 null），
  * 等 click 的 action 执行时再读选区已经来不及了。
  */
-interface SplitCapture {
+export interface SplitCapture {
     uid: string;
     from: number;
     to: number;
@@ -801,39 +801,4 @@ export class MindMapApp {
 
 
 
-}
-
-/**
- * 去掉节点源码的公共行首缩进（导图单元格渲染用）。
- *
- * 列表项及列表项里的媒体块在源文档里带父级缩进（空格或 Tab），但单元格
- * 本身已经是独立的节点，缩进再画进去就会在格子左侧多出一截空白
- * （有序 / 无序 / 代码块 / 表格 / mermaid 同此）。
- *
- * 对媒体块还有一层语义影响：围栏缩进 ≥4 格时，独立的 mini-CM 会把它
- * 解析成「缩进代码块」，mermaid 的块级 widget 不会生成。去掉缩进后
- * 才是普通 FencedCode（提交时 renameNode 会补回去）。
- *
- * 以首行为基准整体左移，续行保留相对缩进：
- * ```
- *   - foo          ->  - foo
- *     bar          ->    bar
- * ```
- * 首行没有缩进（顶层列表项）时原样返回，避免无谓的字符串复制。
- *
- * @param source 节点自身的源码行（`_selfLineRange` / `_lineRange` 切片）
- * @returns 去掉公共缩进后的源码
- */
-function dedentNodeSource(source: string): string {
-    const lines = source.split('\n');
-    const indent = /^[ \t]*/.exec(lines[0] ?? '')?.[0] ?? '';
-    if (!indent) return source;
-    return lines
-        .map((line) =>
-            line.startsWith(indent)
-                ? line.slice(indent.length)
-                : // 懒续行可能比首行缩进更浅：兜底去掉自己的行首空白
-                  line.replace(/^[ \t]+/, '')
-        )
-        .join('\n');
 }

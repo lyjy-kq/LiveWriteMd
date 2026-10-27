@@ -6,9 +6,15 @@
  * @module webview/mindmap/engine/viewport
  */
 
+import { HI_ZOOM_THRESHOLD, MAX_ZOOM, MIN_ZOOM, PROGRESSIVE_THRESHOLD, ZOOM_SETTLE_MS } from './canvasConstants.js';
+import { createDisplay, ensureContent } from './displayPool.js';
+import { setEditing } from './flags.js';
+import { relayout } from './links.js';
 import type { RenderTier } from './canvas.js';
 import type { MapCanvas } from './canvas.js';
+import { computeBounds } from './layout.js';
 import type { MapBounds } from './layout.js';
+import { walkAll, walkVisible } from './model.js';
 import type { MapNode } from './model.js';
 
 

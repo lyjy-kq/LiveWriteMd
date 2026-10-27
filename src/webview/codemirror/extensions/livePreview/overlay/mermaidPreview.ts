@@ -7,6 +7,7 @@
 import { getMermaidTheme, mermaidInitialized, mermaidRenderPromises, mermaidSvgCache, rememberMermaidSvg, setMermaidInitialized } from '../state.js';
 import { MermaidPreviewOverlayOptions, closeActivePreviewOverlay, copyMermaidRenderedImageSafely, createOverlayShell, mountOverlayRoot, resolvePreviewTitle, setActiveOverlayRoot } from './overlayShell.js';
 import { attachPanZoom, createPreviewActionGroup, queuePreviewFit } from './overlayControls.js';
+import { previewTitleFallbackText } from './overlayShell.js';
 
 let mermaidRenderSequence = 0;
 
@@ -201,7 +202,7 @@ export function openMermaidPreviewOverlay(options: MermaidPreviewOverlayOptions)
  * @param text - 提示文案
  * @returns 提示节点
  */
-function createPreviewFallback(text: string): HTMLElement {
+export function createPreviewFallback(text: string): HTMLElement {
     const fallback = document.createElement('div');
     fallback.className = 'cm-md-preview-fallback';
     fallback.textContent = text;

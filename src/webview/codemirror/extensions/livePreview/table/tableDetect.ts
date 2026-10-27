@@ -119,7 +119,7 @@ export function isTableLikeBlock(state: EditorState, from: number, to: number): 
  * @param tree - 语法树
  * @returns 表格骨架列表
  */
-function findTextTables(
+export function findTextTables(
     state: EditorState,
     tree: Tree,
     range: { from: number; to: number }

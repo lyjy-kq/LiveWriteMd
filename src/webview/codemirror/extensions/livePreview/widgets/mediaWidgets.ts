@@ -10,6 +10,7 @@ import { openImagePreviewOverlay } from '../overlay/imagePreview.js';
 import { createMediaResizeGroup, createPreviewActionGroup } from '../overlay/overlayControls.js';
 import { resolvePreviewImageUrl, sourceModeEffect } from '../state.js';
 import { EditorView, WidgetType } from '@codemirror/view';
+import type { InlineImageAttrs } from '../inline/inlineEngine.js';
 
 // =============================================================================
 // 媒体宽度调整（图片 / Mermaid 共用）
@@ -24,7 +25,7 @@ import { EditorView, WidgetType } from '@codemirror/view';
  * @param event - 待判断的事件
  * @returns 事件是否发生在缩放按钮组内
  */
-function isMediaResizeEvent(event: Event): boolean {
+export function isMediaResizeEvent(event: Event): boolean {
     const target = event.target;
     return target instanceof Element && target.closest('.cm-md-resize-actions') !== null;
 }
@@ -42,7 +43,7 @@ function isMediaResizeEvent(event: Event): boolean {
  * @param view - 当前编辑器视图，由 widget 在渲染时注入
  * @returns void
  */
-function appendMediaResizeGroup(
+export function appendMediaResizeGroup(
     actionGroup: HTMLElement,
     percent: number,
     subject: string,

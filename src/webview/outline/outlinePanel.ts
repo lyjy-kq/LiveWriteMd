@@ -11,6 +11,15 @@ import {
 } from './headingNumbering.js';
 import type { HeadingEdit } from './headingNumbering.js';
 import { settingsState } from '../settings/settingsState.js';
+import { parseHeadings, pushHeadingNode, normalizeHeadingText } from './outlineHeadingParse.js';
+import { render, renderNodes, findActiveNodeId, syncActiveState, buildToggleIcon, buildIndentGuides } from './outlineRender.js';
+import {
+    resolveActionBarElement, resolveActionButton, buildActionGlyph,
+    resolveTooltipElement, scheduleTooltip, cancelTooltipTimer,
+    showTooltip, positionTooltip, hideTooltip,
+    restoreScrollPosition, updateActionBarState, escapeHtml,
+} from './outlineActionBar.js';
+import { bindEvents } from './outlineEvents.js';
 
 interface OutlineNode {
     /** 鑺傜偣鍞竴鏍囪瘑锛岀敤浜庣ǔ瀹氫繚瀛樻姌鍙犵姸鎬併€?*/
@@ -212,6 +221,208 @@ export class OutlinePanel {
         this.panelEl.style.width = `${this.width}px`;
         this.panelEl.style.flexBasis = `${this.width}px`;
     }
+
+    /**
+     * 澶勭悊鍒嗛殧鏉℃寜涓嬩簨浠跺苟鍚姩鎷栨嫿銆?     *
+     * @param event - 鎸囬拡鎸変笅浜嬩欢
+     * @returns void
+     */
+    private readonly handleResizerPointerDown = (event: PointerEvent): void => {
+        if (event.button !== 0) {
+            return;
+        }
+
+        event.preventDefault();
+        this.dragging = true;
+        this.dragStartX = event.clientX;
+        this.dragStartWidth = this.width;
+        this.resizerEl.dataset.dragging = 'true';
+        document.body.classList.add('livewritemd-outline-resizing');
+
+        const onMove = (moveEvent: PointerEvent): void => {
+            if (!this.dragging) {
+                return;
+            }
+
+            const delta = moveEvent.clientX - this.dragStartX;
+            // 右侧面板宽度越大，分割线越靠左，所以拖拽方向需要反向计算。
+            this.applyWidth(this.dragStartWidth - delta);
+        };
+
+        const onUp = (upEvent: PointerEvent): void => {
+            if (!this.dragging) {
+                return;
+            }
+
+            this.dragging = false;
+            this.resizerEl.dataset.dragging = 'false';
+            document.body.classList.remove('livewritemd-outline-resizing');
+            this.resizerEl.releasePointerCapture(upEvent.pointerId);
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            window.removeEventListener('pointercancel', onUp);
+            this.onWidthChange(this.width);
+        };
+
+        this.resizerEl.setPointerCapture(event.pointerId);
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onUp);
+    };
+    /**
+     * 澶勭悊鍐呭鍖虹偣鍑讳簨浠讹紝鏀寔璺宠浆涓庤妭鐐规姌鍙犮€?     *
+     * @param event - 榧犳爣鐐瑰嚮浜嬩欢
+     * @returns void
+     */
+    private readonly handleContentClick = (event: MouseEvent): void => {
+        const target = event.target as HTMLElement | null;
+        if (!target) {
+            return;
+        }
+
+        const toggleEl = target.closest<HTMLElement>('[data-outline-action="toggle"]');
+        if (toggleEl) {
+            event.preventDefault();
+            event.stopPropagation();
+            const nodeId = toggleEl.getAttribute('data-node-id');
+            if (nodeId) {
+                if (this.collapsedNodeIds.has(nodeId)) {
+                    this.collapsedNodeIds.delete(nodeId);
+                } else {
+                    this.collapsedNodeIds.add(nodeId);
+                }
+                this.render();
+            }
+            return;
+        }
+
+        const rowEl = target.closest<HTMLElement>('[data-outline-action="jump"]');
+        if (!rowEl) {
+            return;
+        }
+
+        const lineValue = rowEl.getAttribute('data-line');
+        const lineNumber = Number.parseInt(lineValue ?? '', 10);
+        if (Number.isFinite(lineNumber)) {
+            this.onNavigateToLine(lineNumber);
+        }
+    };
+    /**
+     * 澶勭悊鍐呭鍖洪敭鐩樹簨浠讹紝鏀寔鍥炶溅鍜岀┖鏍艰烦杞€?     *
+     * @param event - 閿洏浜嬩欢
+     * @returns void
+     */
+    private readonly handleContentKeyDown = (event: KeyboardEvent): void => {
+        const target = event.target as HTMLElement | null;
+        if (!target) {
+            return;
+        }
+
+        const rowEl = target.closest<HTMLElement>('[data-outline-action="jump"]');
+        if (!rowEl) {
+            return;
+        }
+
+        if (event.key !== 'Enter' && event.key !== ' ') {
+            return;
+        }
+
+        event.preventDefault();
+        const lineValue = rowEl.getAttribute('data-line');
+        const lineNumber = Number.parseInt(lineValue ?? '', 10);
+        if (Number.isFinite(lineNumber)) {
+            this.onNavigateToLine(lineNumber);
+        }
+    };
+    /**
+     * 澶勭悊鍐呭鍖烘偓娴繘鍏ヤ簨浠跺苟鍚姩 1 绉掓彁绀哄欢杩熴€?     *
+     * @param event - 鎸囬拡鎮诞浜嬩欢
+     * @returns void
+     */
+    private readonly handleContentPointerOver = (event: PointerEvent): void => {
+        const target = event.target as HTMLElement | null;
+        if (!target) {
+            return;
+        }
+
+        const rowEl = target.closest<HTMLElement>('[data-outline-action="jump"]');
+        if (!rowEl || rowEl === this.hoveredRowEl) {
+            return;
+        }
+
+        this.hoveredClientX = event.clientX;
+        this.hoveredClientY = event.clientY;
+        this.scheduleTooltip(rowEl, event.clientX, event.clientY);
+    };
+    /**
+     * 澶勭悊鍐呭鍖烘偓娴寮€浜嬩欢锛岀寮€鍚庣珛鍗抽殣钘忔彁绀恒€?     *
+     * @param event - 鎸囬拡绂诲紑浜嬩欢
+     * @returns void
+     */
+    private readonly handleContentPointerOut = (event: PointerEvent): void => {
+        const target = event.target as HTMLElement | null;
+        if (!target) {
+            return;
+        }
+
+        const rowEl = target.closest<HTMLElement>('[data-outline-action="jump"]');
+        const relatedTarget = event.relatedTarget as Node | null;
+        if (rowEl && relatedTarget && rowEl.contains(relatedTarget)) {
+            return;
+        }
+
+        if (rowEl && rowEl === this.hoveredRowEl) {
+            this.hideTooltip();
+        }
+    };
+    /**
+     * 澶勭悊鍐呭鍖烘粴鍔ㄤ簨浠讹紝閬垮厤鎻愮ず璺熺潃鏃т綅缃仠鐣欍€?     *
+     * @returns void
+     */
+    private readonly handleContentScroll = (): void => {
+        if (this.hoveredRowEl) {
+            this.hideTooltip();
+        }
+    };
+    /**
+     * 澶勭悊搴曢儴鎿嶄綔鏍忕偣鍑讳簨浠躲€?     *
+     * @param event - 榧犳爣鐐瑰嚮浜嬩欢
+     * @returns void
+     */
+    private readonly handleActionBarClick = (event: MouseEvent): void => {
+        const target = event.target as HTMLElement | null;
+        if (!target) {
+            return;
+        }
+
+        const actionButton = target.closest<HTMLButtonElement>('[data-outline-action]');
+        if (!actionButton) {
+            return;
+        }
+
+        const action = actionButton.getAttribute('data-outline-action');
+
+        // 标题编号 / 取消编号：取编辑器实时全文算修改，再交 main.ts 写回。
+        // 必须用实时文档：面板缓存有 250ms 防抖，用户刚打完字就点会错位。
+        if (action === 'add-numbering' || action === 'remove-numbering') {
+            // 按钮 disabled 之外再兜底一次：只读模式直接不处理
+            if (!this.isEditable()) return;
+            const doc = this.getDocument();
+            const edits =
+                action === 'add-numbering'
+                    ? buildHeadingNumberingEdits(doc)
+                    : buildHeadingUnnumberEdits(doc);
+            if (edits.length > 0) {
+                this.onApplyHeadingEdits(edits);
+            }
+            return;
+        }
+        if (action === 'expand-all') {
+            this.expandAll();
+        } else if (action === 'collapse-all') {
+            this.collapseAll();
+        }
+    };
 
     // ---- 薄包装：实现已拆到同目录 outlineXxx.ts，签名不变 ----
     private parseHeadings(content: string) : OutlineNode[] {

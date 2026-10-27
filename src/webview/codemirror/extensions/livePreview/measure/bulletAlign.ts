@@ -6,6 +6,8 @@
  * @module webview/codemirror/extensions/livePreview/bulletAlign
  */
 
+import { getMeasureContext, type MeasureEnv } from './textMeasure.js';
+
 // =============================================================================
 // 列表圆点垂直对齐补偿
 // =============================================================================

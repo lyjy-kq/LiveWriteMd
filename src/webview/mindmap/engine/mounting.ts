@@ -6,7 +6,12 @@
  * @module webview/mindmap/engine/mounting
  */
 
+import { DISPLAY_CACHE_CAP, PREWARM_BATCH, PREWARM_CAP, PREWARM_DELAY_MS, UNMOUNT_MARGIN_MULT, VIEW_MARGIN } from './canvasConstants.js';
+import { createDisplay, enforceDisplayCap, refreshNode } from './displayPool.js';
+import { setTheme } from './flags.js';
+import { handlePointerUp } from './pointer.js';
 import type { MapCanvas } from './canvas.js';
+import { walkVisible } from './model.js';
 import type { MapNode } from './model.js';
 
 

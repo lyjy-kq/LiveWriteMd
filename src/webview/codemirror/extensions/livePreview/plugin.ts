@@ -297,6 +297,8 @@ function buildWindowDecorations(
  * 一屏之内随便滚都不会触发；窗口外的内容 CM6 用 widget 的 estimatedHeight 估高度，
  * 这也是各个 widget 都实现 estimatedHeight 的原因。
  */
+import { ViewPlugin, type ViewUpdate } from '@codemirror/view';
+
 export const livePreviewPlugin = ViewPlugin.fromClass(
     class {
         /** 当前这轮装饰。 */

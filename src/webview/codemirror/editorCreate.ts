@@ -24,6 +24,7 @@ import {
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { search, searchKeymap } from '@codemirror/search';
 import { markdown } from '@codemirror/lang-markdown';
+import { syntaxTree } from '@codemirror/language';
 import { tunedMarkdownLanguage } from './extensions/markdownParser.js';
 import { getSourceRange } from './extensions/livePreview/ranges.js';
 import { createThemeExtension } from './extensions/theme';

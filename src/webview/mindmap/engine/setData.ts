@@ -15,6 +15,7 @@ import { PROGRESSIVE_THRESHOLD } from './canvasConstants.js';
 import { buildMapModel, walkAll } from './model.js';
 import type { MapNode } from './model.js';
 import { PROGRESSIVE_THRESHOLD } from './canvasConstants.js';
+import type { DisplayEntry } from './canvas.js';
 
 /**
  * 用新的数据树替换模型。

@@ -53,6 +53,7 @@ import * as viewport from './viewport.js';
 import { buildExportSvg } from './export.js';
 import { computeInternalLinkGeometry, rayExitRect } from './internalLinkGeometry.js';
 import { setData as setDataImpl } from './setData.js';
+import type { RenderTier } from './canvasConstants.js';
 
 
 /** 拖动落点。 */

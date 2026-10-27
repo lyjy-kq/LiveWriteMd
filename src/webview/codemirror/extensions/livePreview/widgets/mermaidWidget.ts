@@ -11,6 +11,7 @@ import { createPreviewActionGroup } from '../overlay/overlayControls.js';
 import { copyMermaidRenderedImageSafely } from '../overlay/overlayShell.js';
 import { mermaidHeightCache, mermaidSvgCache, sourceModeEffect } from '../state.js';
 import { EditorView, WidgetType } from '@codemirror/view';
+import { isMediaResizeEvent, appendMediaResizeGroup } from './mediaWidgets.js';
 
 // =============================================================================
 // Mermaid Widget

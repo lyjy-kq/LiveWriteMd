@@ -6,8 +6,13 @@
  * @module webview/mindmap/engine/pointer
  */
 
+import { AUTO_PAN_EDGE, AUTO_PAN_STEP, DRAG_THRESHOLD } from './canvasConstants.js';
+import { positionNode } from './mounting.js';
+import { scheduleWorldLayer } from './viewport.js';
 import type { DropCandidate } from './canvas.js';
 import type { MapCanvas } from './canvas.js';
+import { V_GAP } from './layout.js';
+import { collectSubtreeUids, expandSubtree, walkVisible } from './model.js';
 import type { MapNode } from './model.js';
 
 

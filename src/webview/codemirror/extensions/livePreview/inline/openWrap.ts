@@ -72,14 +72,14 @@ const RESIDUAL_EPSILON_PX = 0.05;
 const RTL_PATTERN = /[\u0590-\u08FF]/;
 
 /** 一段按某套字体渲染的文字：折行模拟容器的原子单元。 */
-interface ISegment {
+export interface ISegment {
     text: string;
     /** cssText 片段，通常是 fontSpec 拼出的 font 简写（可能再附加内边距/字距） */
     css: string;
 }
 
 /** 折行模拟器的读数：探针占了几个视觉行、末行右端离容器左缘多远（px）。 */
-interface IProbeRead {
+export interface IProbeRead {
     lines: number;
     endX: number;
 }
@@ -207,7 +207,7 @@ function contentLayoutWidth(contentEl: HTMLElement): number {
 }
 
 /** 一个逻辑行的几何：以行 border-box 左缘为原点 */
-interface ILineGeometry {
+export interface ILineGeometry {
     /** 内容列相对行左缘的左内边距（padding-left + border-left） */
     insetL: number;
     /** 右内边距（padding-right + border-right） */

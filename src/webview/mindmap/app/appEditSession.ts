@@ -13,6 +13,7 @@ import { MapCanvas } from '.././engine/canvas.js';
 import type { MapNode } from '.././engine/model.js';
 import { EditorSelection } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
+import { TEXT_NODE_KINDS, type EditSession, type SplitCapture } from '../mindmapApp.js';
 
 
 /**

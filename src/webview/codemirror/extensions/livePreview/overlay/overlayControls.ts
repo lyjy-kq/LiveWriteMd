@@ -6,6 +6,7 @@
 
 import { canStepMediaWidth } from '../mediaWidth.js';
 import { PreviewActionOptions, flashButtonState, showPreviewActionStatus } from './overlayShell.js';
+import { previewActionStatusByGroup, previewCopyFailureText } from './overlayShell.js';
 
 function createPreviewActionButton(options: PreviewActionOptions): HTMLButtonElement {
     const button = document.createElement('button');

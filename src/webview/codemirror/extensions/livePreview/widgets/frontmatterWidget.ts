@@ -6,6 +6,7 @@
 
 import { rememberWidgetHeight, widgetHeightCache } from '../state.js';
 import { EditorView, WidgetType } from '@codemirror/view';
+import type { FrontmatterProperty } from '../types.js';
 
 // =============================================================================
 // Frontmatter Widget

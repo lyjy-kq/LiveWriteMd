@@ -11,6 +11,7 @@ import { addChildNode, addSiblingNode } from '.././edit/add.js';
 import { deleteChildNodes, deleteNode, deleteNodes, deleteSelfKeepChildren } from '.././edit/remove.js';
 import { countSubtreeNodes } from '.././edit/shared.js';
 import { buildMindMapTree } from '.././treeBuilder.js';
+import { findNodeByUid as findTreeNodeByUid } from '../edit/shared.js';
 
 
 // ==================================================================

@@ -10,6 +10,7 @@
 import { CN_DIGIT_MAP } from './numberingModel.js';
 import type { NumberType, NumberingFormat, HeadingInfo } from './numberingModel.js';
 import { parseNumbering } from './numberingParse.js';
+import { ROMAN_UNICODE_UPPER_START, ROMAN_UNICODE_LOWER_START, CIRCLED_START, CIRCLED_CN_START } from './numberingModel.js';
 
 // =============================================================================
 // 编号原子：渲染

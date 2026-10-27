@@ -123,7 +123,7 @@ export function readRow(state: EditorState, node: SyntaxNode): TableLine {
  * @param tree - 语法树（可能是增量解析中的不完整树，那也只是少渲染一点）
  * @returns 表格骨架列表
  */
-function findTables(
+export function findTables(
     state: EditorState,
     tree: Tree,
     range: { from: number; to: number }

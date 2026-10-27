@@ -6,7 +6,9 @@
  * @module webview/mindmap/engine/minimap
  */
 
+import { MINIMAP_H, MINIMAP_REDRAW_MS, MINIMAP_W } from './canvasConstants.js';
 import type { MapCanvas } from './canvas.js';
+import { walkVisible } from './model.js';
 
 
 // ==================================================================

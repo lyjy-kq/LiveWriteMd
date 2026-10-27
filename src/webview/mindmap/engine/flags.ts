@@ -6,8 +6,10 @@
  * @module webview/mindmap/engine/flags
  */
 
+import { PROGRESSIVE_THRESHOLD } from './canvasConstants.js';
 import type { MapCanvas } from './canvas.js';
 import type { ThemeType } from '../../../shared/types.js';
+import { expandAncestors, expandSubtree, walkAll } from './model.js';
 
 
 /** 同步一个节点的展开标记（展开层级设置 / 大纲联动后调用）。 */

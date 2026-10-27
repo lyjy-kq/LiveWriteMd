@@ -331,14 +331,3 @@ export function collectListIndentDecorations(
         for (let d = ownLevel + 1; d <= 8; d++) stack[d] = -1;
     }
 }
-
-
-// =============================================================================
-// Exported Plugin & Extension Factory
-// =============================================================================
-
-/**
- * The exported ViewPlugin for live preview.
- */
-
-import { ViewPlugin, type ViewUpdate } from '@codemirror/view';
