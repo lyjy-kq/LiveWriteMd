@@ -30,7 +30,7 @@ import {
 } from '../codemirror/extensions/livePreview/table/tableCommands.js';
 import type { NodeDisplay } from './miniCm.js';
 import { MindmapSearchBar } from './searchBar.js';
-import { ensureMindMapCss } from './mindmapStyles.js';
+import { ensureMindMapCss } from './styles/index.js';
 import { PerfHud } from './perfHud.js';
 import { buildMindMapTree } from './treeBuilder.js';
 import {
@@ -51,23 +51,13 @@ import type {
     MindMapTreeNode,
     NodeLineRange,
 } from './types.js';
-import {
-    addChildNode,
-    addNode,
-    addSiblingNode,
-    countSubtreeNodes,
-    deleteChildNodes,
-    deleteNode,
-    deleteNodes,
-    deleteSelfKeepChildren,
-    extractSubtreeText,
-    findNodeByUid as findTreeNodeByUid,
-    insertSubtreeFromText,
-    isMediaKind,
-    moveNode,
-    renameNode,
-    type NewNodeSpec,
-} from './markdownEdit.js';
+import { addChildNode, addNode, addSiblingNode } from './edit/add.js';
+import type { NewNodeSpec } from './edit/add.js';
+import { extractSubtreeText, insertSubtreeFromText } from './edit/clipboard.js';
+import { moveNode } from './edit/move.js';
+import { deleteChildNodes, deleteNode, deleteNodes, deleteSelfKeepChildren } from './edit/remove.js';
+import { isMediaKind, renameNode } from './edit/rename.js';
+import { countSubtreeNodes, findNodeByUid as findTreeNodeByUid } from './edit/shared.js';
 // 写剪贴板走扩展侧 relay（webview 直接写剪贴板在 VS Code 里不稳定）；
 // 探针 / 纯浏览器环境没注入 postMessage 时退回 navigator.clipboard
 import { copyToClipboard } from '../codemirror/extensions/livePreview/state.js';
