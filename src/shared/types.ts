@@ -6,7 +6,7 @@
  */
 
 import type { SearchHistoryState } from './searchHistory.js';
-import type { SettingValue } from './settingsSchema.js';
+import type { SettingValue } from './settings/index.js';
 
 // =============================================================================
 // 基础消息

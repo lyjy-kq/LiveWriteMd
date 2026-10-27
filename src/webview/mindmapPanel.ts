@@ -12,7 +12,7 @@
 import { MindMapApp } from './mindmap/mindmapApp.js';
 import { settingsState } from './settingsState.js';
 import { MESSAGE_TYPES } from '../shared/messageTypes.js';
-import { getDefaultSettings, type SettingValue } from '../shared/settingsSchema.js';
+import { getDefaultSettings, type SettingValue } from '../shared/settings/index.js';
 import type { MindMapRuntimeSettings } from './mindmap/types.js';
 import type { ThemeType } from '../shared/types.js';
 

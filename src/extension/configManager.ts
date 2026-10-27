@@ -16,7 +16,7 @@ import type { LiveWriteMdEditorSettings } from '../shared/types.js';
 import {
     ALL_SETTING_ITEMS,
     type SettingValue,
-} from '../shared/settingsSchema.js';
+} from '../shared/settings/index.js';
 
 // =============================================================================
 // Custom Error Types

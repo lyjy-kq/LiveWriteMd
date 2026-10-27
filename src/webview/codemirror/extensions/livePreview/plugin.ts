@@ -12,8 +12,8 @@ import { ensureSyntaxTree, indentUnit, syntaxHighlighting, syntaxTree } from '@c
 import { type EditorState, type Extension, type Transaction, RangeSet, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView } from '@codemirror/view';
 import type { SyntaxNode, Tree } from '@lezer/common';
-import { findFileLinkAtText, findFileLinkMatches } from '../../../../shared/fileLink.js';
-import { matchHeadingIndex } from '../../../../shared/internalLink.js';
+import { findFileLinkAtText, findFileLinkMatches } from '../../../../shared/link/fileLink.js';
+import { matchHeadingIndex } from '../../../../shared/link/internalLink.js';
 // 列表引导线横坐标要读「正文与行号线距离」设置（lineGutterGap）
 import { settingsState } from '../../../settingsState.js';
 

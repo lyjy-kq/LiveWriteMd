@@ -74,7 +74,7 @@ import { copyToClipboard } from '../codemirror/extensions/livePreview/state.js';
 import {
     extractInternalLinkTargets,
     matchHeadingIndex,
-} from '../../shared/internalLink.js';
+} from '../../shared/link/internalLink.js';
 
 /** 默认运行时设置（与 settingsSchema 默认值对齐）。 */
 const DEFAULT_RUNTIME_SETTINGS: MindMapRuntimeSettings = {

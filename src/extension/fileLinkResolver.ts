@@ -11,7 +11,7 @@ import {
     parseFileLinkTarget,
     type FileLinkSelection,
     type ParsedFileLinkTarget,
-} from '../shared/fileLink.js';
+} from '../shared/link/fileLink.js';
 
 /**
  * 最终解析出的文件跳转结果。

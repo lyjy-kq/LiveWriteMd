@@ -21,7 +21,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
 const schemaPath = path.join(
     rootDir,
-    'src/shared/settingsSchema.ts'
+    'src/shared/settings/index.ts'
 );
 const pkgPath = path.join(rootDir, 'package.json');
 

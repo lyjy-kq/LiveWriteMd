@@ -16,7 +16,7 @@ import {
     type SettingItem,
     type SettingOption,
     type SettingValue,
-} from '../shared/settingsSchema.js';
+} from '../shared/settings/index.js';
 import { settingsState } from './settingsState.js';
 
 /** 设置改动回调：把单项设置持久化。 */

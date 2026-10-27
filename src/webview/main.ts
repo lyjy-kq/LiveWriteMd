@@ -42,7 +42,7 @@ import { OutlinePanel } from './outlinePanel.js';
 import { EditorContextMenu, type EditorMode } from './editorContextMenu.js';
 import { cellAt } from './codemirror/extensions/livePreview/tableRender.js';
 import { runTableCommand } from './codemirror/extensions/livePreview/tableCommands.js';
-import type { SettingValue } from '../shared/settingsSchema.js';
+import type { SettingValue } from '../shared/settings/index.js';
 import { settingsState } from './settingsState.js';
 import { settingsPanel } from './settingsPanel.js';
 import { createSearchHistoryController, type SearchHistoryController } from './codemirror/extensions/searchHistory.js';
