@@ -68,7 +68,6 @@ import type { SyntaxNode, Tree } from '@lezer/common';
 import { Decoration } from '@codemirror/view';
 import type { EditorView } from '@codemirror/view';
 import {
-    blockquoteLevelDecos,
     headingLineDecos,
     hideDeco,
     srcDelimDeco,
@@ -88,6 +87,8 @@ import {
     openWrapEligible,
 } from './openWrap.js';
 import { isTableLikeBlock, splitRowText } from './tableRender.js';
+// 引用聚焦的悬挂缩进要叠在「正文与行号线距离」之上（.cm-line 的默认左内边距）
+import { settingsState } from '../../../settingsState.js';
 import { isSetextBeforeFence } from './ranges.js';
 import { isForcedSourceRange } from './state.js';
 import { inlineMathFocusSignature } from './mathCollect.js';
@@ -616,28 +617,60 @@ export function collectFocusDecorations(
                 return;
             }
 
-            // ---- 引用：补左边框与缩进 ----
+            // ---- 引用：聚焦时撤掉渲染态外壳，但保留「悬挂缩进」 ----
+            //
+            // 边框 / 左边距这些渲染态外壳撤掉（与代码块聚焦同哲学），
+            // `> ` 原样显示——用户要能看到并删掉它（以前压 0 宽：不可见
+            // 也点不中）。但折行的续行必须对齐到 `>` 标记**之后**的文本列，
+            // 不能和 `>` 顶齐 —— 与列表的悬挂缩进同一个手法
+            // （padding-left + 负 text-indent，见 collectListIndentDecorations）。
             if (name === 'Blockquote') {
-                // 只处理最外层，嵌套引用由最外层统一出行级装饰，避免重复叠加
+                // 只处理最外层：嵌套引用的行已由最外层这一遍覆盖
                 if (node.parent?.name !== 'Blockquote') {
                     const startLine = state.doc.lineAt(from);
                     const endLine = state.doc.lineAt(to);
+                    // 引用块里「没有 > 的非空行」是上一行的懒续行（CommonMark lazy
+                    // continuation）：它没有自己的标记，要对齐到上一行的文本列，
+                    // 所以只给 padding-left、不给负 text-indent。
+                    let lastWidthCh = 0;
+                    // .cm-line 自带 lineGutterGap 的左内边距，我们的 padding 是
+                    // 覆盖式写入 —— 必须把它加回来，否则 `>` 会跑到普通段落左边
+                    const basePadding = settingsState.getNumber('lineGutterGap');
                     for (let ln = startLine.number; ln <= endLine.number; ln++) {
                         const line = state.doc.line(ln);
                         if (line.text.trim() === '') continue;
-                        // 按行首 `>` 的个数判断嵌套层级
-                        const gtRun = line.text.match(/^(\s*>)+/);
-                        const level = gtRun ? (gtRun[0].match(/>/g) || []).length : 1;
-                        decos.push(blockquoteLevelDecos[Math.min(level, 5) - 1].range(line.from));
+                        // 行首的 > 标记串（含其间空白；嵌套引用有多个）。
+                        // 宽度按字符数算（等宽字体 1 字符 = 1ch；Tab 罕见，按 1 算）
+                        const marksRun = line.text.match(/^[ \t]*(?:>[ \t]*)+/);
+                        if (marksRun) {
+                            const widthCh = marksRun[0].length;
+                            lastWidthCh = widthCh;
+                            decos.push(
+                                Decoration.line({
+                                    class: 'cm-md-quote-open',
+                                    attributes: {
+                                        style: `padding-left:calc(${basePadding}px + ${widthCh}ch);text-indent:-${widthCh}ch`,
+                                    },
+                                }).range(line.from)
+                            );
+                        } else if (lastWidthCh > 0) {
+                            // 懒续行：对齐到文本列（只有 padding，没有负缩进）
+                            decos.push(
+                                Decoration.line({
+                                    class: 'cm-md-quote-open',
+                                    attributes: {
+                                        style: `padding-left:calc(${basePadding}px + ${lastWidthCh}ch)`,
+                                    },
+                                }).range(line.from)
+                            );
+                        }
                     }
                 }
                 return;
             }
 
-            // 引用符号本身：`> ` 渲染态是隐藏的，这里压 0 宽
+            // 引用符号本身：不压 0 宽、不加任何装饰 —— 原样露出（可编辑）
             if (name === 'QuoteMark') {
-                const after = state.doc.sliceString(to, to + 1);
-                pushBlockMark(from, after === ' ' ? to + 1 : to);
                 return false;
             }
 

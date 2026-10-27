@@ -14,6 +14,7 @@ export type MindMapNodeKind =
     | 'heading'
     | 'list'
     | 'para'
+    | 'quote'
     | 'code'
     | 'table'
     | 'image'
@@ -134,6 +135,20 @@ export interface MindMapRuntimeSettings {
      * 保留 LCD 次像素抗锯齿，代价是每帧要重绘视口内容，大文档可能掉帧。
      */
     mindmapGestureCrisp: boolean;
+    /**
+     * 是否绘制内链箭头层（默认开启）。
+     *
+     * 文档内链接（`[[#标题]]` / `[文字](#标题)`）在导图中呈现为置于底层的
+     * 虚线箭头，从内链所在节点指向目标标题节点，点击箭头跳转聚焦目标。
+     */
+    mindmapInternalLinks: boolean;
+    /**
+     * 是否在画布右上角显示性能监控浮层（默认关闭）。
+     *
+     * 实时显示帧率 / 缓存实例数 / 堆内存 / 换真队列与速率 / 强制布局速率，
+     * 并记录帧率跳变与长任务发生时的现场（可复制成 JSON 供排查）。
+     */
+    mindmapPerfHud: boolean;
 }
 
 /** 导图编辑回调：把导图操作算出的新全文交回宿主（CM dispatch / CONTENT_CHANGE）。 */

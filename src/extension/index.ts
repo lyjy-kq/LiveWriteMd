@@ -22,6 +22,7 @@ import * as vscode from 'vscode';
 import { LiveWriteMdEditorProvider, VIEW_TYPE } from './editorProvider.js';
 import { MindmapPanelManager } from './mindmapPanelManager.js';
 import { Logger } from './logger.js';
+import { BUILD_STAMP } from '../shared/buildStamp.js';
 import { ConfigManager } from './configManager.js';
 import { exportMarkdownAsHtml } from './htmlExporter.js';
 import { exportMarkdownAsPdf } from './pdfExporter.js';
@@ -127,6 +128,8 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     Logger.info('LiveWriteMD Extension activating...');
+    // 构建戳：排查扩展宿主跑的是不是最新包（与 webview 侧各一行，见 buildStamp.ts）
+    Logger.info(`[build] extension ${BUILD_STAMP}`);
 
     // Register the CustomTextEditorProvider
     const provider = new LiveWriteMdEditorProvider(context);
@@ -279,6 +282,15 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('liveWriteMd.openSettings', () => provider.openSettings())
     );
     Logger.debug('Registered command: liveWriteMd.openSettings');
+
+    // Register memory-usage report command（排查「大文件占内存」类问题用：
+    // webview 堆 / DOM / 导图实例 / 各缓存计数 + 扩展宿主 RSS）
+    context.subscriptions.push(
+        vscode.commands.registerCommand('liveWriteMd.showMemoryUsage', () =>
+            provider.showMemoryUsage()
+        )
+    );
+    Logger.debug('Registered command: liveWriteMd.showMemoryUsage');
 
     // Register insert image from Explorer context menu
     context.subscriptions.push(

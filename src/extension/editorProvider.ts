@@ -276,6 +276,56 @@ export class LiveWriteMdEditorProvider implements vscode.CustomTextEditorProvide
     }
 
     /**
+     * 「显示内存占用」命令：让当前编辑器的 webview 收集统计并回发。
+     * 结果在 handleWebviewMessage 的 memoryStatsReport 分支展示。
+     */
+    public showMemoryUsage(): void {
+        if (!this.activePanelInfo) {
+            vscode.window.showWarningMessage('LiveWriteMD: 请先聚焦一个 LiveWriteMD 编辑器。');
+            return;
+        }
+        this.activePanelInfo.panel.webview.postMessage({
+            type: MESSAGE_TYPES.COLLECT_MEMORY_STATS,
+        });
+    }
+
+    /**
+     * 展示 webview 回发的内存统计（summary 弹窗 + 完整明细进日志，可复制）。
+     *
+     * 顺带把扩展宿主自己的 RSS 加进去：webview 堆只是占用的一部分，
+     * 任务管理器里看到的进程内存大头往往在扩展宿主一侧。
+     */
+    private async presentMemoryStats(stats: Record<string, unknown>): Promise<void> {
+        const hostMB = Math.round(process.memoryUsage().rss / 1048576);
+        const caches = (stats.caches ?? {}) as Record<string, number>;
+        const map = (stats.map ?? null) as Record<string, unknown> | null;
+        const cacheLine = Object.entries(caches)
+            .map(([key, value]) => `${key}=${value}`)
+            .join(' ');
+        const lines = [
+            `文档: ${stats.docKB} KB / ${stats.docLines} 行（模式: ${stats.mode}）`,
+            `Webview JS 堆: ${stats.heapUsedMB} MB / 已分配上限 ${stats.heapTotalMB} MB`,
+            `DOM 节点: ${stats.domNodes}`,
+            map
+                ? `导图: 节点 ${map.nodes} / 已挂载 ${map.mounted} / 显示实例 ${map.displays} / 连线 ${map.links}`
+                : '导图: 未激活',
+            `缓存: ${cacheLine}`,
+            `扩展宿主 RSS: ${hostMB} MB`,
+        ];
+        const detail = lines.join('\n');
+        Logger.info(`内存占用统计:\n${detail}`);
+        const copy = '复制详情';
+        const choice = await vscode.window.showInformationMessage(
+            `LiveWriteMD: webview 堆 ${stats.heapUsedMB} MB · DOM ${stats.domNodes} · ` +
+                `扩展宿主 ${hostMB} MB`,
+            copy
+        );
+        if (choice === copy) {
+            await vscode.env.clipboard.writeText(detail);
+        }
+    }
+
+    /**
      * 打开当前 LiveWriteMD 编辑器内的设置面板。
      *
      * 面板 UI 在 Webview 侧，这里只发一个打开信号。
@@ -1043,6 +1093,13 @@ export class LiveWriteMdEditorProvider implements vscode.CustomTextEditorProvide
                         );
                     }
                 }
+                break;
+            }
+
+            // Webview 回发的内存占用统计（「显示内存占用」命令的应答）
+            case 'memoryStatsReport' as typeof MESSAGE_TYPES.READY: {
+                const report = message as unknown as { stats: Record<string, unknown> };
+                void this.presentMemoryStats(report.stats);
                 break;
             }
 

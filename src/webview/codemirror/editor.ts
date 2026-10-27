@@ -33,7 +33,9 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { search, searchKeymap } from '@codemirror/search';
 import { markdown } from '@codemirror/lang-markdown';
 import { tunedMarkdownLanguage } from './extensions/markdownParser.js';
-import { LanguageDescription, LanguageSupport, StreamLanguage } from '@codemirror/language';
+import { LanguageDescription, LanguageSupport, StreamLanguage, syntaxTree } from '@codemirror/language';
+// 调试句柄用（installDebugHandle）：聚焦区间诊断
+import { getSourceRange } from './extensions/livePreview/ranges.js';
 
 // CM6 language packages (static imports for IIFE bundle compatibility)
 import { javascript } from '@codemirror/lang-javascript';
@@ -654,11 +656,29 @@ export class CodeMirrorEditor {
         // 初始化字号缩放变量，确保编辑器正文从默认倍率开始渲染。
         this.applyFontScale();
         this.reportViewportLine(this.view);
+        this.installDebugHandle();
 
         // 监听 VS Code 主题切换：body 类变化时重配主题（深浅色同步切换）
         this.startThemeObserver();
 
         return Promise.resolve();
+    }
+
+    /**
+     * 调试句柄：常驻挂到 window.__lwmDebug（不挂设置开关 —— 开关的传播链
+     * 本身就是故障点，排查时多一个变量）。句柄是惰性的：不被调用就零开销。
+     *
+     * buildStamp 用于一眼分辨 webview 跑的是不是最新构建。
+     * 供 Webview 开发者工具控制台抓现场：视图 / 语法树 / 聚焦区间
+     * （装饰、聚焦问题在探针环境复现不了时用它定位）。
+     */
+    private installDebugHandle(): void {
+        (window as unknown as Record<string, unknown>).__lwmDebug = {
+            buildStamp: '2026-10-26T2100+quote-fix',
+            view: this.view,
+            syntaxTree: () => syntaxTree(this.view!.state),
+            getSourceRange: () => getSourceRange(this.view!.state),
+        };
     }
 
     /** 监听 document.body 上的 VS Code 主题类变化，动态切换编辑器主题。 */

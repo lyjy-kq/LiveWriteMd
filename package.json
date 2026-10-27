@@ -2,7 +2,7 @@
     "name": "livewrite-md",
     "displayName": "LiveWriteMD",
     "description": "WYSIWYG Markdown editor for VS Code with Obsidian-style live preview. Tables, Mermaid diagrams, KaTeX math, code block syntax highlighting, and full IME support.",
-    "version": "0.0.14",
+    "version": "0.0.19",
     "publisher": "lyjy",
     "license": "SEE LICENSE IN LICENSE",
     "repository": {
@@ -134,6 +134,12 @@
                 "title": "设置",
                 "category": "LiveWriteMD",
                 "icon": "$(settings-gear)"
+            },
+            {
+                "command": "liveWriteMd.showMemoryUsage",
+                "title": "显示内存占用",
+                "category": "LiveWriteMD",
+                "icon": "$(pulse)"
             },
             {
                 "command": "liveWriteMd.insertImage",
@@ -405,6 +411,16 @@
                     "type": "boolean",
                     "default": false,
                     "description": "开启后，离屏节点最多保留 64 个真实渲染实例，超出时把最早创建的降级为纯文本占位；关闭（默认）时不淘汰，离屏实例一直保留。"
+                },
+                "liveWriteMd.mindmapInternalLinks": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "在思维导图中把文档内链接（[[#标题]] / [文字](#标题)）绘制为底层虚线箭头，点击箭头跳转到目标标题。"
+                },
+                "liveWriteMd.mindmapPerfHud": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "在思维导图右上角显示性能监控浮层：帧率 / 缓存实例数 / 堆内存 / 换真队列与速率 / 强制布局速率，并记录帧率跳变现场供排查。"
                 },
                 "liveWriteMd.mindmapLiteEnabled": {
                     "type": "boolean",
@@ -1058,7 +1074,8 @@
         "lint": "eslint src --ext ts",
         "test": "node ./out/test/runTest.js",
         "typecheck": "tsc --noEmit",
-        "package:vsix": "node ./scripts/package-vsix.mjs"
+        "package:vsix": "node ./scripts/package-vsix.mjs",
+        "test:probe": "node scripts/run-probes.mjs"
     },
     "devDependencies": {
         "@types/mocha": "^10.0.10",

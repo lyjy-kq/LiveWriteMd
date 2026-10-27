@@ -13,6 +13,26 @@
  */
 
 import * as vscode from 'vscode';
+import * as fs from 'node:fs';
+
+/**
+ * webview bundle 的缓存破坏参数。
+ *
+ * VS Code 的 webview 资源走 Service Worker 缓存，**同名 URL 在 Reload Window
+ * 之后经常还是旧包**（调试时「代码改了不生效」的常客）。取 dist 文件的
+ * mtime 当版本号拼进 query —— 每次构建后 URL 自动变化，缓存自然失效。
+ * chunk 文件自带内容哈希名，webview.js 一换新，chunk 链路全是新的。
+ */
+function bundleVersion(extensionUri: vscode.Uri, bundleName: string): string {
+    try {
+        return String(
+            fs.statSync(vscode.Uri.joinPath(extensionUri, 'dist', bundleName).fsPath).mtimeMs
+        );
+    } catch {
+        // 取不到（罕见：文件不存在）就用当前时间，保证每次都不一样
+        return String(Date.now());
+    }
+}
 
 // =============================================================================
 // Constants
@@ -694,7 +714,10 @@ export function getHtmlForWebview(
     outlineWidth: number = 280
 ): string {
     // Generate script URI for webview.js (contains CodeMirror initialization)
-    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'dist', 'webview.js'));
+    // 带构建版本号的 query：绕开 webview 资源缓存（见 bundleVersion 的说明）
+    const scriptUri = webview
+        .asWebviewUri(vscode.Uri.joinPath(extensionUri, 'dist', 'webview.js'))
+        .with({ query: `v=${bundleVersion(extensionUri, 'webview.js')}` });
 
     // Generate Content Security Policy (nonce not used per DES-S-001)
     const csp = getContentSecurityPolicy(webview, '');
@@ -776,9 +799,9 @@ export function getMindmapPanelHtml(
     webview: vscode.Webview,
     extensionUri: vscode.Uri
 ): string {
-    const scriptUri = webview.asWebviewUri(
-        vscode.Uri.joinPath(extensionUri, 'dist', 'mindmapPanel.js')
-    );
+    const scriptUri = webview
+        .asWebviewUri(vscode.Uri.joinPath(extensionUri, 'dist', 'mindmapPanel.js'))
+        .with({ query: `v=${bundleVersion(extensionUri, 'mindmapPanel.js')}` });
     const csp = getContentSecurityPolicy(webview, '');
 
     return `<!DOCTYPE html>

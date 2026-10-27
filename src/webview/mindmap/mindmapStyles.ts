@@ -40,6 +40,12 @@ export const MINDMAP_CSS = `
     overflow: hidden;
     /* 触控板/触摸：画布自己接管手势，别让浏览器滚动页面 */
     touch-action: none;
+    /* 表格节点的宽度预算（显示态 max-width 与列宽分配共用这一个变量）。
+       必须是变量而不是只写在 .lwm-node-table 上：编辑态会把 max-width
+       解除（none，见下面的编辑态规则），列宽分配读不到 max-width 就会
+       退回「不设上限」——长表格源码一进编辑就横着溢出。
+       变量随继承链走，编辑态也拿得到。 */
+    --lwm-table-max-width: 60em;
 }
 .lwm-canvas.lwm-panning {
     cursor: grabbing;
@@ -103,6 +109,45 @@ export const MINDMAP_CSS = `
     stroke-linecap: round;
     /* 正交折线的拐角也做圆角，避免 90° 处出现尖刺 */
     stroke-linejoin: round;
+}
+/* 内链箭头层（.lwm-ilinks，linksSvg 的第一个子元素，压在树连线与节点之下）。
+   注意特异性：.lwm-links path 是 (0,1,1)，这里的规则必须用
+   .lwm-links path.lwm-ilink-* (0,2,1) 才能压过它。
+   命中靠一条 12px 的透明粗线（1.5px 的虚线本身点不中）；父 svg 是
+   pointer-events:none，命中线用 pointer-events:stroke 单独打开。 */
+.lwm-links path.lwm-ilink-path {
+    fill: none;
+    stroke: var(--livewritemd-link-color, #338122);
+    stroke-width: 1.5;
+    stroke-dasharray: 6 4;
+    stroke-linecap: round;
+    opacity: 0.4;
+}
+.lwm-ilink-head {
+    fill: var(--livewritemd-link-color, #338122);
+    opacity: 0.4;
+}
+.lwm-links path.lwm-ilink-hit {
+    fill: none;
+    stroke: rgba(0, 0, 0, 0);
+    stroke-width: 12;
+    pointer-events: stroke;
+    cursor: pointer;
+}
+/* 悬停箭头 / 源或目标节点被选中：全不透明加粗 */
+.lwm-ilink:hover path.lwm-ilink-path,
+.lwm-ilink.lwm-ilink-active path.lwm-ilink-path {
+    opacity: 1;
+    stroke-width: 2.5;
+}
+.lwm-ilink:hover .lwm-ilink-head,
+.lwm-ilink.lwm-ilink-active .lwm-ilink-head {
+    opacity: 1;
+}
+/* 内链跳转后的 1s 高亮（canvas.flashNode 写入类名） */
+.lwm-node.lwm-node-flash {
+    outline: 2px solid var(--livewritemd-link-color, #338122);
+    outline-offset: 2px;
 }
 .lwm-node-layer {
     position: absolute;
@@ -334,7 +379,8 @@ export const MINDMAP_CSS = `
  * ================================================================= */
 .lwm-node-heading,
 .lwm-node-list,
-.lwm-node-para {
+.lwm-node-para,
+.lwm-node-quote {
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: var(--lwm-node-max-lines);
@@ -393,7 +439,10 @@ export const MINDMAP_CSS = `
 }
 
 /* 渐进挂载的静态占位：字体/内边距与 CM 内容对齐，
-   让库量出的节点尺寸与换真后基本一致（不位移） */
+   让库量出的节点尺寸与换真后基本一致（不位移）。
+   行高用正文的倍行距变量：mini-CM 里的 .cm-line 吃的是 live 的行高变量
+   （1.7em），不是节点盒的 1.5 —— 占位对齐错了会让每次换真都变尺寸，
+   换真泵的「尺寸没变就跳过重排」优化整批失效（实测重排数 11 → 25） */
 .lwm-node-placeholder {
     box-sizing: border-box;
     padding: 2px 0;
@@ -472,7 +521,15 @@ export const MINDMAP_CSS = `
     max-width: 40ch;
     max-height: calc(20 * var(--livewritemd-line-height, 1.7em) + 1.4em);
 }
-/* 表格节点：不限宽高，尽量全部渲染（任务 12） */
+/* 表格节点：宽度封顶 60em，高度不限、行数尽量全渲染。
+   取值考虑：README 海报墙那种「一行 4 张 170px 缩略图」的表格约需 750px，
+   30em（≈420px）会把图片格子挤得太小，所以取比其它媒体节点（30em）宽的一档；
+   仍必须有上限 —— 列宽分配（tableRender.availableWidth 的导图分支）直接读
+   这个 max-width 当「可用宽」预算，没有它超宽文本表格会把节点撑成无限宽。
+   改这里的值，列宽预算跟着变。 */
+.lwm-node-table {
+    max-width: var(--lwm-table-max-width, 60em);
+}
 /* 图片节点：自带上限。
    高度上限与公式/mermaid 一致（20em）：图片的宽度档位是
    「30em × 25/50/75/100%」，100% 那一档按常见横图比例约 20em 高，
@@ -597,6 +654,42 @@ export const MINDMAP_CSS = `
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
     font-size: 13px;
     pointer-events: none;
+}
+
+/* 性能监控浮层（设置「性能监控面板」开启）：画布右上角，半透明小字；
+   整体不接指针事件（不挡画布拖动），只有复制按钮可点 */
+.lwm-perf-hud {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 45;
+    padding: 5px 8px;
+    border-radius: 6px;
+    background: rgba(20, 24, 31, 0.82);
+    border: 1px solid var(--vscode-widget-border, #454545);
+    color: #9fd3a8;
+    font: 11px/1.6 Consolas, monospace;
+    pointer-events: none;
+    user-select: none;
+    max-width: 46%;
+}
+#mindmap[data-lwm-theme="light"] .lwm-perf-hud {
+    background: rgba(255, 255, 255, 0.9);
+    color: #1c6fb5;
+}
+.lwm-perf-hud-spikes {
+    color: #d8a04a;
+}
+.lwm-perf-hud-copy {
+    pointer-events: auto;
+    margin-top: 2px;
+    padding: 1px 8px;
+    font-size: 11px;
+    border: 1px solid var(--vscode-widget-border, #454545);
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
 }
 
 /* 空文档 / 纯代码块文档：只有虚拟根时的引导提示 */
@@ -730,6 +823,12 @@ export const MINDMAP_CSS = `
     display: block;
     width: 100%;
     text-align: left;
+}
+/* class 式禁用（不用 disabled 属性）：禁用按钮不派发鼠标事件，
+   title 提示会永远看不到，而我们恰恰要靠 title 解释「为什么不让点」 */
+.lwm-tool-popup > button.lwm-item-disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 /* 带三级菜单的条目（标题 / 表格）：悬停展开右侧子菜单 */
 .lwm-tool-item {

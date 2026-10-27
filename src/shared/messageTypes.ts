@@ -111,6 +111,13 @@ export const MESSAGE_TYPES = {
      */
     OPEN_SETTINGS: 'openSettings',
 
+    /**
+     * 收集内存占用统计消息类型。
+     * 扩展侧执行「LiveWriteMD: 显示内存占用」命令后发给当前编辑器，
+     * Webview 收集后回发 MEMORY_STATS_REPORT。
+     */
+    COLLECT_MEMORY_STATS: 'collectMemoryStats',
+
     // ========================================================================
     // Webview -> Extension 扩展消息类型
     // ========================================================================
@@ -120,6 +127,12 @@ export const MESSAGE_TYPES = {
      * Webview 点击重载按钮后发送给扩展侧。
      */
     RELOAD_CONTENT: 'reloadContent',
+
+    /**
+     * 内存占用统计报告消息类型。
+     * Webview 收到 COLLECT_MEMORY_STATS 后把统计结果回发给扩展侧展示。
+     */
+    MEMORY_STATS_REPORT: 'memoryStatsReport',
 
     /**
      * 更新单项设置消息类型。

@@ -247,7 +247,35 @@ export function buildMindMapTree(markdown: string, fileName: string): MindMapTre
             appendMediaBlock(node, currentParent(), 'html');
             return;
         }
-        // Blockquote / 纯注释 HTML / HorizontalRule 等非树内容：直接跳过
+        // 引用块（相连的 > 行整体是一个 Blockquote 节点）→ quote 叶节点
+        if (node.name === 'Blockquote') {
+            appendQuoteBlock(node, currentParent());
+            return;
+        }
+        // 纯注释 HTML / HorizontalRule 等非树内容：直接跳过
+    }
+
+    /**
+     * 引用块 → quote 叶节点。
+     *
+     * 相连的 `>` 行在 CommonMark 里本来就是一个 Blockquote 节点，所以
+     * 「多行合一」不用自己做；节点显示/编辑都按整段源码（含 `>` 标记）
+     * 喂给 mini-CM，渲染样式与 live 完全一致。
+     */
+    function appendQuoteBlock(node: SyntaxNode, parent: BuildNode): void {
+        const fromLine = lineOf(node.from);
+        const toLine = lineOf(node.to - 1);
+        const src = doc.slice(node.from, node.to);
+        // 摘要文字：第一行去掉 > 标记后的内容（降级档 / 纯文本占位用）
+        const firstLine = (src.split('\n')[0] ?? '').replace(/^\s*>+\s?/, '').trim();
+        parent.children.push({
+            kind: 'quote',
+            text: firstLine || `引用 · ${toLine - fromLine + 1} 行`,
+            note: src,
+            ownFromLine: fromLine,
+            ownToLine: toLine,
+            children: [],
+        });
     }
 
     /**
@@ -413,8 +441,11 @@ export function buildMindMapTree(markdown: string, fileName: string): MindMapTre
             ) {
                 // 列表项里的 HTML 块同样作为 html 媒体子节点
                 appendMediaBlock(child, node, 'html');
+            } else if (child.name === 'Blockquote') {
+                // 列表项里的引用块 → quote 子节点（行区间带列表缩进，
+                // 显示侧 dedentNodeSource 会去掉）
+                appendQuoteBlock(child, node);
             }
-            // 列表项内的引用等仍跳过
             child = child.nextSibling;
         }
         // 兜底：极端情况下没有 Paragraph 子节点

@@ -38,10 +38,11 @@ const CHECK_SVG =
  * @param hue 原始语义色（深色主题下的基准色）
  * @param light 是否浅色主题版本（决定主题变量缺失时的兜底正文色）
  * @param lightAmount 浅色主题的混入比例（默认 46%，h5 单独调高）
+ * @param darkAmount 深色主题的混入比例（默认 25%；h2 紫色单独调低 = 更深）
  * @returns 可用于 CSS 的颜色表达式
  */
-function tone(hue: string, light = false, lightAmount = 46): string {
-    const amount = light ? lightAmount : 25;
+function tone(hue: string, light = false, lightAmount = 46, darkAmount = 25): string {
+    const amount = light ? lightAmount : darkAmount;
     const fallback = light ? '#24292e' : '#d4d4d4';
     return `color-mix(in srgb, ${hue} ${100 - amount}%, var(--vscode-editor-foreground, ${fallback}) ${amount}%)`;
 }
@@ -106,7 +107,9 @@ export function createBaseThemeStyles(): Extension {
             fontSize: 'inherit',
             fontWeight: 'var(--livewritemd-heading-weight, inherit)',
             letterSpacing: '-0.01em',
-            color: `var(--livewritemd-h2-color, ${tone('#ae9acb')})`,
+            // 二级标题的紫色加深一档：基准色更饱和（#ae9acb → #a17fe0），
+            // 深色主题混入的正文色从 25% 降到 12%
+            color: `var(--livewritemd-h2-color, ${tone('#a17fe0', false, 46, 12)})`,
         },
         '.cm-md-heading-3': {
             fontSize: 'inherit',
@@ -136,9 +139,9 @@ export function createBaseThemeStyles(): Extension {
             color: `var(--livewritemd-h1-color, ${tone('#eb8383', true)})`,
         },
         '&light .cm-md-heading-2': {
-            // 紫色在白底上本来就偏浅，比其它级别多混 14 个百分点（46 → 60），
-            // 混完约 rgb(88,80,100)，仍是紫灰而不是黑。
-            color: `var(--livewritemd-h2-color, ${tone('#ae9acb', true, 60)})`,
+            // 紫色在白底上本来就偏浅，比其它级别多混（46 → 66），
+            // 混完仍是紫灰而不是黑；基准色与深色主题同步加深
+            color: `var(--livewritemd-h2-color, ${tone('#a17fe0', true, 66)})`,
         },
         '&light .cm-md-heading-3': {
             color: `var(--livewritemd-h3-color, ${tone('#7db5cd', true)})`,
@@ -318,6 +321,21 @@ export function createBaseThemeStyles(): Extension {
         '&light .cm-md-link, &light .cm-md-file-link': {
             color: `var(--livewritemd-link-color, ${tone('#338122', true)})`,
             textDecorationColor: `var(--livewritemd-link-color, ${tone('#338122', true)})`,
+        },
+        // 内链（文档内 #标题 跳转）：虚线下划线，与外链的实线区分
+        '.cm-md-link-internal': {
+            textDecorationStyle: 'dashed',
+        },
+        // 断链（目标标题不存在）：灰显、不给手型（点击退回普通文本行为）
+        '.cm-md-link-broken': {
+            color: 'var(--vscode-descriptionForeground, #888888)',
+            textDecorationColor: 'var(--vscode-descriptionForeground, #888888)',
+            cursor: 'default',
+        },
+        // 内链跳转后目标行的 1s 高亮（anchorFlashField 写入，到点撤掉）
+        '.cm-md-anchor-flash': {
+            backgroundColor:
+                'color-mix(in srgb, var(--livewritemd-link-color, #338122) 22%, transparent)',
         },
 
         // =================================================================

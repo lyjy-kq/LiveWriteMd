@@ -54,8 +54,9 @@ import type { ThemeType } from '../../shared/types.js';
  *   的段落」并回标题节点，见 treeBuilder 的 heading continuation）；
  * - 列表项：续行按 marker 宽度缩进（renameNode 已支持）；
  * - 段落：多行本来就是一个段落。
+ * - 引用：相连的 > 行整块是一个节点，块内换行同理写回。
  */
-const TEXT_KINDS = new Set(['heading', 'list', 'para']);
+const TEXT_KINDS = new Set(['heading', 'list', 'para', 'quote']);
 
 /** 单行节点类型：Enter = 提交（图片在 md 里只占一行，多一行会变成图文段落）。 */
 const SINGLE_LINE_KINDS = new Set(['image']);

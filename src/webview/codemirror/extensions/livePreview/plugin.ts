@@ -9,10 +9,11 @@
  */
 
 import { ensureSyntaxTree, indentUnit, syntaxHighlighting, syntaxTree } from '@codemirror/language';
-import { type EditorState, type Extension, type Transaction, RangeSet, StateField } from '@codemirror/state';
+import { type EditorState, type Extension, type Transaction, RangeSet, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView } from '@codemirror/view';
 import type { SyntaxNode, Tree } from '@lezer/common';
 import { findFileLinkAtText, findFileLinkMatches } from '../../../../shared/fileLink.js';
+import { matchHeadingIndex } from '../../../../shared/internalLink.js';
 // 列表引导线横坐标要读「正文与行号线距离」设置（lineGutterGap）
 import { settingsState } from '../../../settingsState.js';
 
@@ -95,6 +96,7 @@ import {
     isForcedSourceRange,
     isInSourceMode,
     lineForceEffect,
+    livePreviewDisplayOnly,
     livePreviewInstanceField,
     mapForceRanges,
     patchLineForce,
@@ -426,6 +428,304 @@ function collectDetailsDecorations(
             }).range(line.from, closingLine.to)
         );
         ln = closingLn;
+    }
+}
+
+// =============================================================================
+// 文档内链接（内链）
+//
+// 内链 = 指向本文档某个标题的链接：`[[#标题]]`（wiki 风格）与
+// `[文字](#标题)`（标准 Markdown）两种写法等价。匹配规则「精确优先 +
+// slug 回退、同名取第一个」在 shared/internalLink.ts 里，导图侧共用。
+// =============================================================================
+
+/** 一个标题锚点：标题文字（去掉 `#` 标记）+ 文档位置。 */
+interface HeadingAnchor {
+    text: string;
+    from: number;
+}
+
+/**
+ * 标题锚点缓存：语法树对象不变则标题列表不变。
+ *
+ * 文档编辑后 Lezer 会产出新树，缓存自然失效；增量解析中途拿到的旧树
+ * 最多让断链判定晚一拍，装饰重建时会跟着新树纠正。
+ */
+const headingAnchorsCache = new WeakMap<Tree, HeadingAnchor[]>();
+
+/** 收集全文标题锚点（ATX / Setext，文档顺序）。 */
+function headingAnchorsOf(state: EditorState, tree: Tree): HeadingAnchor[] {
+    const cached = headingAnchorsCache.get(tree);
+    if (cached) return cached;
+    const anchors: HeadingAnchor[] = [];
+    tree.iterate({
+        enter(node) {
+            const name = node.name;
+            if (name.startsWith('ATXHeading') || name.startsWith('SetextHeading')) {
+                const text = state.doc
+                    .sliceString(node.from, node.to)
+                    .replace(/^#{1,6}\s+/, '') // 去 ATX 标记
+                    .replace(/\n[=-]+\s*$/, '') // 去 Setext 下划线行
+                    .trim();
+                anchors.push({ text, from: node.from });
+            }
+            return true;
+        },
+    });
+    headingAnchorsCache.set(tree, anchors);
+    return anchors;
+}
+
+/**
+ * 找内链目标标题的文档位置（精确匹配优先 + slug 回退，同名取第一个）。
+ *
+ * @param target - 内链目标（`#` 之后的原始文字）
+ * @returns 标题节点的 from；不存在返回 -1
+ */
+function findHeadingPos(state: EditorState, tree: Tree, target: string): number {
+    const anchors = headingAnchorsOf(state, tree);
+    const index = matchHeadingIndex(
+        anchors.map((a) => a.text),
+        target
+    );
+    return index >= 0 ? anchors[index].from : -1;
+}
+
+/**
+ * 内链点击跳转后的目标行短暂高亮（1 秒）。
+ *
+ * 用 StateField + effect 而不是直接摸 DOM：文档编辑 / 撤销时装饰能跟着
+ * tr.changes 映射，不会出现「高亮粘在错误行上」。
+ */
+const anchorFlashEffect = StateEffect.define<number>();
+const anchorFlashClearEffect = StateEffect.define<null>();
+const anchorFlashLineDeco = Decoration.line({ class: 'cm-md-anchor-flash' });
+const anchorFlashField = StateField.define<DecorationSet>({
+    create: () => Decoration.none,
+    update(value, tr) {
+        for (const effect of tr.effects) {
+            if (effect.is(anchorFlashEffect)) {
+                const pos = Math.min(effect.value, tr.state.doc.length);
+                const line = tr.state.doc.lineAt(pos);
+                return Decoration.set([anchorFlashLineDeco.range(line.from)]);
+            }
+            if (effect.is(anchorFlashClearEffect)) return Decoration.none;
+        }
+        return tr.docChanged ? value.map(tr.changes) : value;
+    },
+    provide: (field) => EditorView.decorations.from(field),
+});
+
+/** wiki 内链 `[[#标题]]` 的逐行匹配式（`![[...]]` 图片与 `|` 别名不支持）。 */
+const WIKI_INTERNAL_LINK_RE = /\[\[#([^\]\n|]+?)\]\]/g;
+
+/**
+ * 这些语法节点内部不识别 wiki 内链。
+ *
+ * 注意 **Link 不能进这个集合**：`[[#x]]` 的内层 `[#x]` 会被 Lezer 标成
+ * 快捷引用式 Link 节点（只有 2 个 LinkMark），按祖先一刀切会把所有
+ * wiki 内链都误杀；完整的内联链接（4 个 LinkMark）在收集器里单独判断。
+ */
+const WIKI_LINK_SKIP_NODES = new Set([
+    'InlineCode',
+    'CodeText',
+    'FencedCode',
+    'CodeBlock',
+    'HTMLTag',
+    'HTMLBlock',
+    'Comment',
+    'CommentBlock',
+    'Image',
+    // 表格单元格是另一条渲染管线（列宽按源文计量、内容经 inlineEngine 拼
+    // HTML）：藏括号会让显示宽度与列宽口径对不上，v1 在表格内不识别
+    'Table',
+]);
+
+/**
+ * 收集 wiki 内链 `[[#标题]]` 的装饰。
+ *
+ * Lezer 的 Markdown 语法不认识这种写法（全文里它是纯文本 + 一个内层
+ * 快捷 Link 节点），所以和文件路径一样走逐行正则。渲染方式与内联链接
+ * 对齐：藏掉 `[[#` 与 `]]`，标题文字部分加链接样式；断链换灰皮、
+ * 不给 data-href（点击退回普通文本行为，方便用户原地修）。
+ *
+ * 遵守「A 套（openScale/openWrap）不许识别 Link」：这里只产出
+ * hide / mark 装饰，不进点击展开与宽度补偿体系。
+ *
+ * @param state - 当前编辑器状态
+ * @param decos - 待写入的装饰数组
+ * @param range - 渲染窗口
+ * @param focusedRange - 当前源码区间（聚焦行保持源码）
+ * @param tree - 当前语法树
+ */
+function collectWikiInternalLinkDecorations(
+    state: EditorState,
+    decos: Array<ReturnType<Decoration['range']>>,
+    range: ILineRange,
+    focusedRange: ILineRange,
+    tree: Tree
+): void {
+    const win = windowLines(state, range);
+    // 导图节点的 mini-CM 是节点级小文档，没有全文标题可比对，
+    // 断链判定只对主编辑器做（见 state.ts 的 livePreviewDisplayOnly）
+    const displayOnly = state.facet(livePreviewDisplayOnly);
+    for (let ln = win.first; ln <= win.last; ln++) {
+        const line = state.doc.line(ln);
+        // 快速跳过：没有 `[[` 的行不可能有 wiki 内链
+        if (!line.text.includes('[[')) continue;
+        WIKI_INTERNAL_LINK_RE.lastIndex = 0;
+        let match: RegExpExecArray | null;
+        while ((match = WIKI_INTERNAL_LINK_RE.exec(line.text))) {
+            const from = line.from + match.index;
+            const to = from + match[0].length;
+            // `![[...]]` 是 wiki 图片，不是内链
+            if (match.index > 0 && line.text[match.index - 1] === '!') continue;
+            // 聚焦区间（光标 / 选区所在块）保持源码形态
+            if (from < focusedRange.to && to > focusedRange.from) continue;
+            // 代码 / 图片 / 完整内联链接内部不识别
+            let skip = false;
+            let node: SyntaxNode | null = tree.resolveInner(from + 1, 1);
+            while (node) {
+                if (WIKI_LINK_SKIP_NODES.has(node.name)) {
+                    skip = true;
+                    break;
+                }
+                // 完整内联链接 `[a](b)` 里的 `[[#x]]` 不识别；
+                // 内层快捷 Link（2 个 LinkMark）就是 wiki 内链自己，放行
+                if (node.name === 'Link' && node.getChildren('LinkMark').length >= 4) {
+                    skip = true;
+                    break;
+                }
+                node = node.parent;
+            }
+            if (skip) continue;
+            const target = match[1].trim();
+            if (!target) continue;
+            const broken = !displayOnly && findHeadingPos(state, tree, target) < 0;
+
+            // 藏 `[[#` 前缀与 `]]` 后缀，只留标题文字可见
+            decos.push(hideDeco.range(from, from + 3));
+            decos.push(hideDeco.range(to - 2, to));
+            const attrs: Record<string, string> = {};
+            let cls = 'cm-md-link cm-md-link-internal';
+            if (broken) {
+                cls += ' cm-md-link-broken';
+                attrs['title'] = `未找到标题：${target}`;
+            } else {
+                attrs['data-href'] = `#${target}`;
+                attrs['title'] = `${target}（点击跳转）`;
+            }
+            if (from + 3 < to - 2) {
+                decos.push(
+                    Decoration.mark({ class: cls, attributes: attrs }).range(from + 3, to - 2)
+                );
+            }
+        }
+    }
+}
+
+/**
+ * 带空格 / 括号的文件链接兜底：`[PDF](../A Lightweight Gateway.pdf)`。
+ *
+ * CommonMark 不允许链接目标带空格（除非 `<>` 包裹或 %20 编码），Lezer 只把
+ * 它解析成 `[PDF]` 快捷引用 + 普通文本。这里按行正则兜底，只识别**文件路径**
+ * 形态的目标（`./` `../` `/` `~` / 盘符开头，或含 `/` `\` 且最后一段带扩展名），
+ * 避免把 `[a](b c)` 这类普通文字误判成链接。
+ */
+const SPACED_FILE_LINK_RE = /\[([^\]\n]+)\]\(((?:[^()\n]|\([^()\n]*\))*)\)/g;
+
+/** 判断括号里的内容是不是文件路径形态。 */
+function looksLikeFilePath(dest: string): boolean {
+    const t = dest.trim();
+    if (!t) return false;
+    // 协议 / 锚点 / 邮箱按其它通道处理
+    if (t.includes('://') || t.startsWith('#') || t.startsWith('mailto:')) return false;
+    const pathLike =
+        /^[.~#/\\]/.test(t) || /^[a-zA-Z]:[/\\]/.test(t) || t.includes('/') || t.includes('\\');
+    if (!pathLike) return false;
+    // 最后一段必须带扩展名（`b c` 这种普通文字没有）
+    const lastSeg = t.split(/[/\\?#]/).pop() ?? '';
+    return /\.[A-Za-z0-9]{1,10}$/.test(lastSeg);
+}
+
+/**
+ * 收集「带空格文件链接」的装饰（Lezer 解析失败的兜底通道）。
+ *
+ * 渲染与内联链接完全一致：藏掉 `[` `]` `(` `)` 与目标文本，链接文字加
+ * `.cm-md-link` + data-href（点击走统一的 openFile 通道）。
+ *
+ * @param state - 当前编辑器状态
+ * @param decos - 待写入的装饰数组
+ * @param range - 渲染窗口
+ * @param focusedRange - 当前源码区间（聚焦行保持源码）
+ * @param tree - 当前语法树
+ */
+function collectSpacedFileLinkDecorations(
+    state: EditorState,
+    decos: Array<ReturnType<Decoration['range']>>,
+    range: ILineRange,
+    focusedRange: ILineRange,
+    tree: Tree
+): void {
+    const win = windowLines(state, range);
+    for (let ln = win.first; ln <= win.last; ln++) {
+        const line = state.doc.line(ln);
+        // 快速跳过：没有 `](` 的行不可能有这种链接
+        if (!line.text.includes('](')) continue;
+        SPACED_FILE_LINK_RE.lastIndex = 0;
+        let match: RegExpExecArray | null;
+        while ((match = SPACED_FILE_LINK_RE.exec(line.text))) {
+            const dest = match[2].trim();
+            if (!looksLikeFilePath(dest)) continue;
+            const from = line.from + match.index;
+            const to = from + match[0].length;
+            // 图片 `![alt](...)` 不在这条通道（图片走 Image 分支）
+            if (match.index > 0 && line.text[match.index - 1] === '!') continue;
+            // 聚焦区间保持源码
+            if (from < focusedRange.to && to > focusedRange.from) continue;
+            // 代码 / 图片 / 表格 / 完整链接内部不识别（与 wiki 内链同一套跳过规则）
+            let skip = false;
+            let node: SyntaxNode | null = tree.resolveInner(from + 1, 1);
+            while (node) {
+                if (WIKI_LINK_SKIP_NODES.has(node.name)) {
+                    skip = true;
+                    break;
+                }
+                // 已经解析成功的完整内联链接（含 <> / %20 形式）不需要兜底
+                if (
+                    node.name === 'Link' &&
+                    node.from <= from &&
+                    node.to >= to &&
+                    node.getChildren('LinkMark').length >= 4
+                ) {
+                    skip = true;
+                    break;
+                }
+                node = node.parent;
+            }
+            if (skip) continue;
+
+            // 布局：`[text](dest)` —— text 可见，其余全藏
+            const textFrom = from + 1;
+            const textTo = textFrom + match[1].length;
+            const destFrom = textTo + 2; // 跳过 `](`
+            const destTo = destFrom + match[2].length;
+            decos.push(hideDeco.range(from, textFrom)); // `[`
+            decos.push(hideDeco.range(textTo, destFrom)); // `](`
+            decos.push(hideDeco.range(destFrom, destTo)); // 目标文本
+            decos.push(hideDeco.range(destTo, to)); // `)`
+            if (textFrom < textTo) {
+                decos.push(
+                    Decoration.mark({
+                        class: 'cm-md-link',
+                        attributes: {
+                            'data-href': dest,
+                            title: `${dest}（点击打开文件）`,
+                        },
+                    }).range(textFrom, textTo)
+                );
+            }
+        }
     }
 }
 
@@ -978,6 +1278,22 @@ function applyTreeDecorations(
     // 两遍（block 整篇 / inline 窗口）各算一次，与 range 对齐。
     const mathSourceRanges = collectMathSourceRanges(state, range);
 
+    // 内链断链判定用的标题锚点：懒算，只在真的遇到 `#` 内链时才遍历一次树
+    // （断链判定需要全文档标题；导图节点的 mini-CM 是节点级小文档，见
+    // state.ts 的 livePreviewDisplayOnly，那边直接跳过判定、不做灰显）
+    const displayOnly = state.facet(livePreviewDisplayOnly);
+    let headingAnchors: HeadingAnchor[] | null = null;
+    const internalLinkBroken = (target: string): boolean => {
+        if (displayOnly) return false;
+        headingAnchors ??= headingAnchorsOf(state, tree);
+        return (
+            matchHeadingIndex(
+                headingAnchors.map((a) => a.text),
+                target
+            ) < 0
+        );
+    };
+
     tree.iterate({
         from: range.from,
         to: range.to,
@@ -1500,9 +1816,15 @@ function applyTreeDecorations(
                     const textTo = marks[1].from;
                     const urlNode = linkNode.getChild('URL');
                     // 空链接 `[text]()` 没有 URL 子节点，targetUrl 保持空串
-                    const targetUrl = urlNode
+                    const rawUrl = urlNode
                         ? state.doc.sliceString(urlNode.from, urlNode.to)
                         : '';
+                    // `<...>` 包裹的目标（CommonMark 里允许带空格的写法）：
+                    // 尖括号只是语法，跳转 / data-href 都用内部文字
+                    const targetUrl =
+                        rawUrl.startsWith('<') && rawUrl.endsWith('>')
+                            ? rawUrl.slice(1, -1)
+                            : rawUrl;
 
                     // 藏掉 `[` `]` `(` `)` 四个标记字符
                     marks.forEach((mark) => {
@@ -1534,13 +1856,27 @@ function applyTreeDecorations(
                     if (textFrom < textTo) {
                         // 空链接不加 data-href：有链接样式但点不开
                         const attrs: Record<string, string> = {};
-                        if (targetUrl) {
+                        let cls = 'cm-md-link';
+                        if (targetUrl.startsWith('#')) {
+                            // 内链（文档内标题跳转）：虚线下划线与外链区分；
+                            // 断链（目标标题不存在）换灰皮、不给 data-href ——
+                            // 点击退回普通文本行为，方便用户原地修正
+                            cls += ' cm-md-link-internal';
+                            const target = targetUrl.slice(1);
+                            if (internalLinkBroken(target)) {
+                                cls += ' cm-md-link-broken';
+                                attrs['title'] = `未找到标题：${target}`;
+                            } else {
+                                attrs['data-href'] = targetUrl;
+                                attrs['title'] = `${target}（点击跳转）`;
+                            }
+                        } else if (targetUrl) {
                             attrs['data-href'] = targetUrl;
                             attrs['title'] = `${targetUrl} (Ctrl+Click to open)`;
                         }
                         decos.push(
                             Decoration.mark({
-                                class: 'cm-md-link',
+                                class: cls,
                                 attributes: attrs,
                             }).range(textFrom, textTo)
                         );
@@ -1816,13 +2152,19 @@ function buildWindowDecorations(
     collectCheckboxDecorations(state, decos, range, focusedRange, tree, taskMarkerPositions);
     collectImageDecorations(state, decos, range, focusedRange, tree);
     collectFileLinkDecorations(state, decos, range, focusedRange);
+    // wiki 内链 `[[#标题]]`：Lezer 不认这种语法，与文件路径一样走逐行正则
+    collectWikiInternalLinkDecorations(state, decos, range, focusedRange, tree);
+    // 带空格 / 括号的文件链接（Lezer 解析失败的兜底，如 `[PDF](../A B.pdf)`）
+    collectSpacedFileLinkDecorations(state, decos, range, focusedRange, tree);
     // 行内代码里写的公式（`$$…$$` / `$…$` / 不带定界符的 `A_e`）：
     // 保持反引号的盒子，里面换成 KaTeX。它**不收 focusedRange** ——
     // 让不让开看光标在不在这一格里，见 mathCollect.ts 的说明。
     collectCodeSpanMathDecorations(state, decos, range, tree);
     // 表格骨架：管道线压 0 宽、单元格定宽、分隔行折叠、被框选的格子高亮。
     // mark/line/行内 widget 都不影响块结构，所以可以只算窗口。
-    collectTableDecorations(state, decos, tree, range, composing);
+    // view 透传给表格量宽：导图节点按节点盒的 max-width 当预算，不设上限
+    // 会把节点撑成无限宽。
+    collectTableDecorations(state, decos, tree, range, composing, view);
     // 列表缩进：层级引导线 + 行首空白对齐（两种状态下长得一样）
     collectListIndentDecorations(state, decos, range, measureEnv);
     // 聚焦块处理：块级标记压 0 宽、行级样式补齐、光标所在的行内元素就地展开
@@ -2521,6 +2863,8 @@ export function createLivePreviewExtension(): Extension[] {
         scrollPreserverExtension,
         // block 装饰必须由 StateField 提供（CodeMirror 的硬限制）
         livePreviewBlockDecorations,
+        // 内链跳转的目标行 1s 高亮（StateField，随文档变更映射）
+        anchorFlashField,
         // 挂载后补一次表格重建（首次构建时视图还没进 DOM，量不到可用宽度）
         tableWidthBootstrap,
         // 滚动容器宽度变化时主动重建：定宽列自己不会感知 scroller 变窄
@@ -2591,43 +2935,37 @@ export function createLivePreviewExtension(): Extension[] {
                 const href = linkEl.getAttribute('data-href');
                 if (!href) return false;
 
-                // Anchor links (#heading) — plain click to jump within document
+                // 内链（#标题）：普通点击跳转到目标标题并短暂高亮该行。
+                // 匹配规则「精确优先 + slug 回退」与导图侧共用（shared/internalLink）
                 if (href.startsWith('#')) {
                     event.preventDefault();
                     event.stopPropagation();
-                    const slug = href.slice(1);
-                    const tree = syntaxTree(view.state);
-                    let targetPos = -1;
-                    tree.iterate({
-                        enter(node) {
-                            if (targetPos >= 0) return false;
-                            const n = node.name;
-                            if (n.startsWith('ATXHeading') || n.startsWith('SetextHeading')) {
-                                const headingText = view.state.doc
-                                    .sliceString(node.from, node.to)
-                                    .replace(/^#{1,6}\s+/, '') // strip ATX markers
-                                    .replace(/\n[=\-]+$/, ''); // strip Setext underlines
-                                const headingSlug = headingText
-                                    .trim()
-                                    .toLowerCase()
-                                    .replace(/[^\w\s\u3000-\u9fff\uf900-\ufaff-]/g, '')
-                                    .replace(/\s+/g, '-');
-                                if (headingSlug === slug) {
-                                    targetPos = node.from;
-                                    return false;
-                                }
-                            }
-                            return true;
-                        },
-                    });
+                    const targetPos = findHeadingPos(
+                        view.state,
+                        syntaxTree(view.state),
+                        href.slice(1)
+                    );
                     if (targetPos >= 0) {
                         view.dispatch({
                             selection: { anchor: targetPos },
-                            effects: EditorView.scrollIntoView(targetPos, {
-                                y: 'start',
-                                yMargin: 20,
-                            }),
+                            effects: [
+                                EditorView.scrollIntoView(targetPos, {
+                                    y: 'start',
+                                    yMargin: 20,
+                                }),
+                                anchorFlashEffect.of(targetPos),
+                            ],
                         });
+                        // 1 秒后撤掉高亮（视图已销毁时静默跳过）
+                        setTimeout(() => {
+                            try {
+                                if (view.dom.isConnected) {
+                                    view.dispatch({ effects: anchorFlashClearEffect.of(null) });
+                                }
+                            } catch {
+                                /* 视图已销毁：忽略 */
+                            }
+                        }, 1000);
                     }
                     return true;
                 }
@@ -2730,6 +3068,9 @@ export function createLivePreviewDisplayExtension(): Extension[] {
     return [
         // 实例状态字段（装饰管线依赖，见 createLivePreviewExtension）
         livePreviewInstanceField,
+        // 只读显示实例标记：mini-CM 是节点级小文档，内链断链判定等
+        // 需要全文档上下文的功能据此关闭（见 state.ts）
+        livePreviewDisplayOnly.of(true),
         // block 装饰必须由 StateField 提供（CodeMirror 的硬限制）
         livePreviewBlockDecorations,
         // 挂载后补一次表格重建（首次构建时视图还没进 DOM，量不到可用宽度）

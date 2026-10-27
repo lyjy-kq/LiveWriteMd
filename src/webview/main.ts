@@ -55,7 +55,9 @@ import {
 import type { ThemeType, LiveWriteMdEditorSettings } from '../shared/types.js';
 import type { SearchHistoryState } from '../shared/searchHistory.js';
 import { MESSAGE_TYPES } from '../shared/messageTypes.js';
+import { BUILD_STAMP } from '../shared/buildStamp.js';
 import { MindMapApp } from './mindmap/mindmapApp.js';
+import { collectMemoryStats } from './memoryStats.js';
 import type { MindMapRuntimeSettings } from './mindmap/types.js';
 
 // =============================================================================
@@ -108,6 +110,10 @@ const vscode: IVsCodeApi = acquireVsCodeApi();
 
 // Register postMessage for clipboard operations in widgets
 setPostMessage((message: unknown) => vscode.postMessage(message));
+
+// 构建戳：webview 启动即回写「输出 → LiveWriteMD」，排查跑的是不是最新包。
+// 用 WARN 级（sendLog 只把 ERROR/WARN 转发给宿主，INFO 会被丢掉）
+sendLog('WARN', `[build] webview ${BUILD_STAMP}`);
 
 // =============================================================================
 // 控制台日志转发
@@ -372,6 +378,10 @@ function readMindmapSettings(): MindMapRuntimeSettings {
         mindmapPlainZoom: settingsState.getNumber('mindmapPlainZoom') || 40,
         // 手势期清晰度优先：默认关闭（关闭 = 手势期提升合成层，帧率优先）
         mindmapGestureCrisp: settingsState.getBoolean('mindmapGestureCrisp'),
+        // 内链箭头层：默认开启（schema 默认值即 true）
+        mindmapInternalLinks: settingsState.getBoolean('mindmapInternalLinks'),
+        // 性能监控浮层：默认关闭
+        mindmapPerfHud: settingsState.getBoolean('mindmapPerfHud'),
     };
 }
 
@@ -1123,6 +1133,19 @@ function initialize(): void {
         }
         if (msg && msg.type === 'imageSaveError') {
             handleImageSaveError(msg, (m) => vscode.postMessage(m));
+        }
+        // 「显示内存占用」命令：收集 webview 统计回发扩展侧
+        if (msg && msg.type === 'collectMemoryStats') {
+            const view = editor?.getView();
+            vscode.postMessage({
+                type: 'memoryStatsReport',
+                stats: collectMemoryStats({
+                    docLength: view?.state.doc.length ?? 0,
+                    docLines: view?.state.doc.lines ?? 0,
+                    mode: currentEditorMode,
+                    mapStats: mindmapApp ? mindmapApp.debugStats() : null,
+                }),
+            });
         }
     });
 

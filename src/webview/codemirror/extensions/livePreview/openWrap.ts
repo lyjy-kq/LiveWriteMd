@@ -672,6 +672,14 @@ const wrapScaleCache = new Map<string, IWrapResult | 'single'>();
  */
 const renderedSnapshot = new Map<string, { dist: number; lines: number }>();
 
+/** 内存统计用：跨行补偿缓存与渲染快照的条目数。 */
+export function openWrapCacheStats(): { wrapScaleEntries: number; snapshotEntries: number } {
+    return {
+        wrapScaleEntries: wrapScaleCache.size,
+        snapshotEntries: renderedSnapshot.size,
+    };
+}
+
 /**
  * 候选字号（相对正文基准）：**双向**。
  *

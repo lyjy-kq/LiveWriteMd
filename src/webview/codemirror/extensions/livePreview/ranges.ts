@@ -140,6 +140,23 @@ export function getMarkdownBlockRange(state: EditorState): ILineRange {
     let blockTo = cursorLine.to;
 
     let node: SyntaxNode | null = tree.resolveInner(pos);
+
+    // 引用块优先于下面的一切分支：光标在引用里（任何深度——引用里的段落、
+    // 引用里的列表项、嵌套引用的内层）都聚焦到**最外层 Blockquote**，
+    // 整片相连的 `>` 行一起进源码态（`>` 全部露出，可以整段编辑/删除）。
+    //
+    // 为什么不能放在下面的分支链里：向上走的顺序是 Paragraph → ListItem →
+    // Blockquote，段落和列表的「一次只展开一行」分支会先命中并提前 return，
+    // 永远轮不到 Blockquote（`> - item` 这种引用里嵌列表就是踩这个）。
+    // 一次性找到最外层引用再返回，分支顺序就不会再咬人。
+    {
+        let quote: SyntaxNode | null = node;
+        while (quote && quote.name !== 'Blockquote') quote = quote.parent;
+        if (quote) {
+            while (quote.parent?.name === 'Blockquote') quote = quote.parent;
+            return { from: quote.from, to: quote.to };
+        }
+    }
     while (node) {
         const { name } = node;
 
@@ -175,12 +192,7 @@ export function getMarkdownBlockRange(state: EditorState): ILineRange {
             if (name === 'ListItem' || name === 'BulletList' || name === 'OrderedList') {
                 return { from: cursorLine.from, to: cursorLine.to };
             }
-            // For Blockquote, use the whole blockquote
-            if (name === 'Blockquote') {
-                blockFrom = node.from;
-                blockTo = node.to;
-                break;
-            }
+            // （引用块已在函数开头提前整片返回，分支链走不到 Blockquote）
             // 表格：聚焦范围也是**光标这一行**。
             // 表格的格子骨架由 collectTableDecorations 按行常驻渲染，不需要「整块展开」；
             // 收窄到一行之后，其余行照常渲染，光标所在那一行里的行内元素也照常渲染。

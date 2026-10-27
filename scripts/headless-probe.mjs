@@ -30,6 +30,8 @@ const doneExpr =
 const timeoutMs = Number(process.argv[4] ?? 45000);
 /** 完成后抓取的自定义结果表达式（可选，优先级高于 #diag 文本） */
 const resultExpr = process.argv[5] ?? null;
+/** 完成后截图保存路径（可选，第 6 个参数） */
+const shotPath = process.argv[6] ?? null;
 
 if (!url) {
     console.error('用法: node scripts/headless-probe.mjs <url> [doneExpr] [timeoutMs]');
@@ -123,6 +125,14 @@ async function main() {
     const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
     await send('Runtime.enable', {}, sessionId);
     await send('Page.enable', {}, sessionId);
+    // 截图模式下放大视口：默认 800x600 只能截到大画布的一角
+    if (shotPath) {
+        await send(
+            'Emulation.setDeviceMetricsOverride',
+            { width: 1400, height: 1000, deviceScaleFactor: 1, mobile: false },
+            sessionId
+        );
+    }
     await send('Page.navigate', { url }, sessionId);
 
     // 轮询完成条件
@@ -164,6 +174,12 @@ async function main() {
         for (const e of last?.errs ?? []) console.log(e);
         for (const e of pageExceptions) console.log('页面异常:', e);
         process.exitCode = 1;
+    }
+    // 截图：完成条件满足后抓一帧整页 PNG（探针视觉验收用）
+    if (last?.done && shotPath) {
+        const shot = await send('Page.captureScreenshot', { format: 'png' }, sessionId);
+        fs.writeFileSync(shotPath, Buffer.from(shot.data, 'base64'));
+        console.log('截图已存:', shotPath);
     }
     kill();
     process.exit(process.exitCode ?? 0);

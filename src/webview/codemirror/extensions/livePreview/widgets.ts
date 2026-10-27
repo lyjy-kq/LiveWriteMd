@@ -1328,6 +1328,11 @@ const MATH_BLOCK_LINES = 2.5;
  */
 const mathScaleCache = new Map<string, number>();
 
+/** 内存统计用：公式缩放缓存条目数。 */
+export function mathScaleCacheSize(): number {
+    return mathScaleCache.size;
+}
+
 /**
  * 正文的字号（px）。
  *

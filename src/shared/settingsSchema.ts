@@ -596,6 +596,22 @@ export const SETTINGS_SCHEMA: SettingSection[] = [
                 default: true,
             },
             {
+                key: 'mindmapInternalLinks',
+                label: '显示内链箭头',
+                description:
+                    '文档内链接（[[#标题]] 或 [文字](#标题)）在导图中以底层虚线箭头呈现，从内链所在节点指向目标标题节点，点击箭头跳转。',
+                control: 'toggle',
+                default: true,
+            },
+            {
+                key: 'mindmapPerfHud',
+                label: '性能监控面板',
+                description:
+                    '在画布右上角实时显示帧率 / 缓存实例数 / 堆内存 / 换真队列与速率 / 强制布局速率；帧率跳变与长任务发生时记录当时现场，可一键复制成 JSON 供排查。',
+                control: 'toggle',
+                default: false,
+            },
+            {
                 key: 'mindmapDisplayCache',
                 label: '显示实例 LRU 淘汰',
                 description:

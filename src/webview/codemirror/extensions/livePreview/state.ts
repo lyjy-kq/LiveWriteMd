@@ -17,7 +17,18 @@
  * @module webview/codemirror/extensions/livePreview/state
  */
 
-import { StateEffect, StateField, type ChangeDesc, type EditorState } from '@codemirror/state';
+import { StateEffect, StateField, Facet, type ChangeDesc, type EditorState } from '@codemirror/state';
+
+/**
+ * 只读显示实例标记（导图节点的 mini-CM）。
+ *
+ * mini-CM 的文档是节点级小片段，不含全文标题 —— 需要全文档上下文的功能
+ * （如内链的断链判定）在显示实例里必须关闭，否则节点里的内链会被误判成
+ * 「目标不存在」。主编辑器不挂这个 facet，默认 false。
+ */
+export const livePreviewDisplayOnly = Facet.define<boolean, boolean>({
+    combine: (values) => values.some(Boolean),
+});
 
 // =============================================================================
 // 实例状态（按 EditorState 隔离）

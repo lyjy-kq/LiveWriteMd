@@ -3,11 +3,12 @@
     LiveWriteMD 扩展的「构建 / 打包 / 安装 / 调试」一条龙脚本。
 
 .DESCRIPTION
-    把平时手动敲的几条命令收在一个脚本里，五种模式：
+    把平时手动敲的几条命令收在一个脚本里，六种模式：
 
       build    只构建 dist/（接在 VS Code 的 F5 前面当 preLaunchTask 用）
       package  构建 + 打包出 .vsix（默认）
       install  构建 + 打包 + 覆盖安装到本机 VS Code
+      all      全部完成：构建 + 探针回归 + 打包 + 覆盖安装（探针挂了不出包）
       debug    构建 + 用 CLI 起一个独立的扩展开发宿主，并等调试端口就绪（F5 用这个）
       watch    只起增量构建（前台阻塞，改代码自动重编）
 
@@ -67,7 +68,7 @@
 [CmdletBinding()]
 param(
     # 运行模式
-    [ValidateSet('build', 'package', 'install', 'debug', 'watch')]
+    [ValidateSet('build', 'package', 'install', 'all', 'debug', 'watch')]
     [string]$Mode = 'package',
 
     # 可选：要一起打开的 Markdown 文件
@@ -340,10 +341,10 @@ if (-not $SkipBuild -and $Mode -ne 'watch') {
 # 必须放在 npm run package:vsix 之前：VSIX 文件名和包内 extension/package.json
 # 都从 package.json 读版本，先改了才能打出新版本号的包。build / debug / watch
 # 不出包，不动版本号。
-if (($Mode -eq 'package' -or $Mode -eq 'install') -and -not $NoVersionBump) {
+if (($Mode -eq 'package' -or $Mode -eq 'install' -or $Mode -eq 'all') -and -not $NoVersionBump) {
     $bump = Update-PackagePatchVersion
     Write-Host ("==> 版本号自增：{0} -> {1}" -f $bump.Old, $bump.New) -ForegroundColor Cyan
-} elseif ($NoVersionBump -and ($Mode -eq 'package' -or $Mode -eq 'install')) {
+} elseif ($NoVersionBump -and ($Mode -eq 'package' -or $Mode -eq 'install' -or $Mode -eq 'all')) {
     $keepVer = (Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
     Write-Host "==> 按 -NoVersionBump 保留当前版本号：$keepVer" -ForegroundColor Yellow
 }
@@ -351,6 +352,36 @@ if (($Mode -eq 'package' -or $Mode -eq 'install') -and -not $NoVersionBump) {
 # =============================================================================
 # 各模式的具体动作
 # =============================================================================
+
+# install / all 共用：打包 + 发布守卫 + 覆盖安装（code --install-extension --force）
+function Invoke-Install {
+
+        $codeCli = Find-CodeCli
+        if (-not $codeCli) {
+            throw "没找到 VS Code 的 code 命令。可以在 VS Code 里按 Ctrl+Shift+P 执行「Shell Command: Install 'code' command in PATH」后重试。"
+        }
+
+        Invoke-Native -Exe $pm -Arguments @('run', 'package:vsix') -What '打包 VSIX'
+
+        $vsix = Get-VsixPath
+        if (-not (Test-Path $vsix)) {
+            throw "打包命令跑完了，但没找到产物：$vsix"
+        }
+        # 同样做发布前守卫，保证安装/上传的都是干净包
+        Test-VsixReleaseReady -VsixPath $vsix
+
+        # --force：已装同版本时直接覆盖，不用先卸载
+        Invoke-Native -Exe $codeCli -Arguments @('--install-extension', $vsix, '--force') -What '安装到本机 VS Code'
+
+        Write-Host ""
+        Write-Host "安装完成。已打开的窗口需要重新加载才生效：" -ForegroundColor Green
+        Write-Host "  Ctrl+Shift+P → Developer: Reload Window"
+
+        if ($File) {
+            $target = (Resolve-Path -LiteralPath $File).Path
+            Invoke-Native -Exe $codeCli -Arguments @($target) -What "打开 $target"
+        }
+}
 
 switch ($Mode) {
     'build' {
@@ -384,32 +415,15 @@ switch ($Mode) {
         Write-Host "或者直接跑：.\scripts\dev.ps1 -Mode install"
     }
 
+
     'install' {
-        $codeCli = Find-CodeCli
-        if (-not $codeCli) {
-            throw "没找到 VS Code 的 code 命令。可以在 VS Code 里按 Ctrl+Shift+P 执行「Shell Command: Install 'code' command in PATH」后重试。"
-        }
+        Invoke-Install
+    }
 
-        Invoke-Native -Exe $pm -Arguments @('run', 'package:vsix') -What '打包 VSIX'
-
-        $vsix = Get-VsixPath
-        if (-not (Test-Path $vsix)) {
-            throw "打包命令跑完了，但没找到产物：$vsix"
-        }
-        # 同样做发布前守卫，保证安装/上传的都是干净包
-        Test-VsixReleaseReady -VsixPath $vsix
-
-        # --force：已装同版本时直接覆盖，不用先卸载
-        Invoke-Native -Exe $codeCli -Arguments @('--install-extension', $vsix, '--force') -What '安装到本机 VS Code'
-
-        Write-Host ""
-        Write-Host "安装完成。已打开的窗口需要重新加载才生效：" -ForegroundColor Green
-        Write-Host "  Ctrl+Shift+P → Developer: Reload Window"
-
-        if ($File) {
-            $target = (Resolve-Path -LiteralPath $File).Path
-            Invoke-Native -Exe $codeCli -Arguments @($target) -What "打开 $target"
-        }
+    'all' {
+        # 全部完成：先探针回归（挂了直接 throw，不出包），再走 install 链路
+        Invoke-Native -Exe $pm -Arguments @('run', 'test:probe') -What '探针回归（npm run test:probe）'
+        Invoke-Install
     }
 
     'debug' {

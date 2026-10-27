@@ -232,6 +232,11 @@ function clampLetterSpacing(residual: number, totalChars: number): number {
  */
 const openScaleCache = new Map<string, { scale: number; letterSpacing: number }>();
 
+/** 内存统计用：缩放补偿缓存条目数。 */
+export function openScaleCacheSize(): number {
+    return openScaleCache.size;
+}
+
 /**
  * 展开态真正会显示出来的那串文字（标记 + 内容）。
  *

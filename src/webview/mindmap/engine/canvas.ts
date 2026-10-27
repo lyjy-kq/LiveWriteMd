@@ -71,6 +71,17 @@ const PUMP_PAUSE_MS = 100;
 const WHEEL_ACTIVE_MS = 120;
 /** 视口外挂载余量（屏幕像素）。 */
 const VIEW_MARGIN = 320;
+/**
+ * 卸载余量相对挂载余量的倍数（双圈制）：
+ * 小圈内 = 立即挂载区；小圈外大圈内 = 预热挂载区（空闲时由 prewarm 填满，
+ * 手势拖过去零挂载成本）；出了大圈才卸载。手势期间一律不卸载——
+ * 拖回来的节点马上要，卸载了再挂会触发 CM 重测量（起步卡顿的来源之一）。
+ */
+const UNMOUNT_MARGIN_MULT = 3;
+/** 预热挂载：空闲时每批挂几个、间隔多久、最多挂到多少个节点。 */
+const PREWARM_BATCH = 8;
+const PREWARM_DELAY_MS = 250;
+const PREWARM_CAP = 600;
 /** 按下后移动超过该距离才算拖动（像素）。 */
 const DRAG_THRESHOLD = 5;
 /** 拖到边缘多少像素内自动平移。 */
@@ -113,7 +124,7 @@ const ZOOM_SETTLE_MS = 120;
  * 文本类节点（标题 / 列表项 / 段落）。
  * 降级渲染档里只有它们还值得建轻量 mini-CM；媒体节点直接显示摘要文本。
  */
-const TEXT_KINDS = new Set<string>(['heading', 'list', 'para']);
+const TEXT_KINDS = new Set<string>(['heading', 'list', 'para', 'quote']);
 
 /**
  * 渲染档位（由缩放比例自动决定）：
@@ -128,7 +139,8 @@ type RenderTier = 0 | 1 | 2;
  * 按主题正文色做明度微调，这里只用于节点底色的色相轮换，保持原色即可）。
  * 背景色轮换用：CSS 变量 --livewritemd-hN-color 没定义时拿它兜底。
  */
-const HEADING_TINT_FALLBACKS = ['#eb8383', '#ae9acb', '#7db5cd', '#71a796', '#dcbf61', '#dda36a'];
+// h2 紫色与 live 同步加深过（#ae9acb → #a17fe0），改 live 基准色时这里要一起改
+const HEADING_TINT_FALLBACKS = ['#eb8383', '#a17fe0', '#7db5cd', '#71a796', '#dcbf61', '#dda36a'];
 
 /** 拖动落点。 */
 export interface DropPayload {
@@ -175,6 +187,18 @@ export interface MapCanvasOptions {
      * @param uids 当前框住的节点 uid（按视图顺序）
      */
     onMarqueeSelect?(uids: string[]): void;
+    /**
+     * 解析内链目标（`#` 之后的标题文字）→ 目标标题节点 uid。
+     *
+     * 导图节点里的内链（Ctrl+点击 `.cm-md-link` 且 href 以 `#` 开头）经这个
+     * 回调找到目标节点；找不到（断链）返回 null，只吞掉手势。
+     */
+    resolveInternalLink?(target: string): string | null;
+    /**
+     * 跳转到内链目标节点（点击内链箭头 / 导图节点里的内链）。
+     * 上层负责展开折叠祖先、居中与短暂高亮。
+     */
+    onInternalLinkNavigate?(toUid: string): void;
     /**
      * 显示态（非编辑会话）里节点本地文档被改动了。
      *
@@ -373,6 +397,34 @@ export class MapCanvas {
     private readonly linkPaths = new Map<string, SVGPathElement>();
     private readonly expandButtons = new Map<string, HTMLDivElement>();
     /**
+     * 内链箭头层：linksSvg 的**第一个**子元素，画在树连线之下
+     * （树连线的 path 随后 append，DOM 序靠后、盖在箭头上面）。
+     */
+    private readonly ilinkLayer: SVGGElement;
+    /**
+     * 内链对（内链所在节点 uid → 目标标题节点 uid）。
+     * 由上层（mindmapApp）按文档内容算好后经 setInternalLinks 喂入；
+     * 画布只负责几何与绘制，不认识 Markdown。
+     */
+    private ilinkPairs: Array<{ fromUid: string; toUid: string }> = [];
+    /** 内链箭头元素（key = `fromUid->toUid`）。 */
+    private readonly ilinkEntries = new Map<
+        string,
+        { group: SVGGElement; path: SVGPathElement; head: SVGPolygonElement; hit: SVGPathElement }
+    >();
+    /** 内链跳转后的 1 秒高亮节点（flashNode 写入）。 */
+    private flashUid: string | null = null;
+    private flashTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // —— 性能监控计数（HUD 用；纯自增整数，零成本）——
+    /** 累计创建的真实显示实例数（换真速率 = 它的增量/时间）。 */
+    private createdTotal = 0;
+    /** 累计 LRU 淘汰的实例数。 */
+    private evictedTotal = 0;
+    /** 累计挂载 / 卸载次数（手势期间应该纹丝不动——双圈预热制的验收口径）。 */
+    private mountTotal = 0;
+    private unmountTotal = 0;
+    /**
      * 挂载集合版本号：mount/unmount 时 +1。
      *
      * 连线与展开按钮的可见性只看「端点是否挂载」。平移时如果这一帧没有
@@ -434,6 +486,8 @@ export class MapCanvas {
     private autoPanTimer: ReturnType<typeof setTimeout> | null = null;
     private autoPanDx = 0;
     private autoPanDy = 0;
+    /** 预热挂载的定时器（null = 没有排队）。 */
+    private prewarmTimer: ReturnType<typeof setTimeout> | null = null;
 
     /** 已绑定的事件处理器（销毁时逐个摘掉）。 */
     private readonly handlers: Array<[EventTarget, string, EventListener]> = [];
@@ -456,6 +510,12 @@ export class MapCanvas {
         this.linksSvg.classList.add('lwm-links');
         this.linksSvg.setAttribute('width', '0');
         this.linksSvg.setAttribute('height', '0');
+        // 内链箭头层压底：作为 linksSvg 第一个子元素，树连线与节点都盖在它上面。
+        // 注意 .lwm-links 整体 pointer-events:none，箭头自己的命中线用
+        // pointer-events:stroke 单独打开（见 mindmapStyles.ts）
+        this.ilinkLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        this.ilinkLayer.classList.add('lwm-ilinks');
+        this.linksSvg.appendChild(this.ilinkLayer);
         this.nodeLayer = document.createElement('div');
         this.nodeLayer.className = 'lwm-node-layer';
         this.scalerEl.append(this.linksSvg, this.nodeLayer);
@@ -857,6 +917,40 @@ export class MapCanvas {
         this.selectedUid = uid;
         if (previous) this.refreshWrapperClasses(this.byUid.get(previous));
         if (uid) this.refreshWrapperClasses(this.byUid.get(uid));
+        // 选中节点是某条内链的源 / 目标时，那条箭头要提到全不透明
+        this.updateInternalLinkEmphasis();
+    }
+
+    /**
+     * 喂入内链对（内链所在节点 → 目标标题节点）并同步箭头层。
+     *
+     * 由上层（mindmapApp）在每次重建 / 编辑回写后按文档内容计算；
+     * 传空数组 = 清空箭头层（设置关闭时）。
+     */
+    setInternalLinks(pairs: Array<{ fromUid: string; toUid: string }>): void {
+        this.ilinkPairs = pairs;
+        this.syncInternalLinks();
+    }
+
+    /**
+     * 内链跳转后的 1 秒高亮（独立通道，不与搜索高亮互相覆盖）。
+     *
+     * @param uid 目标节点 uid
+     */
+    flashNode(uid: string): void {
+        const previous = this.flashUid;
+        this.flashUid = uid;
+        if (previous && previous !== uid) {
+            this.refreshWrapperClasses(this.byUid.get(previous));
+        }
+        this.refreshWrapperClasses(this.byUid.get(uid));
+        if (this.flashTimer !== null) clearTimeout(this.flashTimer);
+        this.flashTimer = setTimeout(() => {
+            this.flashTimer = null;
+            const stale = this.flashUid;
+            this.flashUid = null;
+            if (stale) this.refreshWrapperClasses(this.byUid.get(stale));
+        }, 1000);
     }
 
     /**
@@ -1188,6 +1282,7 @@ export class MapCanvas {
                 if (node.wrapper) this.mountNode(node);
             });
             this.updateLinksVisibility();
+            this.updateInternalLinksVisibility();
             this.updateExpandButtonsVisibility();
             this.visibilityVersion = this.mountedVersion;
         }
@@ -1264,6 +1359,8 @@ export class MapCanvas {
         }
         if (this.searchHits.has(node.uid)) classes.push('lwm-search-hit');
         if (this.searchCurrent === node.uid) classes.push('lwm-search-current');
+        // 内链跳转后的 1 秒高亮
+        if (this.flashUid === node.uid) classes.push('lwm-node-flash');
         if (this.drag?.uid === node.uid) classes.push('lwm-node-dragging');
         if (this.dropCandidate?.targetUid === node.uid) classes.push('lwm-node-drop-target');
         // 属性值没变就不写：每次 setData / relayout 都会把整棵树刷一遍，
@@ -1460,6 +1557,7 @@ export class MapCanvas {
             // 立刻交给上层回写源文档
             onDisplayChange: (text) => this.options.onDisplayEdit?.(nodeRef.current, text),
         });
+        this.createdTotal += 1;
         wrapper.replaceChildren(display.container);
         node.display = display;
         node.placeholder = false;
@@ -1920,6 +2018,7 @@ export class MapCanvas {
             if (uid === this.editingUid) continue;
             if (entry.wrapper.parentElement === this.nodeLayer) continue;
             entry.display.destroy();
+            this.evictedTotal += 1;
             this.displays.delete(uid);
             const node = entry.node;
             node.display = null;
@@ -1984,12 +2083,27 @@ export class MapCanvas {
                 created.push(node);
                 changed = true;
             }
+            // 换真前的尺寸记下来：占位文本按设计就和真实渲染尺寸接近
+            const sizeBefore = created.map((n) => ({ w: n.width, h: n.height }));
             // 一批统一测：避免每个换真节点各触发一次强制布局
             this.measureNodes(created);
             if (changed) {
-                this.relayout();
-                this.updateViewport();
-                // 换真后的 CM 也是下一帧才排好，补一次
+                // 只有尺寸真的变了才整树重排：以前每批都无条件 relayout，
+                // 全挂载的大文档里等于每 16ms 把全部节点的 transform、
+                // 连线、展开按钮重写一遍（实测 425 节点时每一批就是一个
+                // ~500ms 的长任务，HUD 尖峰记录里每 +2 实例一对尖峰）。
+                // 占位尺寸本来就贴近真实值，绝大多数批次尺寸不变、直接跳过。
+                const sizeChanged = created.some(
+                    (n, i) =>
+                        Math.abs(n.width - sizeBefore[i].w) > 0.5 ||
+                        Math.abs(n.height - sizeBefore[i].h) > 0.5
+                );
+                if (sizeChanged) {
+                    this.relayout();
+                    this.updateViewport();
+                }
+                // 换真后的 CM 下一帧才排好，补一次补偿重测
+                // （settleMounted 内部只在尺寸真的变了时才重排）
                 this.scheduleMeasureSettle();
             }
             if (this.queue.length > 0) {
@@ -2020,6 +2134,7 @@ export class MapCanvas {
     /** 挂载节点到画布。 */
     private mountNode(node: MapNode): void {
         if (!node.wrapper) return;
+        this.mountTotal += 1;
         this.refreshWrapperClasses(node);
         const alreadyMounted =
             this.mounted.has(node.uid) && node.wrapper.parentElement === this.nodeLayer;
@@ -2063,6 +2178,7 @@ export class MapCanvas {
         if (uid === this.editingUid || uid === this.drag?.uid) return;
         const node = this.byUid.get(uid);
         if (!node?.wrapper) return;
+        this.unmountTotal += 1;
         if (node.wrapper.parentElement === this.nodeLayer) node.wrapper.remove();
         if (this.mounted.delete(uid)) this.mountedVersion += 1;
     }
@@ -2076,7 +2192,11 @@ export class MapCanvas {
      */
     private positionNode(node: MapNode): void {
         if (!node.wrapper) return;
-        node.wrapper.style.transform = `translate(${node.x}px, ${node.y}px)`;
+        // 先比较再写：整树重排时大多数节点位置没变，不碰 DOM
+        const transform = `translate(${node.x}px, ${node.y}px)`;
+        if (node.wrapper.style.transform !== transform) {
+            node.wrapper.style.transform = transform;
+        }
     }
 
     /**
@@ -2097,12 +2217,23 @@ export class MapCanvas {
         const top = (-this.panY) / this.zoom - margin;
         const right = (view.width - this.panX) / this.zoom + margin;
         const bottom = (view.height - this.panY) / this.zoom + margin;
+        // 卸载用大圈（常挂载余量的 UNMOUNT_MARGIN_MULT 倍）
+        const outerMargin = margin * UNMOUNT_MARGIN_MULT;
+        const outerLeft = (-this.panX) / this.zoom - outerMargin;
+        const outerTop = (-this.panY) / this.zoom - outerMargin;
+        const outerRight = (view.width - this.panX) / this.zoom + outerMargin;
+        const outerBottom = (view.height - this.panY) / this.zoom + outerMargin;
 
         // 先记下这一轮「应该可见」的集合，再统一卸载：
         // 折叠操作会让整棵子树从 walkVisible 里消失，如果只在遍历里卸载，
         // 已经挂载但不再被访问的节点会永远留在 DOM 里（层级 0 实测 27 个）。
         const visible = new Set<string>();
+        // 整棵可见树的 uid（不论在不在挂载圈里）：折叠消失的子树不在其中，
+        // 卸载判据要靠它，不能靠大圈（折叠节点的坐标还停在原地，会被大圈留住）
+        const allVisible = new Set<string>();
+        const interacting = this.interactionActive();
         walkVisible(this.root, (node) => {
+            allVisible.add(node.uid);
             const inside =
                 node.x + node.width >= left &&
                 node.x <= right &&
@@ -2111,23 +2242,50 @@ export class MapCanvas {
             const shouldMount = !this.virtualization || inside || node.uid === this.editingUid;
             if (!shouldMount) return;
             visible.add(node.uid);
-            if (node.wrapper?.parentElement !== this.nodeLayer) this.mountNode(node);
-            else if (!this.mounted.has(node.uid)) {
+            if (node.wrapper?.parentElement !== this.nodeLayer) {
+                // 手势期间不新挂载（用户要求：拖到没挂的区域先空着，松手后
+                // 预热泵分批平滑补齐）。挂载带 CM 子树的节点会触发它的
+                // 重测量，一批叠起来就是「起步卡」的那串长任务
+                if (interacting) return;
+                this.mountNode(node);
+            } else if (!this.mounted.has(node.uid)) {
                 this.mounted.add(node.uid);
                 this.mountedVersion += 1;
             }
         });
+        // 折叠 / 删除而离开可见树的节点无条件卸载（大圈判据不适用：
+        // 它们的坐标还停在原地，光看出身会被大圈误留）
         for (const uid of Array.from(this.mounted)) {
-            if (!visible.has(uid)) this.unmountNode(uid);
+            if (visible.has(uid)) continue;
+            if (!allVisible.has(uid)) {
+                this.unmountNode(uid);
+                continue;
+            }
+            // 手势期间不卸载：拖回来时马上就要它，卸载再挂会触发 CM 重测量
+            if (interacting) continue;
+            // 小圈外、大圈内 = 预热挂载区：留住（见 UNMOUNT_MARGIN_MULT）
+            const node = this.byUid.get(uid);
+            if (node) {
+                const inOuter =
+                    node.x + node.width >= outerLeft &&
+                    node.x <= outerRight &&
+                    node.y + node.height >= outerTop &&
+                    node.y <= outerBottom;
+                if (inOuter) continue;
+            }
+            this.unmountNode(uid);
         }
         // 没有任何节点进出 DOM：连线/按钮可见性与上一帧相同，整轮跳过
         if (this.mountedVersion !== this.visibilityVersion) {
             this.visibilityVersion = this.mountedVersion;
             this.updateLinksVisibility();
+            this.updateInternalLinksVisibility();
             this.updateExpandButtonsVisibility();
         }
         // 视口 / 容器尺寸变化：缩略图范围与视口框都要跟上
         this.scheduleMinimap();
+        // 空闲时把大圈预热填满（手势中这一轮会自动跳过）
+        this.schedulePrewarm();
     }
 
     /** 合并同一轮的高频视口更新。 */
@@ -2138,6 +2296,71 @@ export class MapCanvas {
             this.updateViewport();
             this.options.onViewChange();
         }, 0);
+    }
+
+    /**
+     * 空闲预热挂载：把「大圈」（卸载圈）里还没挂载的节点分批挂进 DOM。
+     *
+     * 与换真泵的分工：泵管「内容实例」（占位 → 真实 CM），预热管「DOM 挂载」。
+     * 手势期间不跑——用户拖到没挂载的区域时画面先空着，松手后这里分批
+     * 平滑补齐（schedulePrewarm(30)），起步不再有「一批 CM 子树同时插入
+     * DOM → 各自重测量」的长任务簇。换真泵有积压时让路（内容没建好，
+     * 挂上也还是占位）。挂上的占位节点会自然进换真队列。
+     */
+    private schedulePrewarm(delay = PREWARM_DELAY_MS): void {
+        if (this.prewarmTimer !== null) return;
+        this.prewarmTimer = setTimeout(() => {
+            this.prewarmTimer = null;
+            if (!this.active || !this.root || !this.virtualization) return;
+            // 手势优先：这轮不跑，结束后由 handlePointerUp 再排
+            if (this.interactionActive()) return;
+            if (this.queue.length > 0) {
+                this.schedulePrewarm();
+                return;
+            }
+            if (this.mounted.size >= PREWARM_CAP) return;
+            const view = this.viewSize();
+            if (view.width <= 0 || view.height <= 0) return;
+            const margin = VIEW_MARGIN / this.zoom;
+            const outerMargin = margin * UNMOUNT_MARGIN_MULT;
+            const inner = {
+                left: -this.panX / this.zoom - margin,
+                top: -this.panY / this.zoom - margin,
+                right: (view.width - this.panX) / this.zoom + margin,
+                bottom: (view.height - this.panY) / this.zoom + margin,
+            };
+            const outer = {
+                left: -this.panX / this.zoom - outerMargin,
+                top: -this.panY / this.zoom - outerMargin,
+                right: (view.width - this.panX) / this.zoom + outerMargin,
+                bottom: (view.height - this.panY) / this.zoom + outerMargin,
+            };
+            const inBox = (node: MapNode, box: typeof inner): boolean =>
+                node.x + node.width >= box.left &&
+                node.x <= box.right &&
+                node.y + node.height >= box.top &&
+                node.y <= box.bottom;
+            let mountedRing = 0;
+            let more = false;
+            walkVisible(this.root, (node) => {
+                if (!node.wrapper || node.wrapper.parentElement === this.nodeLayer) return;
+                // 小圈必须始终是满的（数量有限，一次补齐）
+                if (inBox(node, inner)) {
+                    this.mountNode(node);
+                    return;
+                }
+                if (!inBox(node, outer)) return;
+                if (this.mounted.size >= PREWARM_CAP) return;
+                if (mountedRing >= PREWARM_BATCH) {
+                    more = true;
+                    return;
+                }
+                this.mountNode(node);
+                mountedRing++;
+            });
+            // 大圈外圈还有存货就接着排下一轮
+            if (more) this.schedulePrewarm();
+        }, delay);
     }
 
     // ==================================================================
@@ -2157,6 +2380,8 @@ export class MapCanvas {
         }
         this.syncLinksExtent();
         this.syncLinks();
+        // 内链箭头跟着布局走（节点坐标变了，箭头端点与弯曲都要重算）
+        this.syncInternalLinks();
         this.syncExpandButtons();
         // 节点坐标变了：缩略图里的方块要重画（合并到下一轮）
         this.scheduleMinimap();
@@ -2209,7 +2434,8 @@ export class MapCanvas {
             const d = single
                 ? `M ${x1} ${y1} L ${x2} ${y2}`
                 : `M ${x1} ${y1} H ${busX} V ${y2} H ${x2}`;
-            path.setAttribute('d', d);
+            // 先比较再写：relayout 每轮都会跑这里，不变的 path 不碰 DOM
+            if (path.getAttribute('d') !== d) path.setAttribute('d', d);
         });
         for (const [uid, path] of this.linkPaths) {
             if (!alive.has(uid)) {
@@ -2229,6 +2455,91 @@ export class MapCanvas {
             const parentMounted = node?.parent ? this.mounted.has(node.parent.uid) : false;
             path.style.display = this.mounted.has(uid) || parentMounted ? '' : 'none';
         }
+    }
+
+    /** 内链箭头可见性：与树连线同口径（端点任一挂载即显示）。 */
+    private updateInternalLinksVisibility(): void {
+        for (const entry of this.ilinkEntries.values()) {
+            const show =
+                this.mounted.has(entry.group.dataset.from ?? '') ||
+                this.mounted.has(entry.group.dataset.to ?? '');
+            entry.group.style.display = show ? '' : 'none';
+        }
+    }
+
+    /** 选中节点相关的内链箭头提到全不透明（悬停高亮由 CSS :hover 负责）。 */
+    private updateInternalLinkEmphasis(): void {
+        const sel = this.selectedUid;
+        for (const entry of this.ilinkEntries.values()) {
+            const active =
+                !!sel &&
+                (entry.group.dataset.from === sel || entry.group.dataset.to === sel);
+            entry.group.classList.toggle('lwm-ilink-active', active);
+        }
+    }
+
+    /**
+     * 同步内链箭头：只画两端都在可见树里的对（折叠子树里的目标不画；
+     * 点击跳转时 revealUid 展开祖先后，下一轮同步自然会把它画出来）。
+     *
+     * 创建 / 复用 / 回收的模式抄 syncLinks：alive 集合 + 遍历回收。
+     * 几何：中心连线与两个节点矩形边框的交点作为起止（不穿节点），
+     * 中间一个微弯的二次贝塞尔（弯曲量随距离收敛），目标端一个小实心三角。
+     */
+    private syncInternalLinks(): void {
+        if (!this.root) return;
+        const visible = new Set<string>();
+        walkVisible(this.root, (node) => visible.add(node.uid));
+        // 遮挡矩形：全部可见节点。虚线虽然在 DOM 序上已经压在节点下面，
+        // 但节点底色是低透明度混色，虚线会透过节点身体显示出来 ——
+        // 看起来像「箭头画在节点上面」。这里按节点矩形把路径剪成若干段，
+        // 穿过节点的部分直接不画（端点所属的两个节点除外，端点本来就该贴边）。
+        const occluders: Array<{ x: number; y: number; w: number; h: number }> = [];
+        walkVisible(this.root, (node) => {
+            occluders.push({ x: node.x, y: node.y, w: node.width, h: node.height });
+        });
+        const alive = new Set<string>();
+        for (const pair of this.ilinkPairs) {
+            const from = this.byUid.get(pair.fromUid);
+            const to = this.byUid.get(pair.toUid);
+            if (!from || !to || from === to) continue;
+            if (!visible.has(from.uid) || !visible.has(to.uid)) continue;
+            const key = `${pair.fromUid}->${pair.toUid}`;
+            alive.add(key);
+            let entry = this.ilinkEntries.get(key);
+            if (!entry) {
+                const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                group.classList.add('lwm-ilink');
+                group.dataset.from = pair.fromUid;
+                group.dataset.to = pair.toUid;
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.classList.add('lwm-ilink-path');
+                const head = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                head.classList.add('lwm-ilink-head');
+                // 命中线放最上层：12px 透明粗线 —— 1.5px 的虚线本身点不中
+                const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                hit.classList.add('lwm-ilink-hit');
+                group.append(path, head, hit);
+                this.ilinkLayer.appendChild(group);
+                entry = { group, path, head, hit };
+                this.ilinkEntries.set(key, entry);
+            }
+            const geo = computeInternalLinkGeometry(from, to, occluders);
+            if (!geo) continue;
+            entry.path.setAttribute('d', geo.d);
+            // 命中线不裁剪（保持整条可点）：节点区域上的点击本来就会被
+            // 上层的节点抢走，轮不到这条线
+            entry.hit.setAttribute('d', geo.hitD);
+            entry.head.setAttribute('points', geo.points);
+        }
+        for (const [key, entry] of this.ilinkEntries) {
+            if (!alive.has(key)) {
+                entry.group.remove();
+                this.ilinkEntries.delete(key);
+            }
+        }
+        this.updateInternalLinkEmphasis();
+        this.updateInternalLinksVisibility();
     }
 
     /** 同步展开按钮（有子节点的可见节点各一个）。 */
@@ -2255,9 +2566,11 @@ export class MapCanvas {
             button.title = node.expand
                 ? '收起'
                 : `展开（收起了 ${node.descendantCount} 项）`;
-            button.style.transform = `translate(${node.x + node.width + 4}px, ${
+            // 先比较再写（同 syncLinks）：不变的按钮不碰 DOM
+            const btnTransform = `translate(${node.x + node.width + 4}px, ${
                 node.y + node.height / 2 - 8
             }px)`;
+            if (button.style.transform !== btnTransform) button.style.transform = btnTransform;
         });
         for (const [uid, button] of this.expandButtons) {
             if (!alive.has(uid)) {
@@ -2750,6 +3063,39 @@ export class MapCanvas {
         if (!this.active || event.button === 2) return;
         const target = event.target as Element | null;
 
+        // 内链箭头：整条命中线都是热区。单向 A→B 的箭头是**双向跳转**：
+        // 点前半段（靠近源节点）跳到目标 B，点后半段（靠近箭头）跳回源 A ——
+        // 两个节点间可以来回切换。
+        // 必须最先拦截：箭头压在最底层，落点同时也可能命中节点 / 空白
+        if (target?.closest?.('.lwm-ilink')) {
+            event.preventDefault();
+            event.stopPropagation();
+            const group = target.closest('.lwm-ilink') as SVGGElement;
+            const fromUid = group.dataset.from ?? '';
+            const toUid = group.dataset.to ?? '';
+            const hit = group.querySelector<SVGPathElement>('.lwm-ilink-hit');
+            if (!hit || !fromUid || !toUid) return;
+            // 命中线是世界坐标：点击点换算到世界坐标后，找线上最近采样点
+            // 属于前半段还是后半段（48 段采样，点击是低频操作，随便算）
+            const world = this.screenToWorld(event.clientX, event.clientY);
+            const total = hit.getTotalLength();
+            let bestLen = 0;
+            let bestDist = Infinity;
+            const SAMPLES = 48;
+            for (let i = 0; i <= SAMPLES; i++) {
+                const l = (total * i) / SAMPLES;
+                const p = hit.getPointAtLength(l);
+                const d = Math.hypot(p.x - world.x, p.y - world.y);
+                if (d < bestDist) {
+                    bestDist = d;
+                    bestLen = l;
+                }
+            }
+            const dest = bestLen <= total / 2 ? toUid : fromUid;
+            this.options.onInternalLinkNavigate?.(dest);
+            return;
+        }
+
         // 展开按钮：交给 click 处理（要读 ctrlKey），不要启动拖动
         if (target?.closest?.('.lwm-expand-btn')) {
             event.stopPropagation();
@@ -2878,9 +3224,13 @@ export class MapCanvas {
         const href = link?.getAttribute('data-href')?.trim();
         if (!href) return false;
 
-        // 锚点在导图视图里没法跳（正文不在这个画布上），但也不要让这一下
-        // 掉进「Ctrl 点节点 = 切换多选」的分支
-        if (href.startsWith('#')) return true;
+        // 内链（#标题）：解析到目标标题节点并跳转（断链就只吞掉手势，
+        // 不要掉进「Ctrl 点节点 = 切换多选」的分支）
+        if (href.startsWith('#')) {
+            const uid = this.options.resolveInternalLink?.(href.slice(1)) ?? null;
+            if (uid) this.options.onInternalLinkNavigate?.(uid);
+            return true;
+        }
 
         // webview 宿主注入的 API；探针 / 单独浏览器里没有时，只吞掉手势
         const vscodeApi = (
@@ -3194,7 +3544,10 @@ export class MapCanvas {
         } catch {
             /* 指针已释放：忽略 */
         }
-        // 手势结束：换真泵可以继续建 CM 了
+        // 手势结束：视口立即补齐 + 外圈分批预热 + 换真泵继续
+        // （手势期间被推迟的挂载都在这一轮平滑补上）
+        this.updateViewport();
+        this.schedulePrewarm(30);
         this.resumePump();
     }
 
@@ -3218,6 +3571,9 @@ export class MapCanvas {
         } catch {
             /* 忽略 */
         }
+        // 与正常松手一致：补挂载 + 预热 + 恢复换真
+        this.updateViewport();
+        this.schedulePrewarm(30);
         this.resumePump();
     }
 
@@ -3322,6 +3678,7 @@ export class MapCanvas {
         }
         this.handlers.length = 0;
         if (this.pumpTimer !== null) clearTimeout(this.pumpTimer);
+        if (this.prewarmTimer !== null) clearTimeout(this.prewarmTimer);
         if (this.viewTimer !== null) clearTimeout(this.viewTimer);
         if (this.settleTimer !== null) clearTimeout(this.settleTimer);
         if (this.settleRaf !== null) cancelAnimationFrame(this.settleRaf);
@@ -3329,6 +3686,8 @@ export class MapCanvas {
         this.minimapTimer = null;
         if (this.zoomTimer !== null) clearTimeout(this.zoomTimer);
         this.zoomTimer = null;
+        if (this.flashTimer !== null) clearTimeout(this.flashTimer);
+        this.flashTimer = null;
         this.stopAutoPan();
         for (const entry of this.displays.values()) entry.display.destroy();
         this.displays.clear();
@@ -3473,17 +3832,144 @@ export class MapCanvas {
         }
     }
 
-    /** 调试快照（探针用）：只暴露数量与视口，不暴露内部对象。 */
+    /** 调试快照（探针 / 性能监控 HUD 用）：只暴露数量与视口，不暴露内部对象。 */
     debugState(): Record<string, unknown> {
         return {
             nodes: this.byUid.size,
             mounted: this.mounted.size,
             displays: this.displays.size,
             links: this.linkPaths.size,
+            ilinks: this.ilinkEntries.size,
             zoom: this.zoom,
             panX: this.panX,
             panY: this.panY,
             active: this.active,
+            // —— 性能监控 ——
+            queue: this.queue.length,
+            tier: this.renderTier,
+            interacting: this.interactionActive(),
+            editing: this.editingUid !== null,
+            createdTotal: this.createdTotal,
+            evictedTotal: this.evictedTotal,
+            mountTotal: this.mountTotal,
+            unmountTotal: this.unmountTotal,
         };
     }
+}
+
+/**
+ * 内链箭头几何：起止点取「中心连线与节点矩形边框的交点」（不穿节点），
+ * 中间一个微弯的二次贝塞尔，目标端沿末端切线画小实心三角。
+ *
+ * 可见路径按遮挡矩形裁剪：贝塞尔采样成 64 段折线，中点落在任一节点
+ * 矩形（外扩 3px）里的段直接不画，得到若干 M/L 子路径 —— 节点底色是
+ * 半透明混色，不裁的话虚线会透过节点身体显示出来（看着像画在节点上）。
+ * 源 / 目标节点自身除外（端点本来就该贴在它们的边框上）。
+ *
+ * @returns 可见路径 d（已裁剪）、命中路径 hitD（完整曲线）与三角 points；
+ *          两节点中心重合 / 距离过近时返回 null
+ */
+function computeInternalLinkGeometry(
+    from: MapNode,
+    to: MapNode,
+    occluders: Array<{ x: number; y: number; w: number; h: number }>
+): { d: string; hitD: string; points: string } | null {
+    const cx1 = from.x + from.width / 2;
+    const cy1 = from.y + from.height / 2;
+    const cx2 = to.x + to.width / 2;
+    const cy2 = to.y + to.height / 2;
+    const dx = cx2 - cx1;
+    const dy = cy2 - cy1;
+    if (dx === 0 && dy === 0) return null;
+    const t1 = rayExitRect(cx1, cy1, dx, dy, from);
+    const t2 = rayExitRect(cx2, cy2, -dx, -dy, to);
+    const x1 = cx1 + dx * t1;
+    const y1 = cy1 + dy * t1;
+    const x2 = cx2 - dx * t2;
+    const y2 = cy2 - dy * t2;
+    const len = Math.hypot(x2 - x1, y2 - y1);
+    if (len < 1) return null;
+    // 微弯：控制点在连线中点的法向上，弯曲量随距离收敛（10~60px），
+    // 避免和正交的树连线重合，也不会弯成夸张的弧线
+    const bend = Math.min(60, Math.max(10, len * 0.12));
+    const nx = -(y2 - y1) / len;
+    const ny = (x2 - x1) / len;
+    const cx = (x1 + x2) / 2 + nx * bend;
+    const cy = (y1 + y2) / 2 + ny * bend;
+    // 目标端三角：沿二次贝塞尔的末端切线方向
+    const tx = x2 - cx;
+    const ty = y2 - cy;
+    const tl = Math.hypot(tx, ty) || 1;
+    const ux = tx / tl;
+    const uy = ty / tl;
+    const headLen = 8;
+    const headW = 5;
+    const bx = x2 - ux * headLen;
+    const by = y2 - uy * headLen;
+    const points = `${x2},${y2} ${bx - uy * (headW / 2)},${by + ux * (headW / 2)} ${bx + uy * (headW / 2)},${by - ux * (headW / 2)}`;
+
+    const hitD = `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`;
+
+    // 遮挡矩形：排除源 / 目标节点自身，外扩 3px 让虚线在节点边缘外就断开
+    const pad = 3;
+    const rects = occluders.filter(
+        (r) =>
+            !(r.x === from.x && r.y === from.y && r.w === from.width && r.h === from.height) &&
+            !(r.x === to.x && r.y === to.y && r.w === to.width && r.h === to.height)
+    );
+    // 二次贝塞尔采样：p(t) = (1-t)²p0 + 2(1-t)t·c + t²p1
+    const SAMPLES = 64;
+    const pointAt = (t: number): { x: number; y: number } => {
+        const u = 1 - t;
+        return {
+            x: u * u * x1 + 2 * u * t * cx + t * t * x2,
+            y: u * u * y1 + 2 * u * t * cy + t * t * y2,
+        };
+    };
+    const occluded = (x: number, y: number): boolean => {
+        for (const r of rects) {
+            if (
+                x >= r.x - pad &&
+                x <= r.x + r.w + pad &&
+                y >= r.y - pad &&
+                y <= r.y + r.h + pad
+            ) {
+                return true;
+            }
+        }
+        return false;
+    };
+    let d = '';
+    let penDown = false;
+    let prev = pointAt(0);
+    for (let i = 1; i <= SAMPLES; i++) {
+        const cur = pointAt(i / SAMPLES);
+        const midX = (prev.x + cur.x) / 2;
+        const midY = (prev.y + cur.y) / 2;
+        if (!occluded(midX, midY)) {
+            d += penDown ? ` L ${cur.x} ${cur.y}` : ` M ${prev.x} ${prev.y} L ${cur.x} ${cur.y}`;
+            penDown = true;
+        } else {
+            penDown = false;
+        }
+        prev = cur;
+    }
+    if (!d) return null;
+    return { d, hitD, points };
+}
+
+/** 从节点中心沿 (dx,dy) 方向出射，求与矩形边框交点的射线参数 t。 */
+function rayExitRect(
+    cx: number,
+    cy: number,
+    dx: number,
+    dy: number,
+    node: MapNode
+): number {
+    let t = Infinity;
+    if (dx > 0) t = Math.min(t, (node.x + node.width - cx) / dx);
+    else if (dx < 0) t = Math.min(t, (node.x - cx) / dx);
+    if (dy > 0) t = Math.min(t, (node.y + node.height - cy) / dy);
+    else if (dy < 0) t = Math.min(t, (node.y - cy) / dy);
+    return Number.isFinite(t) && t > 0 ? t : 0;
 }

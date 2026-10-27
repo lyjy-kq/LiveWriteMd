@@ -66,6 +66,10 @@ function readMindmapSettings(
         mindmapPlainZoom: Number(pick('mindmapPlainZoom')) || 40,
         // 手势期清晰度优先：默认关闭
         mindmapGestureCrisp: Boolean(pick('mindmapGestureCrisp')),
+        // 内链箭头层：默认开启
+        mindmapInternalLinks: Boolean(pick('mindmapInternalLinks')),
+        // 性能监控浮层：默认关闭
+        mindmapPerfHud: Boolean(pick('mindmapPerfHud')),
     };
 }
 

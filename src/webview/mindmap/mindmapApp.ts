@@ -30,6 +30,7 @@ import {
 import type { NodeDisplay } from './miniCm.js';
 import { MindmapSearchBar } from './searchBar.js';
 import { ensureMindMapCss } from './mindmapStyles.js';
+import { PerfHud } from './perfHud.js';
 import { buildMindMapTree } from './treeBuilder.js';
 import {
     MapCanvas,
@@ -58,12 +59,22 @@ import {
     deleteNode,
     deleteNodes,
     deleteSelfKeepChildren,
+    extractSubtreeText,
     findNodeByUid as findTreeNodeByUid,
+    insertSubtreeFromText,
     isMediaKind,
     moveNode,
     renameNode,
     type NewNodeSpec,
 } from './markdownEdit.js';
+// 写剪贴板走扩展侧 relay（webview 直接写剪贴板在 VS Code 里不稳定）；
+// 探针 / 纯浏览器环境没注入 postMessage 时退回 navigator.clipboard
+import { copyToClipboard } from '../codemirror/extensions/livePreview/state.js';
+// 内链（[[#标题]] / [文字](#标题)）的提取与标题匹配规则与 live 侧共用
+import {
+    extractInternalLinkTargets,
+    matchHeadingIndex,
+} from '../../shared/internalLink.js';
 
 /** 默认运行时设置（与 settingsSchema 默认值对齐）。 */
 const DEFAULT_RUNTIME_SETTINGS: MindMapRuntimeSettings = {
@@ -85,13 +96,17 @@ const DEFAULT_RUNTIME_SETTINGS: MindMapRuntimeSettings = {
     // 手势期清晰度优先：默认开启。实测平移帧间隔与提升模式一致、
     // 滚轮缩放反而少了 41ms 的建层尖峰，所以默认不提升。
     mindmapGestureCrisp: true,
+    // 内链箭头层：默认开启
+    mindmapInternalLinks: true,
+    // 性能监控浮层：默认关闭（开了才有采样开销）
+    mindmapPerfHud: false,
 };
 
 /**
  * 文本节点：编辑中内容变高（回车换行 / 长行折行）时要把单元格撑高。
  * 代码、表格、公式等媒体节点不在此列 —— 它们编辑时保持盒内滚动。
  */
-const TEXT_NODE_KINDS = new Set<MindMapNodeKind>(['heading', 'list', 'para']);
+const TEXT_NODE_KINDS = new Set<MindMapNodeKind>(['heading', 'list', 'para', 'quote']);
 
 /** 导图应用构造参数。 */
 export interface MindMapAppOptions {
@@ -162,6 +177,8 @@ export class MindMapApp {
     private readonly canvas: MapCanvas;
     /** 导图内搜索条。 */
     private readonly searchBar: MindmapSearchBar;
+    /** 性能监控浮层（设置开启时非 null）。 */
+    private perfHud: PerfHud | null = null;
 
     /** 当前文档全文与按行缓存（computeDoc 高频调用，避免反复 split）。 */
     private markdown = '';
@@ -303,6 +320,9 @@ export class MindMapApp {
             canDrop: (dragUid, parentUid) => this.validateDropParent(dragUid, parentUid),
             onMarqueeSelect: (uids) => this.applyMarqueeSelection(uids),
             onDisplayEdit: (node, text) => this.handleDisplayEdit(node, text),
+            // 内链：节点里的 #锚点 链接（Ctrl+点击）与内链箭头共用同一套跳转
+            resolveInternalLink: (target) => this.resolveInternalLinkUid(target),
+            onInternalLinkNavigate: (uid) => this.handleInternalLinkNavigate(uid),
         } satisfies MapCanvasOptions);
 
         this.applyNodeSizeVars();
@@ -316,6 +336,8 @@ export class MindMapApp {
         this.canvas.setVirtualization(this.isPerformanceEnabled());
         // 离屏实例 LRU 淘汰：默认关闭，必须跟设置同步，否则旧行为会一直开着
         this.canvas.setDisplayCacheEnabled(this.settings.mindmapDisplayCache);
+        // 性能监控浮层：按初始设置挂/摘
+        this.syncPerfHud();
         this.createToolbar();
         this.createMultiToolbar();
         this.createContextMenu();
@@ -337,6 +359,14 @@ export class MindMapApp {
     /** 调试/探针用：取底层画布（生产代码不应调用）。 */
     debugGetInstance(): MapCanvas {
         return this.canvas;
+    }
+
+    /**
+     * 内存统计用：导图内部计数（节点/已挂载/显示实例/连线等）。
+     * 字段口径见 MapCanvas.debugState。
+     */
+    debugStats(): Record<string, unknown> {
+        return this.canvas.debugState();
     }
 
     /**
@@ -365,6 +395,8 @@ export class MindMapApp {
             return;
         }
         this.canvas.setData(this.bakeExpandState(tree));
+        // 树变了：内链箭头按新内容重算
+        this.syncInternalLinks();
         this.toggleEmptyHint(tree.children.length === 0);
     }
 
@@ -392,6 +424,17 @@ export class MindMapApp {
         // 默认值是 true，初始化时 previous 与 settings 相同，画布就永远
         // 拿不到 .lwm-crisp。setGestureCrisp 内部是 classList.toggle，幂等。
         this.canvas.setGestureCrisp(this.settings.mindmapGestureCrisp);
+
+        // 内链箭头开关：只影响箭头层（不量尺寸、不动布局），随时可切
+        if (previous.mindmapInternalLinks !== this.settings.mindmapInternalLinks) {
+            this.syncInternalLinks();
+        }
+
+        // 性能监控浮层：开关切换即挂/摘（HUD 内部是 rAF + 500ms 定时器，
+        // 隐藏时整个销毁，不留后台采样）
+        if (previous.mindmapPerfHud !== this.settings.mindmapPerfHud) {
+            this.syncPerfHud();
+        }
 
         const performanceChanged =
             previous.mindmapPerformanceMode !== this.settings.mindmapPerformanceMode;
@@ -558,6 +601,9 @@ export class MindMapApp {
         document.removeEventListener('keydown', this.onDocumentKeyDown);
         window.removeEventListener('blur', this.onWindowBlur);
         this.searchBar.close();
+        // 性能监控浮层：停采样、恢复 gBCR 包装
+        this.perfHud?.destroy();
+        this.perfHud = null;
         if (this.toolbarTimer) clearInterval(this.toolbarTimer);
         if (this.pendingDeleteTimer !== null) clearTimeout(this.pendingDeleteTimer);
         this.pendingDeleteTimer = null;
@@ -663,6 +709,13 @@ export class MindMapApp {
             }
             case 'para':
                 return { doc: sliceRange(range).trim(), sentinel: true };
+            case 'quote':
+                // 引用块：整段源码（含 > 标记）喂给 mini-CM，渲染与 live 一致；
+                // 列表项里的引用行带父级缩进，与媒体节点一样先去掉
+                return {
+                    doc: selfRange ? dedentNodeSource(sliceRange(selfRange)) : node.text,
+                    sentinel: true,
+                };
             case 'list':
                 // 只渲染列表项自身（含首段续行），子列表是独立节点。
                 // 必须先去掉父级缩进：嵌套项在源文档里带 2 空格 / 1 个 Tab，
@@ -836,12 +889,21 @@ export class MindMapApp {
         const bar = document.createElement('div');
         bar.className = 'lwm-toolbar';
         bar.style.display = 'none';
+
+        bar.appendChild(this.createAddMenu('child', '＋子节点'));
+        bar.appendChild(this.createAddMenu('sibling', '＋兄弟'));
+        // 「粘贴」：剪贴板文本解析成子节点挂到当前节点下（Ctrl+V）。
+        // meta / 媒体节点没有子节点的概念，showToolbar 里会禁用它
+        const pasteButton = document.createElement('button');
+        pasteButton.type = 'button';
+        pasteButton.dataset.act = 'paste';
+        pasteButton.textContent = '粘贴';
+        pasteButton.title = '把剪贴板内容解析成节点，挂到当前节点下面（Ctrl+V）';
+        bar.appendChild(pasteButton);
+        bar.appendChild(this.createDeleteMenu());
         // 「拆分」：只在编辑态选中了文字时出现（见 refreshSplitButton）。
         // 主按钮 = 拆到子节点；悬停二级菜单可选拆到兄弟节点。
         bar.appendChild(this.createSplitMenu());
-        bar.appendChild(this.createAddMenu('child', '＋子节点'));
-        bar.appendChild(this.createAddMenu('sibling', '＋兄弟'));
-        bar.appendChild(this.createDeleteMenu());
         // 工具条上的按下事件不要漏给画布（避免触发平移/选中）。
         // 还要 preventDefault 挡住默认的焦点转移：点按钮时编辑中的节点
         // 不该失焦（失焦会立刻 blur 提交会话，「拆分到子节点」这类
@@ -868,6 +930,8 @@ export class MindMapApp {
             // 删除的二级菜单项（只删自己 / 只删子节点 / 连同子树）
             const delItem = target.closest<HTMLElement>('[data-del]');
             if (delItem) {
+                // class 禁用的项（self：含非标题子节点的标题）：点了不执行
+                if (delItem.classList.contains('lwm-item-disabled')) return;
                 this.deleteFromMenu(delItem);
                 return;
             }
@@ -890,6 +954,11 @@ export class MindMapApp {
                 if (this.splitCapture) {
                     this.splitSelection(this.splitCapture, 'child');
                 }
+                return;
+            }
+            if (button.dataset.act === 'paste') {
+                // 粘贴是异步的（要读系统剪贴板），且不依赖编辑会话
+                void this.pasteFromClipboard();
                 return;
             }
             if (!this.selectedUid) return;
@@ -944,16 +1013,40 @@ export class MindMapApp {
         const bar = document.createElement('div');
         bar.className = 'lwm-toolbar lwm-multi-toolbar';
         bar.style.display = 'none';
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.dataset.act = 'multi-delete';
-        button.textContent = '删除 0 项';
-        bar.appendChild(button);
+        // 复制 / 剪切 / 粘贴 + 删除。剪贴板三件套作用在整个多选集合上；
+        // 粘贴的落点是最早选中的那个节点（pasteFromClipboard 的口径）
+        const addButton = (act: string, label: string, title: string): void => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.dataset.act = act;
+            button.textContent = label;
+            button.title = title;
+            bar.appendChild(button);
+        };
+        addButton('multi-copy', '复制', '把选中子树以 Markdown 源码复制到剪贴板（Ctrl+C）');
+        addButton('multi-cut', '剪切', '复制选中子树并删除（Ctrl+X）');
+        addButton('multi-paste', '粘贴', '把剪贴板内容解析成节点，挂到最早选中的节点下面（Ctrl+V）');
+        addButton('multi-delete', '删除 0 项', '删除选中的所有节点（再次点击确认）');
         // 操作条自己的事件不能漏给画布（否则点击会被当成空白点击 → 清空多选）
         bar.addEventListener('pointerdown', (event) => event.stopPropagation());
         bar.addEventListener('click', (event) => {
             event.stopPropagation();
-            if ((event.target as HTMLElement).closest('button')) this.deleteSelected();
+            const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button');
+            if (!button) return;
+            switch (button.dataset.act) {
+                case 'multi-copy':
+                    void this.copySelection();
+                    break;
+                case 'multi-cut':
+                    void this.cutSelection();
+                    break;
+                case 'multi-paste':
+                    void this.pasteFromClipboard();
+                    break;
+                default:
+                    this.deleteSelected();
+                    break;
+            }
         });
         this.container.appendChild(bar);
         this.multiBarEl = bar;
@@ -969,7 +1062,7 @@ export class MindMapApp {
             this.pendingDeleteMulti = false;
             return;
         }
-        const button = bar.querySelector<HTMLButtonElement>('button');
+        const button = bar.querySelector<HTMLButtonElement>('button[data-act="multi-delete"]');
         if (button) {
             button.textContent = this.pendingDeleteMulti
                 ? `确认删除 ${count} 项`
@@ -1260,6 +1353,9 @@ export class MindMapApp {
         const siblingDisabled = kind === 'root' || kind === 'meta';
         setDisabled('child', childDisabled);
         setDisabled('sibling', siblingDisabled);
+        // 粘贴 = 加子节点的一种，禁用口径与「＋子节点」一致（root 除外：
+        // root 可以往文末/第一个标题前粘，而 addChild 走的是同一条 root 分支）
+        setDisabled('paste', kind === 'meta' || media);
         setDisabled('delete', kind === 'root');
         setMenuDisabled('child', childDisabled);
         setMenuDisabled('sibling', siblingDisabled);
@@ -1291,6 +1387,27 @@ export class MindMapApp {
                 childCount === 0
                     ? '当前节点没有子节点'
                     : '保留当前节点，删掉它下面的所有分支';
+        }
+        // 「只删除自己」的前提是子节点能整体上移一级。标题的子标题可以
+        //（## 升 #，天然还是根的子节点），但**非标题**子节点不行：
+        // Markdown 没有「节结束」标记，文档中部的顶层段落/列表/表格必然
+        // 归入前一个标题的章节 —— 提升出去就挂到了上一个兄弟标题下面
+        //（看着像「删了 B，内容全跑进 A」）。这种标题禁用该项并说明原因。
+        // 注意用 class 而不是 disabled 属性：禁用按钮不派发鼠标事件，
+        // title 里的原因提示会永远看不到。
+        const selfItem = deleteMenu?.querySelector<HTMLButtonElement>(
+            '[data-del="self"]'
+        );
+        if (selfItem) {
+            const hasNonHeadingChild =
+                treeNode?.node.data._kind === 'heading' &&
+                treeNode.node.children.some(
+                    (child) => child.data._kind !== 'heading'
+                );
+            selfItem.classList.toggle('lwm-item-disabled', !!hasNonHeadingChild);
+            selfItem.title = hasNonHeadingChild
+                ? '子节点含段落 / 表格 / 代码等非标题内容：Markdown 里它们无法提升到顶层（会归入上一个标题的章节），请改用其它删除方式'
+                : '保留子节点，让它们接替当前节点的位置';
         }
         this.toolbarEl.style.display = 'flex';
         this.positionToolbar();
@@ -1403,10 +1520,34 @@ export class MindMapApp {
             // 进编辑这一帧按源码自然宽度重算一次，**只撑宽不缩窄**
             // （宽度不得低于显示时的宽度）；**高度保持不变**，
             // 装不下的部分在编辑区箱内纵向滚动（见 mindmapStyles）。
+            //
+            // 但必须有上限（仿 live：源码再长也不该改变排版宽度，
+            // 超长的行折行显示）：
+            // - 表格：封顶在节点自身的显示上限（60em，与列宽预算同一条
+            //   CSS 规则）——宽表的管道源码动辄上千 px，不限会把节点
+            //   拉成横跨整个画布；
+            // - 其它媒体：允许撑宽看源码，但给一个 60em 的绝对天花板。
             if (isMediaKind(session.kind)) {
                 const needed = this.measureEditingSourceWidth(display);
                 if (needed > session.baseWidth) {
-                    this.canvas.setNodeWidth(session.uid, needed);
+                    const nodeEl = display.container.closest('.lwm-node');
+                    const computedMax = nodeEl
+                        ? Number.parseFloat(getComputedStyle(nodeEl).maxWidth)
+                        : NaN;
+                    const fontSize = Number.parseFloat(
+                        getComputedStyle(display.view.contentDOM).fontSize
+                    );
+                    // 节点没写死上限（或量不到）时用 60em 兜底
+                    const fallbackCap = (Number.isFinite(fontSize) ? fontSize : 14) * 60;
+                    const nodeCap =
+                        Number.isFinite(computedMax) && computedMax > 0
+                            ? computedMax
+                            : fallbackCap;
+                    const cap =
+                        session.kind === 'table'
+                            ? nodeCap
+                            : Math.max(nodeCap, fallbackCap);
+                    this.canvas.setNodeWidth(session.uid, Math.min(needed, cap));
                 }
             }
             display.focusAt(x, y);
@@ -1667,6 +1808,8 @@ export class MindMapApp {
             this.pendingTree = null;
             this.currentTree = tree;
             this.canvas.setData(this.bakeExpandState(tree));
+            // 树变了：内链箭头按新内容重算
+            this.syncInternalLinks();
             this.toggleEmptyHint(tree.children.length === 0);
             return;
         }
@@ -1694,6 +1837,8 @@ export class MindMapApp {
             this.pendingTree = tree;
         } else {
             this.canvas.setData(this.bakeExpandState(tree));
+            // 树变了：内链箭头按新内容重算
+            this.syncInternalLinks();
             this.toggleEmptyHint(tree.children.length === 0);
         }
         this.options.onEdit(result.text);
@@ -1863,7 +2008,107 @@ export class MindMapApp {
         this.commit(deleteNodes(this.markdown, tree, uids));
     }
 
-    /** 把删除按钮切成红色「确认删除」态（4 秒后自动复位）。 */
+    // ==================================================================
+    // 剪贴板（复制 / 剪切 / 粘贴）
+    //
+    // 设计要点：剪贴板里只放**纯 Markdown 源码**（extractSubtreeText），
+    // 粘到文本框是普通文本，粘回导图由 insertSubtreeFromText 解析成
+    // 子节点挂到目标下面 —— 一种格式同时满足两个世界。
+    // ==================================================================
+
+    /** 写剪贴板：优先扩展侧 relay，失败退回 webview 自带剪贴板。 */
+    private async writeClipboardText(text: string): Promise<boolean> {
+        try {
+            await copyToClipboard(text);
+            return true;
+        } catch {
+            /* relay 不可用（探针 / 纯浏览器），走浏览器剪贴板 */
+        }
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /** 读剪贴板；读不到（权限/无焦点）返回空串。 */
+    private async readClipboardText(): Promise<string> {
+        try {
+            return await navigator.clipboard.readText();
+        } catch {
+            return '';
+        }
+    }
+
+    /**
+     * 剪贴板操作的对象集合：多选优先（按加入顺序），否则单选节点。
+     * root 不可复制（整篇文档没有可提取的区间）。
+     */
+    private clipboardTargetUids(): string[] {
+        const uids =
+            this.multiSelected.size > 0
+                ? [...this.multiSelected]
+                : this.selectedUid
+                  ? [this.selectedUid]
+                  : [];
+        return uids.filter((uid) => uid !== '0');
+    }
+
+    /** 复制选中子树到剪贴板（纯 Markdown）。 */
+    private async copySelection(): Promise<void> {
+        if (!this.currentTree) return;
+        const uids = this.clipboardTargetUids();
+        if (uids.length === 0) return;
+        const text = extractSubtreeText(this.markdown, this.currentTree, uids);
+        if (text) await this.writeClipboardText(text);
+    }
+
+    /**
+     * 剪切 = 复制 + 删除。
+     *
+     * 不走红按钮两段确认：内容已经进了剪贴板，误操作可以 Ctrl+Z 撤销，
+     * 再确认一次纯属打断。
+     */
+    private async cutSelection(): Promise<void> {
+        if (!this.currentTree) return;
+        const uids = this.clipboardTargetUids();
+        if (uids.length === 0) return;
+        const text = extractSubtreeText(this.markdown, this.currentTree, uids);
+        if (!text) return;
+        await this.writeClipboardText(text);
+        this.endEditBeforeStructuralOp();
+        const tree = this.currentTree;
+        // 同 deleteMultiSelected 的顺序：先清选中再重建
+        this.multiSelected.clear();
+        this.canvas.setMultiSelected(this.multiSelected);
+        this.selectedUid = null;
+        this.canvas.setSelected(null);
+        this.clearPendingDelete();
+        if (this.toolbarEl) this.toolbarEl.style.display = 'none';
+        this.updateMultiBar();
+        this.commit(deleteNodes(this.markdown, tree, uids));
+    }
+
+    /**
+     * 粘贴：剪贴板文本解析成子节点，挂到目标下面。
+     *
+     * 落点：唯一选中节点；多选时取最早点选的那个（多选条上的粘贴）；
+     * 什么都没选时落到根（追加到文末 / 第一个标题之前，由
+     * insertSubtreeFromText 按块类型决定）。
+     */
+    private async pasteFromClipboard(): Promise<void> {
+        if (!this.currentTree) return;
+        const targetUid =
+            this.selectedUid ?? [...this.multiSelected][0] ?? '0';
+        const clip = await this.readClipboardText();
+        if (!clip.trim()) return;
+        this.endEditBeforeStructuralOp();
+        this.commit(
+            insertSubtreeFromText(this.markdown, this.currentTree, targetUid, clip)
+        );
+    }
+
     private armDelete(uid: string, childCount: number): void {
         this.pendingDeleteUid = uid;
         if (this.pendingDeleteTimer !== null) clearTimeout(this.pendingDeleteTimer);
@@ -2007,6 +2252,102 @@ export class MindMapApp {
         this.canvas.centerOn(uid);
     }
 
+    // ==================================================================
+    // 文档内链接（内链）
+    // ==================================================================
+
+    /**
+     * 收集当前树的标题目录（文档顺序的文字 + uid）。
+     *
+     * 内链的两种消费方共用同一份目录：箭头配对（syncInternalLinks）与
+     * 节点内 #锚点 链接的点击解析（resolveInternalLinkUid）。
+     */
+    private collectHeadings(): { texts: string[]; uids: string[] } {
+        const texts: string[] = [];
+        const uids: string[] = [];
+        if (!this.currentTree) return { texts, uids };
+        const walk = (node: MindMapTreeNode): void => {
+            // 标题节点的 text 已去掉 `#` 标记，可直接参与匹配
+            if (node.data._kind === 'heading') {
+                texts.push(node.data.text);
+                uids.push(node.data.uid);
+            }
+            node.children.forEach(walk);
+        };
+        walk(this.currentTree);
+        return { texts, uids };
+    }
+
+    /**
+     * 同步内链箭头层：扫全部文本节点的源码，提取内链并解析到目标标题。
+     *
+     * 断链（目标标题不存在）/ 自指不画；同一对节点多条内链只画一条；
+     * 设置关闭时清空。每次整树重建 / 编辑回写后都要调用一次。
+     */
+    private syncInternalLinks(): void {
+        if (!this.currentTree || !this.settings.mindmapInternalLinks) {
+            this.canvas.setInternalLinks([]);
+            return;
+        }
+        const { texts, uids } = this.collectHeadings();
+        const pairs: Array<{ fromUid: string; toUid: string }> = [];
+        const seen = new Set<string>();
+        const walk = (node: MindMapTreeNode): void => {
+            const kind = node.data._kind;
+            // 只有文本类节点可能出现内链；媒体节点（代码块 / 表格等）的内容
+            // 在 live 里同样不产生链接，两边口径一致
+            if (kind === 'heading' || kind === 'list' || kind === 'para' || kind === 'quote') {
+                const range = node.data._selfLineRange ?? node.data._lineRange;
+                const source = range
+                    ? this.markdownLines.slice(range.fromLine, range.toLine + 1).join('\n')
+                    : '';
+                for (const target of extractInternalLinkTargets(source)) {
+                    const index = matchHeadingIndex(texts, target);
+                    if (index < 0) continue; // 断链不画
+                    const toUid = uids[index];
+                    if (toUid === node.data.uid) continue; // 自指不画
+                    const key = `${node.data.uid}->${toUid}`;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    pairs.push({ fromUid: node.data.uid, toUid });
+                }
+            }
+            node.children.forEach(walk);
+        };
+        walk(this.currentTree);
+        this.canvas.setInternalLinks(pairs);
+    }
+
+    /** 内链目标标题文字 → 导图节点 uid（精确优先 + slug 回退）。 */
+    private resolveInternalLinkUid(target: string): string | null {
+        const { texts, uids } = this.collectHeadings();
+        const index = matchHeadingIndex(texts, target);
+        return index >= 0 ? uids[index] : null;
+    }
+
+    /** 内链跳转：展开祖先、选中并居中（不改缩放）、1 秒高亮。 */
+    private handleInternalLinkNavigate(uid: string): void {
+        this.selectAndCenterUid(uid);
+        this.canvas.flashNode(uid);
+    }
+
+    // ==================================================================
+    // 性能监控浮层
+    // ==================================================================
+
+    /** 按设置挂/摘性能监控浮层（幂等）。 */
+    private syncPerfHud(): void {
+        if (this.settings.mindmapPerfHud && !this.perfHud) {
+            this.perfHud = new PerfHud(this.container, () => ({
+                ...this.canvas.debugState(),
+                docKB: Math.round(this.markdown.length / 1024),
+            }));
+        } else if (!this.settings.mindmapPerfHud && this.perfHud) {
+            this.perfHud.destroy();
+            this.perfHud = null;
+        }
+    }
+
     /** 应用搜索高亮（命中节点描边，当前项加深）。 */
     private applySearchHighlight(uids: string[], currentUid: string | null): void {
         // 画布自己记住命中集合：节点重新挂载 / 重建后会自动补类名
@@ -2074,6 +2415,7 @@ export class MindMapApp {
         if (!this.validateDropParent(dragUid, parentUid)) {
             // 非法落点：用当前树重排一次，让被拖节点回到原位
             this.canvas.setData(this.bakeExpandState(this.currentTree), { keepView: true });
+            this.syncInternalLinks();
             return;
         }
         const result = moveNode({
@@ -2087,6 +2429,7 @@ export class MindMapApp {
         if (!result.text || result.text === this.markdown) {
             // 原地放下（位置没变）：重排一次即可
             this.canvas.setData(this.bakeExpandState(this.currentTree), { keepView: true });
+            this.syncInternalLinks();
             return;
         }
 
@@ -2103,6 +2446,7 @@ export class MindMapApp {
             uidRemap: remap,
             keepView: true,
         });
+        this.syncInternalLinks();
         this.options.onEdit(result.text);
         this.searchBar.refreshAfterDocumentChange();
         // 拖动后选中被移动的节点（uid 可能变了）
@@ -2563,6 +2907,23 @@ export class MindMapApp {
                 this.options.onRedo();
                 return;
             }
+            // 剪贴板三件套：子树级复制/剪切/粘贴。
+            // 编辑会话里不会走到这里（函数开头已 return），编辑态的
+            // Ctrl+C/X/V 由 mini-CM 原生处理（文本级）。
+            if (key === 'c' || key === 'x') {
+                if (this.clipboardTargetUids().length === 0) return;
+                event.preventDefault();
+                event.stopPropagation();
+                if (key === 'c') void this.copySelection();
+                else void this.cutSelection();
+                return;
+            }
+            if (key === 'v') {
+                event.preventDefault();
+                event.stopPropagation();
+                void this.pasteFromClipboard();
+                return;
+            }
             // live 模式的行内格式三连：加粗 / 斜体 / 行内代码。
             // 必须排在 redo 之后：Ctrl+Shift+Z 是重做，不能被当成别的键。
             if (!event.shiftKey && (key === 'b' || key === 'i' || key === 'g')) {
@@ -2588,7 +2949,9 @@ export class MindMapApp {
             this.addChild();
         } else if (
             event.key === 'Enter' &&
+            // 段落与引用不加兄弟节点（文本类叶节点，直接编辑内容即可）
             kind !== 'para' &&
+            kind !== 'quote' &&
             kind !== 'meta' &&
             kind !== 'root' &&
             !media

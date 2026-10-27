@@ -654,6 +654,13 @@ interface CellMeasureRequest {
  */
 const cellWidthCache = new Map<string, { max: number; min: number }>();
 
+/** 内存统计用：两张表的缓存条目数（cellWidth / columnWidth）。 */
+export function tableCacheStats(): { cellWidthEntries: number; columnWidthEntries: number } {
+    return {
+        cellWidthEntries: cellWidthCache.size,
+        columnWidthEntries: columnWidthCache.size,
+    };
+}
 /**
  * 当前字体环境的指纹（量宽度必须用它，缓存 key 里也要带上它）。
  *
@@ -1249,9 +1256,33 @@ export function availableTableWidth(): number {
 /**
  * 正文可用宽度（px）的实现。
  *
+ * @param view - 传入视图时优先识别导图语境：导图节点的 mini-CM 不在
+ *        `#editor` 里，全局查法一定量到 0（不设上限 → 表格无限增长）。
+ *        导图里改读**节点盒子的 CSS max-width**（`.lwm-node-table` 的
+ *        上限，见 mindmapStyles）当预算 —— 列宽收缩 / 格子换行逻辑与
+ *        live 模式完全同一套，只是宽度来源不同。getComputedStyle 返回
+ *        的是变换前的排版像素，不受画布世界层的缩放影响，直接可用。
  * @returns 正文文字区宽度；视图还没挂进 DOM（量不到）时返回 0
  */
-function availableWidth(): number {
+function availableWidth(view?: EditorView): number {
+    // 导图语境：预算读 CSS 变量 --lwm-table-max-width（在 .lwm-canvas 上定义、
+    // 继承到节点）。不能只读节点盒的 max-width：编辑态会 max-width: none
+    // （解除截断），那样会量到 'none' → 预算 0 → 列宽不收缩，表格源码横着溢出。
+    // 主编辑器的 dom 不会套在 .lwm-node 里，自然落到下面的全局路径。
+    const nodeEl = view?.dom.closest('.lwm-node');
+    if (nodeEl) {
+        const cs = getComputedStyle(nodeEl as HTMLElement);
+        const raw = cs.getPropertyValue('--lwm-table-max-width').trim();
+        const fontSize = Number.parseFloat(cs.fontSize) || 14;
+        // 变量允许写 em 或 px；em 按节点正文字号换算
+        const px = raw.endsWith('em')
+            ? Number.parseFloat(raw) * fontSize
+            : raw.endsWith('px')
+              ? Number.parseFloat(raw)
+              : NaN;
+        return Number.isFinite(px) && px > 0 ? px : 0;
+    }
+
     const scroller = document.querySelector('#editor .cm-scroller');
     const content = document.querySelector('#editor .cm-content');
     if (!scroller || !content) return 0;
@@ -1321,11 +1352,13 @@ export function collectTableDecorations(
     decos: Array<ReturnType<Decoration['range']>>,
     tree: Tree,
     range: { from: number; to: number },
-    composing: boolean
+    composing: boolean,
+    view?: EditorView
 ): void {
     const caretLine = state.doc.lineAt(state.selection.main.head).number;
-    // 可用宽度一次算好传下去：每张表都去 querySelector + getComputedStyle 太浪费
-    const available = availableWidth();
+    // 可用宽度一次算好传下去：每张表都去 querySelector + getComputedStyle 太浪费。
+    // 导图节点的 mini-CM 靠 view 走节点盒 max-width 那条路（见 availableWidth）。
+    const available = availableWidth(view);
     // 框选到的格子要单独上高亮（见下面的 cellClassAt）。整段选区一个都算不到时
     // 连交集都不用查，把 null 传下去当「没在选」。
     const selection = state.selection.main.empty ? null : state.selection.main;
