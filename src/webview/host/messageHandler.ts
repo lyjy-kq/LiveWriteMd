@@ -40,7 +40,7 @@ import type {
 } from '../../shared/types.js';
 import type { SettingValue } from '../../shared/settings/index.js';
 import { MESSAGE_TYPES } from '../../shared/messageTypes.js';
-import { debounce } from '../../shared/utils.js';
+import { debounce, type Debounced } from '../../shared/utils.js';
 import { DEFAULT_CONFIG } from '../../shared/types.js';
 
 // =============================================================================
@@ -102,7 +102,7 @@ export interface IWebviewMessageCallbacks {
         documentUri: string,
         searchHistory: SearchHistoryState,
         settings?: LiveWriteMdEditorSettings,
-        mode?: import('../shared/types.js').EditorMode,
+        mode?: import('../../shared/types.js').EditorMode,
         outlineWidth?: number,
         allSettings?: Record<string, SettingValue>
     ) => void;
@@ -243,7 +243,7 @@ export class WebviewMessageSender {
      */
     public sendEditorAction(
         action: 'insertImage' | 'setMode' | 'exportAsHtml' | 'exportAsPdf' | 'downloadRemoteImages',
-        mode?: import('../shared/types.js').EditorMode
+        mode?: import('../../shared/types.js').EditorMode
     ): void {
         this.vscode.postMessage({
             type: 'editorAction',
@@ -304,7 +304,7 @@ export class WebviewMessageSender {
      */
     public createDebouncedSendContentChange(
         delay: number = DEFAULT_CONFIG.debounceDelay
-    ): (content: string) => void {
+    ): Debounced<(content: string) => void> {
         return debounce((content: string) => {
             this.sendContentChange(content);
         }, delay);
@@ -425,7 +425,7 @@ export class WebviewMessageHandler {
         documentUri: string;
         searchHistory: SearchHistoryState;
         settings?: LiveWriteMdEditorSettings;
-        mode?: import('../shared/types.js').EditorMode;
+        mode?: import('../../shared/types.js').EditorMode;
         outlineWidth?: number;
         outlinePanelWidth?: number;
         allSettings?: Record<string, SettingValue>;

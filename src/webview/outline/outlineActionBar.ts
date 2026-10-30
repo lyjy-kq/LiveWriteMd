@@ -7,7 +7,10 @@
  * @module webview/outline/outlineActionBar
  */
 
+// OutlinePanel 只当类型用；常量要从 outlineConstants 值导入，
+// 否则 type 导入被擦掉后 `OutlinePanel.XXX` 会在运行时抛 ReferenceError。
 import type { OutlinePanel } from './outlinePanel.js';
+import { OUTLINE_TOOLTIP_DELAY_MS } from './outlineConstants.js';
 
 /**
  * 瑙ｆ瀽鎴栧垱寤哄簳閮ㄦ搷浣滄爮瀹瑰櫒銆?     *
@@ -129,7 +132,7 @@ export function scheduleTooltip(panel: OutlinePanel, rowEl: HTMLElement, clientX
             return;
         }
         panel.showTooltip(rowEl, title, clientX, clientY);
-    }, OutlinePanel.TOOLTIP_DELAY_MS);
+    }, OUTLINE_TOOLTIP_DELAY_MS);
 }
 
 /**

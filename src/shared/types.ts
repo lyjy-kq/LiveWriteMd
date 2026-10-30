@@ -166,6 +166,16 @@ export interface ContentChangeMessage extends BaseMessage {
 }
 
 /**
+ * 强制写回并保存消息（Ctrl+S）。
+ */
+export interface SaveDocumentMessage extends BaseMessage {
+    /** 消息类型。 */
+    type: 'saveDocument';
+    /** webview 手里的最新 Markdown 全文（扩展侧据此覆盖文档再保存）。 */
+    content: string;
+}
+
+/**
  * Webview 就绪消息。
  */
 export interface ReadyMessage extends BaseMessage {
@@ -237,6 +247,7 @@ export interface UpdateSettingMessage extends BaseMessage {
  */
 export type WebviewToExtensionMessage =
     | ContentChangeMessage
+    | SaveDocumentMessage
     | ReadyMessage
     | ErrorMessage
     | SearchHistoryChangeMessage

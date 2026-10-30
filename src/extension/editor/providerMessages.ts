@@ -165,6 +165,13 @@ export async function handleWebviewMessage(
 
             const contentLength = message.content?.length ?? 0;
             Logger.debug(`CONTENT_CHANGE received: contentLength=${contentLength}`);
+            // 内容与文档当前值完全相同：不必再走一次整篇 WorkspaceEdit
+            // （那会白白多出一步撤销）。Ctrl+S 强制写回之后，防抖里
+            // 排队的那条 CONTENT_CHANGE 就会命中这里。
+            if (message.content === document.getText()) {
+                state.setLastWebviewContent(message.content);
+                return;
+            }
             state.setWebviewUpdating(true);
             // Store content BEFORE applying edit to prevent sync loop
             state.setLastWebviewContent(message.content);
@@ -181,6 +188,38 @@ export async function handleWebviewMessage(
                 }
             } finally {
                 state.setWebviewUpdating(false);
+            }
+            break;
+        }
+
+        case MESSAGE_TYPES.SAVE_DOCUMENT: {
+            // 导图模式 Ctrl+S：强制写回 + 保存。
+            // 故意**不**看 isExtensionUpdating —— 用户明确按了保存，
+            // webview 手里的全文就是最终状态；内容相同则跳过覆盖，
+            // 避免多出一步撤销。最后直接保存文档（等于替 VS Code 的
+            // Ctrl+S 落盘，绕过 300ms 防抖的时序差）。
+            const content =
+                typeof message.content === 'string' ? message.content : document.getText();
+            Logger.debug(`SAVE_DOCUMENT received: contentLength=${content.length}`);
+            state.setLastWebviewContent(content);
+            if (content !== document.getText()) {
+                state.setWebviewUpdating(true);
+                let updated = false;
+                try {
+                    updated = await provider.updateTextDocument(document, content);
+                } finally {
+                    state.setWebviewUpdating(false);
+                }
+                if (!updated) {
+                    Logger.error(`SAVE_DOCUMENT: failed to update ${document.uri.fsPath}`);
+                    await vscode.window.showErrorMessage(
+                        'LiveWriteMD: 导图写回文档失败，请重试。'
+                    );
+                    return;
+                }
+            }
+            if (document.isDirty) {
+                await document.save();
             }
             break;
         }

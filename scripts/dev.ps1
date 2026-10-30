@@ -6,8 +6,8 @@
     把平时手动敲的几条命令收在一个脚本里，六种模式：
 
       build    只构建 dist/（接在 VS Code 的 F5 前面当 preLaunchTask 用）
-      package  构建 + 打包出 .vsix（默认）
-      install  构建 + 打包 + 覆盖安装到本机 VS Code
+      install  构建 + 打包 + 覆盖安装到本机 VS Code（默认）
+      package  构建 + 打包出 .vsix，但不安装
       all      全部完成：构建 + 探针回归 + 打包 + 覆盖安装（探针挂了不出包）
       debug    构建 + 用 CLI 起一个独立的扩展开发宿主，并等调试端口就绪（F5 用这个）
       watch    只起增量构建（前台阻塞，改代码自动重编）
@@ -20,7 +20,7 @@
     保证和 IDE 里点任务、CI 里跑命令的行为完全一致。
 
 .PARAMETER Mode
-    build / package（默认）/ install / debug / watch，见上面的说明。
+    build / install（默认）/ package / all / debug / watch，见上面的说明。
 
 .PARAMETER File
     可选。用扩展开发宿主或已安装的 VS Code 打开某个 Markdown 文件，
@@ -46,7 +46,7 @@
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1
-    默认：构建并打包出 vsix。
+    默认：构建、打包并覆盖安装到本机 VS Code（等于 -Mode install）。
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 -Mode install -File .\README.md
@@ -67,9 +67,9 @@
 
 [CmdletBinding()]
 param(
-    # 运行模式
+    # 运行模式（默认 install：构建 + 打包 + 覆盖安装，一条命令看到最新扩展）
     [ValidateSet('build', 'package', 'install', 'all', 'debug', 'watch')]
-    [string]$Mode = 'package',
+    [string]$Mode = 'install',
 
     # 可选：要一起打开的 Markdown 文件
     [string]$File = '',
@@ -412,7 +412,7 @@ switch ($Mode) {
         Write-Host ""
         Write-Host "安装到本机 VS Code：" -ForegroundColor Yellow
         Write-Host "  code --install-extension `"$($info.FullName)`" --force"
-        Write-Host "或者直接跑：.\scripts\dev.ps1 -Mode install"
+        Write-Host "或者直接跑：.\scripts\dev.ps1（默认 = 构建 + 打包 + 安装）"
     }
 
 

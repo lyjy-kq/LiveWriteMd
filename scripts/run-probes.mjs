@@ -164,6 +164,16 @@ const PROBES = [
         expect: ['"errors": 0', '"tableRendered": true'],
     },
     {
+        // 大纲面板：拆分后 import 断链（type 导入当值用 / 漏 export）的回归点
+        name: 'outlineProbe',
+        expect: [
+            'panel: items=5 rows=5',
+            'accents: L1=rgba(235, 131, 131, 0.5) L2=rgba(174, 154, 203, 0.5) L3=rgba(125, 181, 205, 0.5)',
+            'numbering: edits=5 first="# 1 一级标题" second="## 1.1 二级标题 A"',
+            'tooltip: early=false late=true',
+        ],
+    },
+    {
         name: 'mapTableWidthProbe',
         expect: ['edit: editing=true'],
         forbid: ['withinCap=false', 'restored=false'],

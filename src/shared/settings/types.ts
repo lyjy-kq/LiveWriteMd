@@ -65,6 +65,11 @@ export interface SettingSection {
     label: string;
     /** 分组图标（一个 emoji 或字符）。 */
     icon: string;
+    /**
+     * 分组说明（显示在面板右侧标题下方）。
+     * 一句话讲清「这一组影响什么」，新手据此判断该去哪个分组找。
+     */
+    description?: string;
     /** 组内设置项。 */
     items: SettingItem[];
 }

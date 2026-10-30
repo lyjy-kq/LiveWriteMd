@@ -113,6 +113,14 @@ export const TEXT_NODE_KINDS = new Set<MindMapNodeKind>(['heading', 'list', 'par
 export interface MindMapAppOptions {
     /** 导图编辑产生新全文时回调（模式内由宿主 dispatch 到隐藏的 CM）。 */
     onEdit: MindMapEditCallback;
+    /**
+     * Ctrl/Cmd+S 强制写回 + 保存（参数是当前全文）。
+     *
+     * 不复用 onEdit：onEdit 走的是「写回文档」通道，宿主可能还要等防抖
+     * 才发给扩展；这里要的是**立即落盘**，而且不能被同步环路跳过。
+     * 不传时 Ctrl+S 退化成只提交编辑会话。
+     */
+    onSave?: (fullText: string) => void;
     /** 非编辑态 Ctrl+Z：转发给隐藏主 CM 的撤销栈。 */
     onUndo?: () => void;
     /** 非编辑态 Ctrl+Y / Ctrl+Shift+Z：转发重做。 */
@@ -223,6 +231,17 @@ export class MindMapApp {
     public pendingTree: MindMapTreeNode | null = null;
 
     public selectedUid: string | null = null;
+    /**
+     * 最近一次「单击才刚选中」的节点 uid（双击手势的判定依据）。
+     *
+     * 双击 = click(1) → click(2) → dblclick：第一下只负责选中，第二下和
+     * dblclick 都**不该**直接进编辑 —— 编辑入口是「节点已经选中后再点」。
+     * 否则手快双击一个没选中的节点会当场变成源码编辑态，想「选中后
+     * 拖拽 / 剪切」的人会被打断。由 handleNodeClick 写入，双击路径消费。
+     */
+    public selectOnlyUid: string | null = null;
+    /** selectOnlyUid 的记录时间：只有紧随其后的双击才按「只选中」处理。 */
+    public selectOnlyAt = 0;
     public editSession: EditSession | null = null;
     /**
      * 「拆分到子节点」的最新选区快照（选区变化时刷新）。
@@ -287,7 +306,79 @@ export class MindMapApp {
     public readonly onDocumentKeyDown = (event: KeyboardEvent): void => {
         if (event.key === 'Escape') this.closeContextMenu();
     };
-    public readonly onWindowBlur = (): void => this.closeContextMenu();
+    /**
+     * 窗口失焦：收起右键菜单 + 提交编辑会话。
+     *
+     * 「失焦提交」不能只靠 mini-CM contentDOM 上的 blur 事件 —— 点到
+     * webview 外面（VS Code 标题栏 / 别的编辑器 / 另一个窗口）时，
+     * Electron 的 iframe 有时收不到元素级 blur，编辑就停在半路，
+     * 表现为「明明点走了却没写回」。窗口级 blur 是最后一层兜底。
+     */
+    public readonly onWindowBlur = (): void => {
+        this.closeContextMenu();
+        this.commitEditSession();
+    };
+    /**
+     * 编辑会话兜底提交（document 捕获阶段，任何 pointerdown 都先过这里）。
+     *
+     * 有些手势不会让焦点离开编辑区：画布上的链接箭头 / 缩略图在
+     * pointerdown 里 preventDefault，节点拖动会 setPointerCapture，
+     * 工具栏按钮也刻意 preventDefault 保焦点 —— 这些情况下 mini-CM
+     * 收不到 blur，会话就一直挂着。只要按下的不是编辑区本身，就先提交。
+     */
+    public readonly onDocumentPointerDown = (event: PointerEvent): void => {
+        const session = this.editSession;
+        if (!session) return;
+        const target = event.target;
+        if (target instanceof Node) {
+            // 点在编辑区自己身上（含行内 widget）：保持会话
+            if (session.display.container.contains(target)) return;
+            // 浮动工具条 / 多选条 / 右键菜单 / 搜索条：它们的 mousedown
+            // 刻意 preventDefault 保住焦点，提前提交会把「拆分到子节点」
+            // 的菜单当场收起来（点击还没落到菜单项上）
+            if (
+                target instanceof Element &&
+                target.closest('.lwm-toolbar, .lwm-context-menu, .lwm-searchbar-host')
+            ) {
+                return;
+            }
+        }
+        this.commitEditSession();
+    };
+    /** 页面被隐藏（切标签页 / 面板收到后台）：兜底提交，别把改动留在内存里。 */
+    public readonly onVisibilityChange = (): void => {
+        if (document.hidden) this.commitEditSession();
+    };
+    /**
+     * 双击手势收尾（容器捕获阶段，先于画布 nodeLayer 上的 dblclick）。
+     *
+     * 交互约定：单击 = 选中；**已经选中**的节点再单击 / 双击才进编辑。
+     * 但双击的两下 click 都是普通单击：第一下会把未选中节点选中，第二下
+     * 就满足「已选中」直接进了编辑 —— 用户看到的就是「手快双击一个
+     * 没选中的节点，当场跳进源码编辑态」。
+     *
+     * 这里在 dblclick 到达时把这种「刚选中」的双击撤回：退出刚建立的
+     * 编辑会话（文本没变，只是切回显示态），并截住事件，别让画布的
+     * dblclick 处理再把它带进编辑。已选中的节点双击不受影响。
+     */
+    public readonly onContainerDoubleClick = (event: MouseEvent): void => {
+        const target = event.target as Element | null;
+        const wrapper = target?.closest?.('.lwm-node[data-uid]') as HTMLElement | null;
+        const uid = wrapper?.dataset.uid ?? '';
+        if (!uid || this.selectOnlyUid !== uid) return;
+        // 只认「紧随其后」的双击：隔了很久的残留标记不算（真正的双击
+        // 由浏览器在系统阈值内送达，这里给一倍余量）
+        if (performance.now() - this.selectOnlyAt > 700) {
+            this.selectOnlyUid = null;
+            return;
+        }
+        this.selectOnlyUid = null;
+        // 第二下 click 可能已经把节点带进编辑态：撤回（无文本改动 → 只退出）
+        if (this.editSession?.uid === uid) this.commitEditSession();
+        // 本轮双击到此为止：画布的 dblclick → startEdit 不能再执行
+        event.stopPropagation();
+        event.preventDefault();
+    };
 
     /** 导出进行中（菜单连点防重）。 */
     public exportInFlight = false;
@@ -344,6 +435,11 @@ export class MindMapApp {
         this.createContextMenu();
 
         window.addEventListener('keydown', this.handleWindowKeyDown, true);
+        // 双击手势收尾（必须在容器捕获阶段，抢在画布 nodeLayer 的 dblclick 前）
+        this.container.addEventListener('dblclick', this.onContainerDoubleClick, true);
+        // 编辑会话的兜底提交钩子（blur 之外的几条遗漏路径，见各字段注释）
+        document.addEventListener('pointerdown', this.onDocumentPointerDown, true);
+        document.addEventListener('visibilitychange', this.onVisibilityChange);
         this.resizeObserver = new ResizeObserver(() => this.handleContainerResize());
         this.resizeObserver.observe(container);
     }
@@ -385,6 +481,8 @@ export class MindMapApp {
     public applyInlineFormat(uid: string, command: (view: EditorView) => boolean,) : void { return appEditSession.applyInlineFormat(this, uid, command); }
     public handleDisplayEdit(node: MapNode, text: string) : void { return appEditSession.handleDisplayEdit(this, node, text); }
     public commitEditSession() : void { return appEditSession.commitEditSession(this); }
+    public forceWrite() : void { return appEditSession.forceWrite(this); }
+    public flushEditBeforeDestroy() : void { return appEditSession.flushEditBeforeDestroy(this); }
     public refreshSplitButton() : void { return appEditSession.refreshSplitButton(this); }
     public captureSplitSelection() : SplitCapture | null { return appEditSession.captureSplitSelection(this); }
     public splitSelection(captured: SplitCapture, placement: 'child' | 'sibling') : void { return appEditSession.splitSelection(this, captured, placement); }
@@ -425,7 +523,7 @@ export class MindMapApp {
     // appMenus
     public createContextMenu() : void { return appMenus.createContextMenu(this); }
     public openContextMenu(event: MouseEvent, table: { uid: string; display: NodeDisplay } | null = null) : void { return appMenus.openContextMenu(this, event, table); }
-    public closeContextMenu(keepTableContext = false) : void { return appMenus.closeContextMenu(this, keepTableContext = false); }
+    public closeContextMenu(keepTableContext = false) : void { return appMenus.closeContextMenu(this, keepTableContext); }
     public resolveTableMenuContext(event: MouseEvent) : { uid: string; display: NodeDisplay } | null { return appMenus.resolveTableMenuContext(this, event); }
     public tablePosAtEvent(view: EditorView, event: MouseEvent) : number | null { return appMenus.tablePosAtEvent(this, view, event); }
     public nearestCellPosByX(view: EditorView, linePos: number, x: number) : number | null { return appMenus.nearestCellPosByX(this, view, linePos, x); }
@@ -685,6 +783,9 @@ export class MindMapApp {
     /** 销毁实例。 */
     destroy(): void {
         window.removeEventListener('keydown', this.handleWindowKeyDown, true);
+        this.container.removeEventListener('dblclick', this.onContainerDoubleClick, true);
+        document.removeEventListener('pointerdown', this.onDocumentPointerDown, true);
+        document.removeEventListener('visibilitychange', this.onVisibilityChange);
         this.container.removeEventListener('contextmenu', this.onContainerContextMenu);
         document.removeEventListener('click', this.onDocumentClick);
         document.removeEventListener('keydown', this.onDocumentKeyDown);
@@ -697,10 +798,8 @@ export class MindMapApp {
         if (this.pendingDeleteTimer !== null) clearTimeout(this.pendingDeleteTimer);
         this.pendingDeleteTimer = null;
         this.cancelGrowEditingNode();
-        if (this.editSession) {
-            this.editSession.display.exitEdit();
-            this.editSession = null;
-        }
+        // 销毁前把未提交的编辑写回文档（直接 exitEdit 会丢掉用户刚输入的内容）
+        this.flushEditBeforeDestroy();
         this.toolbarEl?.remove();
         this.toolbarEl = null;
         this.multiBarEl?.remove();

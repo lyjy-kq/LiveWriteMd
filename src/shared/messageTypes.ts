@@ -48,6 +48,15 @@ export const MESSAGE_TYPES = {
     CONTENT_CHANGE: 'contentChange',
 
     /**
+     * 强制写回并保存消息类型（Webview -> 扩展）。
+     *
+     * 导图模式里按 Ctrl+S 时发送：带上 webview 手里的最新全文，扩展侧
+     * 先把它写进文档（内容相同则跳过），再执行文档保存。与 CONTENT_CHANGE
+     * 的区别是**永远不会被「扩展正在更新」的判断丢弃**，也不等防抖。
+     */
+    SAVE_DOCUMENT: 'saveDocument',
+
+    /**
      * Webview 就绪消息类型。
      * Webview 脚本加载完成后发送给扩展侧，触发 INIT 下发。
      */

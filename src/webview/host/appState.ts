@@ -9,6 +9,7 @@
 
 import { undo, redo } from '@codemirror/commands';
 import { codeLanguages } from '../codemirror/editor.js';
+import { MESSAGE_TYPES } from '../../shared/messageTypes.js';
 import { MindMapApp } from '../mindmap/mindmapApp.js';
 import type { MindMapRuntimeSettings } from '../mindmap/types.js';
 import { settingsState } from '../settings/settingsState.js';
@@ -101,7 +102,12 @@ export function readMindmapSettings(): MindMapRuntimeSettings {
 export function applyMindmapEdit(newFullText: string): void {
     const view = ctx.editor?.getView();
     if (!view) {
-        sendLog('WARN', 'Mindmap edit ignored: CodeMirror view is not ready');
+        // CM 还没就绪 / 正在 INIT 重建：不能把改动丢掉，直接把全文发扩展侧。
+        // INIT 重建时 MindMapApp.destroy() 会先把未提交的编辑写回这里，
+        // 这条兜底保证「刚打开文件就编辑」的那一下也送得出去。
+        sendLog('WARN', 'Mindmap edit: CodeMirror view is not ready, sending content directly');
+        ctx.debouncedSendContentChange(newFullText);
+        ctx.debouncedSendContentChange.flush();
         return;
     }
     const oldText = view.state.doc.toString();
@@ -134,6 +140,10 @@ export function applyMindmapEdit(newFullText: string): void {
             insert: newFullText.slice(start, newEnd),
         },
     });
+    // 导图编辑是离散操作（提交一次 = 一步），不必等 300ms 防抖：
+    // 立即把全文发给扩展侧。否则「提交完马上切走/关面板」时改动会
+    // 卡在防抖定时器里，表现为「失焦后没写回」。
+    ctx.debouncedSendContentChange.flush();
 }
 
 /**
@@ -167,6 +177,17 @@ export async function enterMindmapMode(): Promise<void> {
     if (!ctx.mindmapApp) {
         ctx.mindmapApp = new MindMapApp(host, {
             onEdit: applyMindmapEdit,
+            // Ctrl+S：强制写回并保存。
+            // 先把最新全文同步进隐藏 CM（进撤销栈，也和后续 UPDATE 对齐），
+            // 再让扩展侧直接落盘 —— 不走 CONTENT_CHANGE 的跳过分支，
+            // 这样 webview 里「还没提交/被防抖压着」的改动也不会丢。
+            onSave: (fullText: string) => {
+                applyMindmapEdit(fullText);
+                ctx.vscode.postMessage({
+                    type: MESSAGE_TYPES.SAVE_DOCUMENT,
+                    content: fullText,
+                });
+            },
             onUndo: () => applyMindmapUndoRedo('undo'),
             onRedo: () => applyMindmapUndoRedo('redo'),
             // mini-CM 的代码块嵌套高亮语言表（主编辑器同款）

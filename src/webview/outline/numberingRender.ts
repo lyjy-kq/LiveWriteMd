@@ -190,6 +190,10 @@ const DEFAULT_FORMAT: NumberingFormat = {
     spaceAfter: true,
 };
 
+// 下面 renderNumbering / computeLogicalDepths / resolveFormat 原来和调用方
+// 同处一个文件，拆开后必须 export，否则 import 端拿到的是 undefined
+// （esbuild 只给 warning 不报错，要到运行时调用才炸）。
+
 /**
  * 按格式模板和各级计数渲染一条编号。
  *
@@ -202,7 +206,7 @@ const DEFAULT_FORMAT: NumberingFormat = {
  * @param depth - 当前逻辑层级（≥1）
  * @returns 编号串
  */
-function renderNumbering(format: NumberingFormat, counters: number[], depth: number): string {
+export function renderNumbering(format: NumberingFormat, counters: number[], depth: number): string {
     const lastSegment = format.segments[format.segments.length - 1];
     const lastSeparator = format.separators[format.separators.length - 1] ?? '.';
 
@@ -232,7 +236,7 @@ function renderNumbering(format: NumberingFormat, counters: number[], depth: num
  * @param headings - 扫描出的标题
  * @returns 每个标题的逻辑层级（与入参等长、等序）
  */
-function computeLogicalDepths(headings: HeadingInfo[]): number[] {
+export function computeLogicalDepths(headings: HeadingInfo[]): number[] {
     if (headings.length === 0) return [];
     const minLevel = Math.min(...headings.map((h) => h.level));
     const depths: number[] = [];
@@ -256,7 +260,7 @@ function computeLogicalDepths(headings: HeadingInfo[]): number[] {
  * @param headings - 扫描出的标题
  * @returns 编号格式模板
  */
-function resolveFormat(content: string, headings: HeadingInfo[]): NumberingFormat {
+export function resolveFormat(content: string, headings: HeadingInfo[]): NumberingFormat {
     for (const heading of headings) {
         // 找到下一个行尾（或文末）截出标题正文；ATX 行尾的闭合 # 不影响开头解析
         let lineEnd = content.indexOf('\n', heading.contentFrom);

@@ -58,7 +58,6 @@ import {
     windowLines,
 } from './ranges.js';
 import {
-    collectCodeSpanMathDecorations,
     collectMathDecorations,
     collectMathSourceRanges,
 } from './math/mathCollect.js';
@@ -254,10 +253,6 @@ function buildWindowDecorations(
     collectWikiInternalLinkDecorations(state, decos, range, focusedRange, tree);
     // 带空格 / 括号的文件链接（Lezer 解析失败的兜底，如 `[PDF](../A B.pdf)`）
     collectSpacedFileLinkDecorations(state, decos, range, focusedRange, tree);
-    // 行内代码里写的公式（`$$…$$` / `$…$` / 不带定界符的 `A_e`）：
-    // 保持反引号的盒子，里面换成 KaTeX。它**不收 focusedRange** ——
-    // 让不让开看光标在不在这一格里，见 mathCollect.ts 的说明。
-    collectCodeSpanMathDecorations(state, decos, range, tree);
     // 表格骨架：管道线压 0 宽、单元格定宽、分隔行折叠、被框选的格子高亮。
     // mark/line/行内 widget 都不影响块结构，所以可以只算窗口。
     // view 透传给表格量宽：导图节点按节点盒的 max-width 当预算，不设上限

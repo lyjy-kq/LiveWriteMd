@@ -189,6 +189,36 @@ export class MindmapPanelManager implements vscode.Disposable {
                 break;
             }
 
+            // 面板导图 Ctrl+S：强制写回 + 保存。
+            // 内容与文档一致就不覆盖（少一步撤销），但保存照做。
+            case MESSAGE_TYPES.SAVE_DOCUMENT: {
+                if (typeof message.content !== 'string') return;
+                // 先记账再 applyEdit：随后的 onDidChangeTextDocument 据此跳过回推
+                entry.lastIncomingContent = message.content;
+                try {
+                    const document = await vscode.workspace.openTextDocument(entry.uri);
+                    if (document.getText() !== message.content) {
+                        const edit = new vscode.WorkspaceEdit();
+                        edit.replace(
+                            document.uri,
+                            new vscode.Range(0, 0, document.lineCount, 0),
+                            message.content
+                        );
+                        await vscode.workspace.applyEdit(edit);
+                    }
+                    await document.save();
+                } catch (error) {
+                    Logger.error(
+                        `Mindmap panel save failed: ${entry.uri.fsPath}`,
+                        error instanceof Error ? error : new Error(String(error))
+                    );
+                    await vscode.window.showErrorMessage(
+                        'LiveWriteMD: 导图保存失败，请重试。'
+                    );
+                }
+                break;
+            }
+
             // 面板导图撤销/重做（迭代 N8）：面板没有 CM 撤销栈，
             // 用文档自己的编辑器执行 undo/redo；preserveFocus 让焦点留在面板
             case 'mindmapUndoRedo' as typeof MESSAGE_TYPES.READY: {

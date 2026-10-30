@@ -7,7 +7,11 @@
  * @module webview/outline/outlineRender
  */
 
+// OutlinePanel 只当类型用，别在这里取值：type 导入会被 esbuild 擦掉，
+// 写成 OutlinePanel.XXX 运行时就是 ReferenceError。类静态常量统一从
+// outlineConstants.js 走值导入。
 import type { OutlinePanel, OutlineNode } from './outlinePanel.js';
+import { OUTLINE_LEVEL_ACCENT_PALETTE } from './outlineConstants.js';
 import { settingsState } from '../settings/settingsState.js';
 
 /**
@@ -46,8 +50,8 @@ export function render(panel: OutlinePanel): void {
 export function renderNodes(panel: OutlinePanel, nodes: OutlineNode[], activeNodeId: string | null): string {
     return nodes
         .map((node) => {
-            const accentIndex = (node.level - 1) % OutlinePanel.LEVEL_ACCENT_PALETTE.length;
-            const accent = OutlinePanel.LEVEL_ACCENT_PALETTE[accentIndex];
+            const accentIndex = (node.level - 1) % OUTLINE_LEVEL_ACCENT_PALETTE.length;
+            const accent = OUTLINE_LEVEL_ACCENT_PALETTE[accentIndex];
             const isCollapsed = panel.collapsedNodeIds.has(node.id);
             const hasChildren = node.children.length > 0;
             const isActive = node.id === activeNodeId;

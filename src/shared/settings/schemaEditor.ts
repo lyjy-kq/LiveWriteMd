@@ -10,6 +10,8 @@ export const EDITOR_SECTIONS: SettingSection[] = [
         id: 'general',
         label: '通用',
         icon: '⚙️',
+        description:
+            '影响打开文件时的默认模式和标题栏切换方式，一般装好后调一次，之后基本不用动。',
         items: [
             {
                 key: 'defaultMode',
@@ -27,6 +29,8 @@ export const EDITOR_SECTIONS: SettingSection[] = [
             {
                 key: 'modeSwitcher',
                 label: '标题栏模式切换样式',
+                description:
+                    '选循环则标题栏只有一个按钮，点一下换到下一个模式；选按钮则直接列出其他几个模式。',
                 control: 'select',
                 default: 'cycle',
                 options: [
@@ -55,10 +59,14 @@ export const EDITOR_SECTIONS: SettingSection[] = [
         id: 'editor',
         label: '编辑器',
         icon: '📝',
+        description:
+            '影响正文排版：行号、换行、行宽、字号与字体，读起来太挤或太松散时来这里调。',
         items: [
             {
                 key: 'lineNumbers',
                 label: '显示行号',
+                description:
+                    '关闭后正文左侧不再显示行号，正文会更贴近编辑区左缘，适合纯写作。',
                 control: 'toggle',
                 default: true,
             },
@@ -187,40 +195,48 @@ export const EDITOR_SECTIONS: SettingSection[] = [
         id: 'text',
         label: '标题与文字',
         icon: '🎨',
+        description:
+            '控制标题、加粗、斜体、删除线的颜色和字形，想让文档的层次更好看时从这里调。',
         items: [
             {
                 key: 'h1Color',
                 label: '一级标题颜色',
+                description: '一级标题的文字颜色；留空 = 跟随主题默认色，只影响这一级。',
                 control: 'color',
                 default: '',
             },
             {
                 key: 'h2Color',
                 label: '二级标题颜色',
+                description: '二级标题的文字颜色；留空 = 跟随主题默认色，只影响这一级。',
                 control: 'color',
                 default: '',
             },
             {
                 key: 'h3Color',
                 label: '三级标题颜色',
+                description: '三级标题的文字颜色；留空 = 跟随主题默认色，只影响这一级。',
                 control: 'color',
                 default: '',
             },
             {
                 key: 'h4Color',
                 label: '四级标题颜色',
+                description: '四级标题的文字颜色；留空 = 跟随主题默认色，只影响这一级。',
                 control: 'color',
                 default: '',
             },
             {
                 key: 'h5Color',
                 label: '五级标题颜色',
+                description: '五级标题的文字颜色；留空 = 跟随主题默认色，只影响这一级。',
                 control: 'color',
                 default: '',
             },
             {
                 key: 'h6Color',
                 label: '六级标题颜色',
+                description: '六级标题的文字颜色；留空 = 跟随主题默认色，只影响这一级。',
                 control: 'color',
                 default: '',
             },
@@ -247,6 +263,8 @@ export const EDITOR_SECTIONS: SettingSection[] = [
             {
                 key: 'boldColor',
                 label: '加粗颜色',
+                description:
+                    '加粗文字的颜色；留空 = 跟随主题默认，可单独上色让加粗在正文里更醒目。',
                 control: 'color',
                 default: '',
             },
@@ -263,6 +281,8 @@ export const EDITOR_SECTIONS: SettingSection[] = [
             {
                 key: 'italicColor',
                 label: '斜体颜色',
+                description:
+                    '斜体文字的颜色；留空 = 跟随主题默认，可给斜体一个偏柔和的色替代倾斜。',
                 control: 'color',
                 default: '',
             },
@@ -277,6 +297,8 @@ export const EDITOR_SECTIONS: SettingSection[] = [
             {
                 key: 'strikethroughColor',
                 label: '删除线颜色',
+                description:
+                    '删除线文字的颜色；留空 = 跟随主题默认，调淡可弱化已完成的待办。',
                 control: 'color',
                 default: '',
             },
@@ -286,16 +308,22 @@ export const EDITOR_SECTIONS: SettingSection[] = [
         id: 'code',
         label: '代码',
         icon: '💻',
+        description:
+            '影响行内代码和代码块的颜色与字号，主题自带配色不好看或代码太挤时来这里。',
         items: [
             {
                 key: 'inlineCodeColor',
                 label: '行内代码文字色',
+                description:
+                    '行内代码（`文字`）的文字色；留空 = 跟随主题，与代码块配色保持一致。',
                 control: 'color',
                 default: '',
             },
             {
                 key: 'inlineCodeBackground',
                 label: '行内代码底色',
+                description:
+                    '行内代码的背景色；留空 = 跟随主题，加一层淡底能让代码在正文里更好认。',
                 control: 'color',
                 default: '',
             },

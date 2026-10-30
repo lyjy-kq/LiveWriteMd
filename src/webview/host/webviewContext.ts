@@ -16,6 +16,7 @@ import type { OutlinePanel } from '../outline/outlinePanel.js';
 import type { EditorContextMenu, EditorMode } from '../editing/editorContextMenu.js';
 import type { SearchHistoryController } from '../codemirror/extensions/searchHistory.js';
 import type { ThemeType } from '../../shared/types.js';
+import type { Debounced } from '../../shared/utils.js';
 import { WebviewMessageSender } from './messageHandler.js';
 
 /**
@@ -63,8 +64,11 @@ interface WebviewCtx {
     vscode: IVsCodeApi;
     /** 消息发送器，所有 webview → 扩展的消息出口。 */
     messageSender: WebviewMessageSender;
-    /** 文档内容变化回发的防抖包装（300ms，跟随 messageSender）。 */
-    debouncedSendContentChange: (content: string) => void;
+    /**
+     * 文档内容变化回发的防抖包装（300ms，跟随 messageSender）。
+     * `.flush()` 用于导图提交这类不能等防抖窗口的离散操作。
+     */
+    debouncedSendContentChange: Debounced<(content: string) => void>;
     /** 大纲内容更新的防抖包装（250ms，仅「用户打字」路径用）。 */
     debouncedSetOutlineContent: (content: string) => void;
     /** CodeMirror 编辑器实例，INIT 消息到达后创建。 */

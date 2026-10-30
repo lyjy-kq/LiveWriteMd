@@ -2,7 +2,7 @@
     "name": "livewrite-md",
     "displayName": "LiveWriteMD",
     "description": "WYSIWYG Markdown editor for VS Code with Obsidian-style live preview. Tables, Mermaid diagrams, KaTeX math, code block syntax highlighting, and full IME support.",
-    "version": "0.0.19",
+    "version": "0.0.24",
     "publisher": "lyjy",
     "license": "SEE LICENSE IN LICENSE",
     "repository": {

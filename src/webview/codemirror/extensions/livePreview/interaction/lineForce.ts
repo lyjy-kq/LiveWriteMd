@@ -101,7 +101,7 @@ function isWidgetOwnedTarget(target: EventTarget | null): boolean {
  */
 function lineHasInlineMarkup(state: EditorState, tree: Tree, line: Line): boolean {
     // 行内公式（含 $$）是 mathCollect 用正则识别的，语法树里没有对应节点，
-    // 先按字符粗判 —— $ 也可能在行内代码里（反引号中的公式照样需要整行展开）
+    // 先按字符粗判（宁滥勿缺：行内代码里的 $ 也会命中，多展开一次无副作用）
     if (line.text.includes('$')) return true;
 
     // 其余行内元素走语法树；命中最外层即可，嵌套的跟着外层一起展开

@@ -16,19 +16,6 @@ import katex from 'katex';
 import { ensureKatexCss } from '../math/mathRender.js';
 
 /**
- * 「探针色」：KaTeX 用它去画自己没认下来的部分（未定义命令、解析错误）。
- *
- * 反引号里那段内容要不要当公式，是**猜**出来的 —— 猜错了不能把红字摆在正文中间
- * （见 InlineMathWidget），可这个失败又没有别的信号：`throwOnError: false` 既不抛异常，
- * 未定义命令连 `.katex-error` 节点都不给，只是一段红字裹在正常输出里。
- * 于是那一遍渲染特意把 errorColor 换成这个颜色，渲染完在 DOM 里搜它就行。
- *
- * 特意**不用** KaTeX 的默认错误色 `#cc0000`：用户完全可能自己在公式里写
- * `\textcolor{#cc0000}{…}`（那也是红的），换成这个洋红色就不会跟正常公式撞上。
- */
-const MATH_PROBE_COLOR = '#ff00ff';
-
-/**
  * 点击公式时，把光标放到「点击处对应的源码字符」上，从而切到文本模式。
  *
  * 为什么必须自己接管：公式是整段**替换**成 widget 的，而 `WidgetType.ignoreEvent`
@@ -86,15 +73,11 @@ export class InlineMathWidget extends WidgetType {
      * @param tex - 公式源码（不含定界符）
      * @param sourceFrom - 公式源码在文档里的起点
      * @param sourceTo - 公式源码在文档里的终点
-     * @param fallbackText - KaTeX 认不出这段内容时改显示的原文；null 表示照旧显示红字报错。
-     *   只有**反引号那一路**会传（那里的内容本来是按代码写的，猜错了该显示得像没开这个功能，
-     *   见 mathCollect.ts 的 collectCodeSpanMathDecorations）。
      */
     constructor(
         private tex: string,
         private sourceFrom: number,
-        private sourceTo: number,
-        private fallbackText: string | null = null
+        private sourceTo: number
     ) {
         super();
     }
@@ -103,8 +86,7 @@ export class InlineMathWidget extends WidgetType {
         return (
             this.tex === other.tex &&
             this.sourceFrom === other.sourceFrom &&
-            this.sourceTo === other.sourceTo &&
-            this.fallbackText === other.fallbackText
+            this.sourceTo === other.sourceTo
         );
     }
 
@@ -118,30 +100,14 @@ export class InlineMathWidget extends WidgetType {
             event.stopPropagation();
             placeMathCaret(view, span, this.tex, this.sourceFrom, this.sourceTo, event);
         });
-        let failed = false;
         try {
             ensureKatexCss();
             katex.render(this.tex, span, {
                 throwOnError: false,
                 output: 'htmlAndMathml',
-                // 反引号那一路（fallbackText 非空）额外带上探针色，见下面的判定
-                ...(this.fallbackText !== null ? { errorColor: MATH_PROBE_COLOR } : {}),
             });
         } catch (e) {
             console.error('[LiveWriteMD] InlineMath KaTeX render error:', e, 'tex:', this.tex);
-            failed = true;
-        }
-
-        // 反引号那一路还要挡住 KaTeX「不抛异常地失败」：throwOnError 为 false 时它不报错，
-        // 而是把认不出来的部分用 errorColor 画成红字（解析错误给一个 `.katex-error` 节点，
-        // 未定义命令 —— 比如 `` `C:\Users` `` 里的 `\Users` —— 则只是裹在正常输出里的一段红字），
-        // 上面那个 try 一个都抓不到。所以那一遍特意换了个探针色，渲染完在 DOM 里搜一下：
-        // 搜到就说明这段内容 KaTeX 没真认下来，退回原样的代码文本 ——
-        // 那段内容本来就是按代码写的，猜错了就该看起来跟没开这个功能一样，
-        // 而不是在正文中间摆一段红字。`$…$` 那一路不传 fallbackText，照旧显示红字报错
-        // （那是用户自己写出来的公式，报错有用）。
-        if (this.fallbackText !== null && (failed || span.innerHTML.includes(MATH_PROBE_COLOR))) {
-            span.textContent = this.fallbackText;
         }
         return span;
     }

@@ -247,7 +247,7 @@ export async function insertImage(provider: LiveWriteMdEditorProvider): Promise<
     try {
         // Use imageSaveHandler's validation and unique name logic
         const { getValidatedSaveFolder, sanitizeFileName, getUniqueFileName } =
-            await import('./imageSaveHandler.js');
+            await import('../assets/imageSaveHandler.js');
 
         const folderName = getValidatedSaveFolder(docDir);
         const saveDir = path.join(docDir, folderName);
@@ -305,7 +305,7 @@ export async function insertImageFromExplorer(provider: LiveWriteMdEditorProvide
 
     try {
         const { getValidatedSaveFolder, sanitizeFileName, getUniqueFileName } =
-            await import('./imageSaveHandler.js');
+            await import('../assets/imageSaveHandler.js');
 
         const folderName = getValidatedSaveFolder(docDir);
         const saveDir = path.join(docDir, folderName);

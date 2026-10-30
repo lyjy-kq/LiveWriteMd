@@ -49,6 +49,31 @@ function renderMath(tex: string, displayMode: boolean): string {
 }
 
 /**
+ * 只对行内代码（反引号）之外的部分做替换。
+ *
+ * 导出走的是逐行正则：不先切出代码片段的话，`` `$\frac{1}{2}$` `` 里的 `$…$`
+ * 也会被换成公式占位符，回填后公式会钻进 `<code>` 里 —— 反引号里的东西是代码，
+ * 应该原样导出（与编辑器一致）。
+ *
+ * @param line - 一行原文
+ * @param replace - 对非代码片段执行的替换
+ * @returns 拼好的新行（代码片段原样保留）
+ */
+function replaceOutsideCodeSpans(line: string, replace: (text: string) => string): string {
+    let out = '';
+    let last = 0;
+    // 行内代码：任意数量的反引号开头，用同样数量的反引号收尾（`` `` `` 也认）
+    const codeSpan = /(`+)([\s\S]*?)\1/g;
+    let match: RegExpExecArray | null;
+    while ((match = codeSpan.exec(line)) !== null) {
+        out += replace(line.slice(last, match.index));
+        out += match[0];
+        last = match.index + match[0].length;
+    }
+    return out + replace(line.slice(last));
+}
+
+/**
  * 从 Markdown 中提取数学公式，并用占位符暂存渲染结果。
  *
  * @param markdown - 原始 Markdown 文本
@@ -125,25 +150,26 @@ function extractMath(markdown: string): { text: string; placeholders: MathPlaceh
             continue;
         }
 
-        // 同行 display 公式：允许出现在普通文本或列表项中。
-        const withBlockMath = line.replace(
-            /(?<!\$)\$\$\s*(.+?)\s*\$\$(?!\$)/g,
-            (_match, tex: string) => {
-                const html = `<span class="math-inline">${renderMath(tex, false)}</span>`;
-                return makePlaceholder(html);
-            }
-        );
-
-        // 行内公式：允许 $ 与内容之间有空格，但仍排除 $$ 形式。
-        const processed = withBlockMath.replace(
-            /(?<!\$)\$(?!\$)\s*(.+?)\s*\$(?!\$|\d)/g,
-            (_match, tex: string) => {
-                if (!tex.trim()) return _match;
-                // 行内代码中的美元符号不参与公式渲染。
-                const html = `<span class="math-inline">${renderMath(tex, false)}</span>`;
-                return makePlaceholder(html);
-            }
-        );
+        // 同行 display 公式 + 行内公式：只替换**反引号之外**的文本。
+        // 行内代码里的 `$` 是代码内容，不参与公式渲染（与编辑器保持一致）。
+        const processed = replaceOutsideCodeSpans(line, (text) => {
+            const withBlockMath = text.replace(
+                /(?<!\$)\$\$\s*(.+?)\s*\$\$(?!\$)/g,
+                (_match, tex: string) => {
+                    const html = `<span class="math-inline">${renderMath(tex, false)}</span>`;
+                    return makePlaceholder(html);
+                }
+            );
+            // 行内公式：允许 $ 与内容之间有空格，但仍排除 $$ 形式。
+            return withBlockMath.replace(
+                /(?<!\$)\$(?!\$)\s*(.+?)\s*\$(?!\$|\d)/g,
+                (_match, tex: string) => {
+                    if (!tex.trim()) return _match;
+                    const html = `<span class="math-inline">${renderMath(tex, false)}</span>`;
+                    return makePlaceholder(html);
+                }
+            );
+        });
         result.push(processed);
         i++;
     }

@@ -36,12 +36,27 @@ export function handleNodeClick(app: MindMapApp, node: MapNode, event: MouseEven
     //
     // 以前单击直接 startEdit，结果是「想拖节点却先进了编辑」，
     // 而且刚拖选完文字松手也会被当成点击。现在第一下只负责选中，
-    // 编辑入口保留在：再次单击、双击、F2 / 工具条。
+    // 编辑入口保留在：再次单击、双击（已选中时）、F2 / 工具条。
     // 多选状态下的普通单击要先清掉多选、切回单选，不算「再次点击」。
     const wasSelected = app.selectedUid === uid && app.multiSelected.size === 0;
     app.selectNode(uid);
     if (node.kind === 'root') return;
-    if (wasSelected) app.startEdit(uid, event.clientX, event.clientY);
+    if (wasSelected) {
+        // 如果上一击（同一节点）已经很早之前，这就是新一轮手势，
+        // 「刚选中」标记作废；同一轮双击的第二下要保留它，
+        // dblclick 才能把第二下带进来的编辑撤回。
+        const rapid =
+            app.selectOnlyUid === uid && performance.now() - app.selectOnlyAt <= 700;
+        if (!rapid) app.selectOnlyUid = null;
+        app.startEdit(uid, event.clientX, event.clientY);
+        return;
+    }
+    // 这一下才刚把节点选中：记下来（带时间戳）。如果它其实是一次双击的
+    // 第一下，双击事件到达时会把第二下带进来的编辑会话撤回
+    // （见 onContainerDoubleClick），让「直接双击一个没选中的节点」
+    // 只停留在选中态；隔得久了的残留标记由那边的 700ms 判定忽略。
+    app.selectOnlyUid = uid;
+    app.selectOnlyAt = performance.now();
 }
 
 
@@ -128,6 +143,8 @@ export function outlineLineOf(app: MindMapApp, uid: string) : number | null {
 
 /** 清除选中并隐藏工具条。 */
 export function clearSelection(app: MindMapApp) : void {
+    // 点到空白处：上一轮「刚选中」的手势作废
+    app.selectOnlyUid = null;
     // 取消选中 = 取消待确认删除（红按钮不该留在屏幕上）
     app.clearPendingDelete();
     app.multiSelected.clear();

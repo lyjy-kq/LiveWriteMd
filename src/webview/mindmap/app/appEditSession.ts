@@ -271,6 +271,43 @@ export function commitEditSession(app: MindMapApp) : void {
 
 
 /**
+ * Ctrl/Cmd+S：强制写回 + 保存。
+ *
+ * 平时的提交靠 blur/Esc；实际用下来 blur 偶尔送不到（见
+ * MindMapApp.onWindowBlur / onDocumentPointerDown 的注释），改动会留在
+ * mini-CM 里。这里走同一条 renameNode 通道把文本落回源文档，然后不管
+ * 有没有改动都把手里的全文交给宿主立即落盘（onSave），不等 300ms 防抖。
+ */
+export function forceWrite(app: MindMapApp) : void {
+    if (app.editSession) app.commitEditSession();
+    app.options.onSave?.(app.markdown);
+}
+
+
+/**
+ * 销毁前提交（只写回文档，不重建画布）。
+ *
+ * INIT 重建时 MindMapApp 会被销毁；直接 exitEdit 会把用户刚输入的内容
+ * 丢掉（webview 里的文本还在，但扩展侧拿不到）。马上要销毁画布，
+ * 所以复用 renameNode → onEdit 这条纯文本通道，跳过 setData。
+ */
+export function flushEditBeforeDestroy(app: MindMapApp) : void {
+    const session = app.editSession;
+    if (!session) return;
+    app.editSession = null;
+    app.splitCapture = null;
+    app.cancelGrowEditingNode();
+    if (!session.display.destroyed) session.display.exitEdit();
+    const text = session.display.getText();
+    if (text === session.initialText || !app.currentTree) return;
+    const result = renameNode(app.markdown, app.currentTree, session.uid, text);
+    if (result.text === app.markdown) return;
+    app.setMarkdown(result.text);
+    app.options.onEdit(result.text);
+}
+
+
+/**
  * 刷新「拆分到子节点」按钮：备快照 + 按有无选区显隐。
  *
  * 调用时机：编辑态选区变化（miniCm 的 onSelectionChange）、

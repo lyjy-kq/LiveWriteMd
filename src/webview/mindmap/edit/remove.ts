@@ -116,6 +116,8 @@ export function deleteNodes(
  *
  * 1. **子节点接替被删节点的位置** —— 标题链减少 `#` 数（`### C` → `## C`），
  *    列表链把缩进退到被删节点的标记列（`    - C` → `  - C`）；
+ *    被删的是标题时，它的**列表项子节点**会转成同级别的标题
+ *    （`## 标题` 下的 `- A / - B` → `## A / ## B`，见函数内注释）；
  * 2. 子节点的**整棵子树**一起平移，子树内部的相对层级不能变；
  * 3. 被删节点自身的区间用 `_selfLineRange`，不能把子节点的行也删掉
  *    （`_lineRange` 是含子树的，见 types.ts 的字段说明）。
@@ -160,6 +162,51 @@ export function deleteSelfKeepChildren(
                     block.length,
                     ...shiftHeadingLevel(block, delta)
                 );
+            }
+            continue;
+        }
+
+        if (node.data._kind === 'heading' && child.data._kind === 'list') {
+            // 列表项提升成与被删标题**同级**的标题。
+            //
+            // 场景：`## 事实库现状` 下面只有 `- A / - B / - C`。删掉标题后，
+            // 列表在 Markdown 里没法「平移」到上一级标题之下——文档中部的
+            // 顶层列表会归入**上一个标题**的章节（内容看起来跑进了前一个
+            // 兄弟），所以只能把每个列表项转成同级标题，才能留在原来的层级。
+            //
+            // 转换规则：
+            //   - A 标题文字          ->  ## A 标题文字
+            //     - 嵌套子项          ->  - 嵌套子项（整块左移到行首，仍是它的子节点）
+            //     A 的续行            ->  A 的续行（紧贴标题，treeBuilder 会并回标题）
+            // 有序列表的序号 / 任务标记属于列表语法：序号丢弃，任务标记保留在
+            // 文字里（`## [x] foo`），避免把勾选状态弄丢。
+            const childSelf =
+                (child.data._selfLineRange as NodeLineRange | undefined) ?? childRange;
+            const firstLine = lines[childSelf.fromLine] ?? '';
+            const mark =
+                /^([ \t]*)([-*+]|\d+[.)])([ \t]+)(\[[ xX]\][ \t]+)?(.*)$/.exec(firstLine);
+            if (mark) {
+                // 内容列（字符数）= 缩进 + marker + marker 后空白 + 任务标记；
+                // 续行与嵌套子列表都缩进到这一列，整块去掉它即可。
+                const contentColumn =
+                    mark[1].length + mark[2].length + mark[3].length + (mark[4] ?? '').length;
+                const replacement = block.map((line) => {
+                    if (line.trim() === '') return line;
+                    let index = 0;
+                    let consumed = 0;
+                    while (
+                        index < line.length &&
+                        consumed < contentColumn &&
+                        (line[index] === ' ' || line[index] === '\t')
+                    ) {
+                        index += 1;
+                        consumed += 1;
+                    }
+                    return line.slice(index);
+                });
+                replacement[0] =
+                    `${'#'.repeat(nodeLevel)} ${((mark[4] ?? '') + mark[5]).trimEnd()}`;
+                lines.splice(childRange.fromLine, block.length, ...replacement);
             }
             continue;
         }

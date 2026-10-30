@@ -16,13 +16,24 @@ import { isMediaKind } from '.././edit/rename.js';
 // 键盘 / 浮层
 // ==================================================================
 
-/** 导图内快捷键：Ctrl+Z/Y、Ctrl+F/H、Tab、Enter、F2、Delete。 */
+/** 导图内快捷键：Ctrl+S、Ctrl+Z/Y、Ctrl+F/H、Tab、Enter、F2、Delete。 */
 export function handleWindowKeyDown(app: MindMapApp, event: KeyboardEvent): void {
-    if (!app.active || app.editSession) return;
+    if (!app.active) return;
+    const key = event.key.toLowerCase();
+    // Ctrl/Cmd+S：强制写回 + 保存。
+    // 必须排在「编辑会话里直接 return」之前 —— 编辑中按保存正是最常见的
+    // 用法；否则按键会落到 VS Code 的默认保存上，而 mini-CM 里还没提交的
+    // 内容根本不在文档里，保存的就是旧内容。
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && key === 's') {
+        event.preventDefault();
+        event.stopPropagation();
+        app.forceWrite();
+        return;
+    }
+    if (app.editSession) return;
     const target = event.target as HTMLElement | null;
     if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
 
-    const key = event.key.toLowerCase();
     if ((event.ctrlKey || event.metaKey) && !event.altKey) {
         if (key === 'f') {
             event.preventDefault();

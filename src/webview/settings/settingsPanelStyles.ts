@@ -59,6 +59,23 @@ export const PANEL_STYLES = `
     font-weight: 600;
 }
 .fms-header-title { flex: 1 1 auto; }
+.fms-header-sub {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--vscode-descriptionForeground, #999);
+    margin-right: 4px;
+}
+.fms-help {
+    width: 26px; height: 26px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--vscode-input-border, rgba(128,128,128,0.3));
+    border-radius: 50%;
+    background: transparent;
+    color: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+.fms-help:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.2)); }
 .fms-close {
     width: 28px; height: 28px;
     display: inline-flex; align-items: center; justify-content: center;
@@ -81,6 +98,28 @@ export const PANEL_STYLES = `
     padding: 10px 16px;
     border-top: 1px solid var(--vscode-editorGroup-border, rgba(128,128,128,0.18));
 }
+/* 常驻说明：告诉新手不用找「保存」按钮 */
+.fms-footer-note {
+    flex: 1 1 auto;
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground, #888);
+}
+.fms-reset-all {
+    padding: 4px 12px;
+    border: 1px solid var(--vscode-input-border, rgba(128,128,128,0.3));
+    border-radius: 4px;
+    background: transparent;
+    color: var(--vscode-descriptionForeground, #bbb);
+    font-size: 11.5px;
+    cursor: pointer;
+}
+.fms-reset-all:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.2)); }
+/* 二次确认态：变红提醒「这一下真的会重置全部」 */
+.fms-reset-all[data-armed="true"] {
+    color: var(--vscode-errorForeground, #f48771);
+    border-color: var(--vscode-errorForeground, #f48771);
+    background: rgba(244, 135, 113, 0.12);
+}
 .fms-apply {
     padding: 5px 20px;
     border: none;
@@ -100,12 +139,34 @@ export const PANEL_STYLES = `
 }
 .fms-apply-hint[data-show="true"] { opacity: 1; }
 
+/* 左栏：搜索框固定在顶部，分组列表自己滚动 */
 .fms-nav {
-    flex: 0 0 168px;
-    overflow-y: auto;
+    flex: 0 0 186px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
     padding: 10px 8px;
     border-right: 1px solid var(--vscode-editorGroup-border, rgba(128,128,128,0.14));
 }
+.fms-nav-list {
+    flex: 1 1 auto;
+    overflow-y: auto;
+}
+.fms-search {
+    flex: 0 0 auto;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 5px 8px;
+    font-size: 12px;
+    border: 1px solid var(--vscode-input-border, rgba(128,128,128,0.3));
+    border-radius: 4px;
+    background: var(--vscode-input-background, #3c3c3c);
+    color: var(--vscode-input-foreground, inherit);
+    outline: none;
+}
+.fms-search:focus { border-color: var(--vscode-focusBorder, #007acc); }
+.fms-search::placeholder { color: var(--vscode-input-placeholderForeground, #888); }
 .fms-nav-btn {
     display: flex;
     align-items: center;
@@ -238,13 +299,119 @@ export const PANEL_STYLES = `
     background: var(--vscode-input-background, #3c3c3c);
     border-color: var(--vscode-input-border, rgba(128,128,128,0.3));
 }
+/* 分组标题 + 一句话说明 */
+.fms-section-head { margin: 14px 2px 2px; }
+.fms-section-head:first-child { margin-top: 4px; }
 .fms-section-title {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--vscode-descriptionForeground, #888);
-    margin: 18px 2px 4px;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--vscode-editorForeground, inherit);
 }
-.fms-section-title:first-child { margin-top: 6px; }
+.fms-section-desc {
+    margin-top: 4px;
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--vscode-descriptionForeground, #999);
+}
+
+/* 新手引导卡片 */
+.fms-guide {
+    margin: 6px 0 14px;
+    padding: 12px 14px;
+    border: 1px solid var(--vscode-focusBorder, rgba(0,122,204,0.55));
+    border-radius: 8px;
+    background: var(--vscode-editorWidget-background, rgba(79,193,255,0.07));
+}
+.fms-guide-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.fms-guide-title {
+    flex: 1 1 auto;
+    font-size: 13px;
+    font-weight: 600;
+}
+.fms-guide-close {
+    border: none;
+    background: transparent;
+    color: var(--vscode-descriptionForeground, #999);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+}
+.fms-guide-close:hover { color: var(--vscode-editorForeground, inherit); }
+.fms-guide-steps {
+    margin: 8px 0 0;
+    padding-left: 18px;
+    font-size: 12px;
+    line-height: 1.65;
+    color: var(--vscode-editorForeground, inherit);
+}
+.fms-guide-steps li { margin-bottom: 4px; }
+.fms-guide-tip {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--vscode-editorGroup-border, rgba(128,128,128,0.2));
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--vscode-descriptionForeground, #999);
+}
+
+/* 已改动标记 / 行尾恢复默认 / 搜索里的分组标签 */
+.fms-mod-badge {
+    display: none;
+    margin-left: 8px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--vscode-focusBorder, #4fc1ff);
+    background: rgba(79, 193, 255, 0.15);
+}
+.fms-row[data-modified="true"] .fms-mod-badge { display: inline-block; }
+.fms-row-reset {
+    flex: 0 0 auto;
+    border: 1px solid var(--vscode-input-border, rgba(128,128,128,0.3));
+    border-radius: 4px;
+    background: transparent;
+    color: var(--vscode-descriptionForeground, #bbb);
+    font-size: 10.5px;
+    padding: 3px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.fms-row-reset:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.2)); }
+.fms-row-chip {
+    margin-right: 6px;
+    padding: 1px 6px;
+    border: 1px solid var(--vscode-editorGroup-border, rgba(128,128,128,0.3));
+    border-radius: 4px;
+    background: transparent;
+    color: var(--vscode-descriptionForeground, #999);
+    font-size: 10.5px;
+    font-weight: 400;
+    cursor: pointer;
+}
+.fms-row-chip:hover {
+    color: var(--vscode-editorForeground, inherit);
+    border-color: var(--vscode-focusBorder, #007acc);
+}
+/* 从搜索跳回分组时，目标行闪一下，帮助眼睛定位 */
+.fms-row[data-flash="true"] { animation: fms-flash 1.2s ease; }
+@keyframes fms-flash {
+    0% { background: rgba(79, 193, 255, 0.22); }
+    100% { background: transparent; }
+}
+
+/* 搜索无结果 */
+.fms-empty {
+    padding: 28px 8px;
+    font-size: 12.5px;
+    line-height: 1.8;
+    text-align: center;
+    color: var(--vscode-descriptionForeground, #999);
+}
 `;
 

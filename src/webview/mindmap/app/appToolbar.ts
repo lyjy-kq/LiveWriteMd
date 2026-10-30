@@ -7,7 +7,7 @@
  */
 
 import type { MindMapApp } from '../mindmapApp.js';
-import { addNode } from '.././edit/add.js';
+import { addNode, clampHeading } from '.././edit/add.js';
 import type { NewNodeSpec } from '.././edit/add.js';
 import { isMediaKind } from '.././edit/rename.js';
 import { countSubtreeNodes } from '.././edit/shared.js';
@@ -251,7 +251,9 @@ export function createAddMenu(app: MindMapApp, act: 'child' | 'sibling', label: 
     button.type = 'button';
     button.dataset.act = act;
     button.textContent = label;
-    button.title = '点击添加普通文本节点；悬停选择其它类型';
+    // 普通点击的默认类型跟随当前节点（标题→标题、列表→列表项）；
+    // 悬浮菜单里可以显式选择其它类型，包括「普通文本」。
+    button.title = '点击添加同类型节点（标题→次级/同级标题，列表→列表项）；悬停选择其它类型';
     wrap.appendChild(button);
 
     const popup = document.createElement('div');
@@ -404,7 +406,7 @@ export function createDeleteMenu(app: MindMapApp) : HTMLDivElement {
     addItem(
         'self',
         '只删除自己',
-        '保留子节点，让它们接替当前节点的位置'
+        '保留子节点，让它们接替当前节点的位置（列表项会转成同级标题）'
     );
     addItem('children', '只删除子节点', '保留当前节点，删掉它下面的所有分支');
     wrap.appendChild(popup);
@@ -412,9 +414,33 @@ export function createDeleteMenu(app: MindMapApp) : HTMLDivElement {
 }
 
 
-/** 普通点击「＋子节点 / ＋兄弟」：插入普通文本节点。 */
+/**
+ * 普通点击「＋子节点 / ＋兄弟」：新节点**优先跟当前节点同类型**。
+ *
+ * - 标题：子节点 = 深一级标题（H2 下面就是 H3），兄弟 = 同级标题。
+ *   以前这里一律插「普通文本」，标题下点 ＋子节点得到的是一个段落；
+ *   而键盘 Tab / Enter 走 addChildNode / addSiblingNode，本来就是标题
+ *   对标题，两条入口的表现不一致（菜单里显式选「普通文本」仍然插段落）。
+ * - 列表：列表项本身（有序 / 无序跟随当前项，addNode 里已处理）。
+ * - 根节点（文件名）：子节点 = 一级标题，与 Tab 的行为一致。
+ * - 段落 / 引用：普通文本（段落加子节点时 addNode 会先把它升级成列表项）。
+ */
 export function addQuick(app: MindMapApp, placement: 'child' | 'sibling') : void {
-    app.insertNodeSpec(placement, { type: 'text' });
+    const node = app.selectedUid ? app.canvas.getNode(app.selectedUid) : null;
+    let spec: NewNodeSpec = { type: 'text' };
+    if (node?.kind === 'heading') {
+        const level = Number(node.data._headingLevel ?? 1);
+        spec = {
+            type: 'heading',
+            // 子标题的级别下限由 addNode 再钳一次（≥ 父级 + 1，H6 退化成列表项）
+            level: clampHeading(placement === 'child' ? level + 1 : level),
+        };
+    } else if (node?.kind === 'list') {
+        spec = { type: 'list' };
+    } else if (node?.kind === 'root' && placement === 'child') {
+        spec = { type: 'heading', level: 1 };
+    }
+    app.insertNodeSpec(placement, spec);
 }
 
 
@@ -537,25 +563,27 @@ export function showToolbar(app: MindMapApp, uid: string) : void {
                 : '保留当前节点，删掉它下面的所有分支';
     }
     // 「只删除自己」的前提是子节点能整体上移一级。标题的子标题可以
-    //（## 升 #，天然还是根的子节点），但**非标题**子节点不行：
-    // Markdown 没有「节结束」标记，文档中部的顶层段落/列表/表格必然
-    // 归入前一个标题的章节 —— 提升出去就挂到了上一个兄弟标题下面
-    //（看着像「删了 B，内容全跑进 A」）。这种标题禁用该项并说明原因。
+    //（## 升 #，天然还是根的子节点）；**列表项**也可以（转成同级标题，
+    // 见 deleteSelfKeepChildren）；但段落 / 引用 / 表格 / 代码这些不行：
+    // Markdown 没有「节结束」标记，文档中部的顶层段落/表格必然归入前一个
+    // 标题的章节 —— 提升出去就挂到了上一个兄弟标题下面（看着像「删了 B，
+    // 内容全跑进 A」）。这种标题禁用该项并说明原因。
     // 注意用 class 而不是 disabled 属性：禁用按钮不派发鼠标事件，
     // title 里的原因提示会永远看不到。
     const selfItem = deleteMenu?.querySelector<HTMLButtonElement>(
         '[data-del="self"]'
     );
     if (selfItem) {
-        const hasNonHeadingChild =
+        const hasUnpromotableChild =
             treeNode?.node.data._kind === 'heading' &&
             treeNode.node.children.some(
-                (child) => child.data._kind !== 'heading'
+                (child) =>
+                    child.data._kind !== 'heading' && child.data._kind !== 'list'
             );
-        selfItem.classList.toggle('lwm-item-disabled', !!hasNonHeadingChild);
-        selfItem.title = hasNonHeadingChild
-            ? '子节点含段落 / 表格 / 代码等非标题内容：Markdown 里它们无法提升到顶层（会归入上一个标题的章节），请改用其它删除方式'
-            : '保留子节点，让它们接替当前节点的位置';
+        selfItem.classList.toggle('lwm-item-disabled', !!hasUnpromotableChild);
+        selfItem.title = hasUnpromotableChild
+            ? '子节点含段落 / 引用 / 表格 / 代码等无法提升的内容：Markdown 里它们会归入上一个标题的章节，请改用其它删除方式'
+            : '保留子节点，让它们接替当前节点的位置（列表项会转成同级标题）';
     }
     app.toolbarEl.style.display = 'flex';
     app.positionToolbar();

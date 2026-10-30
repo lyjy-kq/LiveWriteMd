@@ -11,6 +11,10 @@ import {
 } from './headingNumbering.js';
 import type { HeadingEdit } from './headingNumbering.js';
 import { settingsState } from '../settings/settingsState.js';
+import {
+    OUTLINE_MIN_WIDTH,
+    OUTLINE_MAX_WIDTH,
+} from './outlineConstants.js';
 import { parseHeadings, pushHeadingNode, normalizeHeadingText } from './outlineHeadingParse.js';
 import { render, renderNodes, findActiveNodeId, syncActiveState, buildToggleIcon, buildIndentGuides } from './outlineRender.js';
 import {
@@ -21,7 +25,7 @@ import {
 } from './outlineActionBar.js';
 import { bindEvents } from './outlineEvents.js';
 
-interface OutlineNode {
+export interface OutlineNode {
     /** 鑺傜偣鍞竴鏍囪瘑锛岀敤浜庣ǔ瀹氫繚瀛樻姌鍙犵姸鎬併€?*/
     id: string;
     /** 鏍囬灞傜骇锛岃寖鍥翠负 1 鍒?6銆?*/
@@ -143,25 +147,6 @@ export class OutlinePanel {
     /** 当前悬浮提示的鼠标 Y 坐标。 */
     public hoveredClientY = 0;
 
-    /** 鍏佽鐨勬渶灏忓搴︺€?*/
-    private static readonly MIN_WIDTH = 220;
-
-    /** 鍏佽鐨勬渶澶у搴︺€?*/
-    private static readonly MAX_WIDTH = 520;
-
-    /** 鎮诞鎻愮ず寤惰繜鏃堕棿銆?*/
-    private static readonly TOOLTIP_DELAY_MS = 500;
-
-    /** 涓€绾у埌鍏骇鏍囬鐨勯厤鑹叉睜锛岀敤浜庝弗鏍兼寜灞傜骇寰幆銆?*/
-    private static readonly LEVEL_ACCENT_PALETTE = [
-        'rgba(235, 131, 131, 0.5)',
-        'rgba(174, 154, 203, 0.5)',
-        'rgba(125, 181, 205, 0.5)',
-        'rgba(113, 167, 150, 0.5)',
-        'rgba(220, 191, 97, 0.5)',
-        'rgba(221, 163, 106, 0.5)',
-    ];
-
     /**
      * 鍒涘缓鍙充晶澶х翰闈㈡澘鎺у埗鍣ㄣ€?     *
      * @param panelEl - 澶х翰澶栧眰瀹瑰櫒
@@ -205,9 +190,9 @@ export class OutlinePanel {
      * @returns 褰掍竴鍖栧悗鐨勫搴?     */
     private clampWidth(width: number): number {
         if (!Number.isFinite(width)) {
-            return OutlinePanel.MIN_WIDTH;
+            return OUTLINE_MIN_WIDTH;
         }
-        return Math.min(OutlinePanel.MAX_WIDTH, Math.max(OutlinePanel.MIN_WIDTH, Math.round(width)));
+        return Math.min(OUTLINE_MAX_WIDTH, Math.max(OUTLINE_MIN_WIDTH, Math.round(width)));
     }
 
     /**

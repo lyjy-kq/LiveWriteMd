@@ -10,6 +10,8 @@ export const MINDMAP_SECTIONS: SettingSection[] = [
         id: 'mindmap',
         label: '思维导图',
         icon: '🧠',
+        description:
+            '影响导图的配色、展开层级、节点排版和流畅度，导图显示不合意时来这里调。',
         items: [
             {
                 key: 'mindmapTheme',
@@ -184,6 +186,8 @@ export const MINDMAP_SECTIONS: SettingSection[] = [
         id: 'advanced',
         label: '高级',
         icon: '🧩',
+        description:
+            '主题、同步延迟、拖拽判定等底层选项，通常保持默认，遇到具体问题时再改。',
         items: [
             {
                 key: 'theme',

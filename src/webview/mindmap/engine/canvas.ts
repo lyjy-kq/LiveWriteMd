@@ -482,10 +482,10 @@ export class MapCanvas {
     public setPlaceholder(node: MapNode, doc?: string) : void { return displayPool.setPlaceholder(this, node, doc); }
     public measureNode(node: MapNode) : void { return displayPool.measureNode(this, node); }
     public measureNodes(nodes: MapNode[]) : void { return displayPool.measureNodes(this, nodes); }
-    public scheduleMeasureSettle(forceAll = false) : void { return displayPool.scheduleMeasureSettle(this, forceAll = false); }
+    public scheduleMeasureSettle(forceAll = false) : void { return displayPool.scheduleMeasureSettle(this, forceAll); }
     public settleMounted() : void { return displayPool.settleMounted(this); }
     public remeasureAll() : void { return displayPool.remeasureAll(this); }
-    public refreshNode(uid: string, force = false) : void { return displayPool.refreshNode(this, uid, force = false); }
+    public refreshNode(uid: string, force = false) : void { return displayPool.refreshNode(this, uid, force); }
     public finishEditDisplay(uid: string, baseHeight: number, baseWidth?: number) : boolean { return displayPool.finishEditDisplay(this, uid, baseHeight, baseWidth); }
     public setNodeWidth(uid: string, width: number) : boolean { return displayPool.setNodeWidth(this, uid, width); }
     public ensureEditDisplay(uid: string) : NodeDisplay | null { return displayPool.ensureEditDisplay(this, uid); }
@@ -493,7 +493,7 @@ export class MapCanvas {
     public enforceDisplayCap() : void { return displayPool.enforceDisplayCap(this); }
     public enqueueSwap(uid: string) : void { return displayPool.enqueueSwap(this, uid); }
     public interactionActive() : boolean { return displayPool.interactionActive(this); }
-    public schedulePump(delay = 16) : void { return displayPool.schedulePump(this, delay = 16); }
+    public schedulePump(delay = 16) : void { return displayPool.schedulePump(this, delay); }
     public resumePump() : void { return displayPool.resumePump(this); }
     // mounting
     public mountNode(node: MapNode) : void { return mounting.mountNode(this, node); }
@@ -501,12 +501,12 @@ export class MapCanvas {
     public positionNode(node: MapNode) : void { return mounting.positionNode(this, node); }
     public updateViewport() : void { return mounting.updateViewport(this); }
     public scheduleViewport() : void { return mounting.scheduleViewport(this); }
-    public schedulePrewarm(delay = PREWARM_DELAY_MS) : void { return mounting.schedulePrewarm(this, delay = PREWARM_DELAY_MS); }
+    public schedulePrewarm(delay = PREWARM_DELAY_MS) : void { return mounting.schedulePrewarm(this, delay); }
     // viewport
     public setZoomRenderThresholds(litePercent: number, plainPercent: number, liteEnabled: boolean = this.liteEnabled, plainEnabled: boolean = this.plainEnabled) : void { return viewport.setZoomRenderThresholds(this, litePercent, plainPercent, liteEnabled, plainEnabled); }
     public directTier() : RenderTier { return viewport.directTier(this); }
     public tierForZoom() : RenderTier { return viewport.tierForZoom(this); }
-    public syncRenderTier(force = false) : void { return viewport.syncRenderTier(this, force = false); }
+    public syncRenderTier(force = false) : void { return viewport.syncRenderTier(this, force); }
     public applyRenderTier(tier: RenderTier) : void { return viewport.applyRenderTier(this, tier); }
     public setDisplayCacheEnabled(enabled: boolean) : void { return viewport.setDisplayCacheEnabled(this, enabled); }
     public setGestureCrisp(enabled: boolean) : void { return viewport.setGestureCrisp(this, enabled); }
@@ -557,7 +557,7 @@ export class MapCanvas {
     public stopAutoPan() : void { return pointer.stopAutoPan(this); }
     public updateDropCandidate(clientX: number, clientY: number) : void { return pointer.updateDropCandidate(this, clientX, clientY); }
     public canDrop(dragUid: string, parentUid: string) : boolean { return pointer.canDrop(this, dragUid, parentUid); }
-    public handlePointerUp(event: PointerEvent, fromWindow = false) : void { return pointer.handlePointerUp(this, event, fromWindow = false); }
+    public handlePointerUp(event: PointerEvent, fromWindow = false) : void { return pointer.handlePointerUp(this, event, fromWindow); }
     public handlePointerCancel(event: PointerEvent) : void { return pointer.handlePointerCancel(this, event); }
     public finishDrag() : void { return pointer.finishDrag(this); }
     public handleWheel = (event: WheelEvent): void => { pointer.handleWheel(this, event); };

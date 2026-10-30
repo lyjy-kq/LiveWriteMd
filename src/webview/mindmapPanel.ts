@@ -121,6 +121,10 @@ function ensureApp(): MindMapApp | null {
         onEdit: (newFullText: string) => {
             vscode.postMessage({ type: MESSAGE_TYPES.CONTENT_CHANGE, content: newFullText });
         },
+        // Ctrl+S：带上全文强制写回并保存（扩展侧不会被同步防环跳过）
+        onSave: (newFullText: string) => {
+            vscode.postMessage({ type: MESSAGE_TYPES.SAVE_DOCUMENT, content: newFullText });
+        },
         // 迭代 N8：面板没有隐藏 CM，撤销/重做经 extension 走文档 undo/redo
         onUndo: () => {
             vscode.postMessage({ type: 'mindmapUndoRedo', kind: 'undo' });
