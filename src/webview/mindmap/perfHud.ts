@@ -1,21 +1,20 @@
 /**
- * 导图性能监控浮层（设置「性能监控面板」开启后挂在画布右上角）。
+ * 导图性能监测浮层（设置「性能监测」开启后挂在画布右上角）。
  *
- * 实时显示：
- * - 帧率（rAF 逐帧测间隔，500ms 窗口滚动平均）；
- * - 缓存实例数（真实显示实例 / 已挂载节点）与堆内存（Chromium 的
- *   performance.memory，webview 恰好是 Chromium）；
- * - 换真队列长度与换真速度（实例创建计数器的时间增量）；
- * - 强制布局速率（gBCR/s，项目自己的性能口径；HUD 开启期间才包装计数）。
- *
- * 排查支持：帧间隔跳变（>2.5× 中位数且 >33ms）与长任务（longtask >100ms）
- * 发生时，把当时的现场（实例/队列/缩放/档位/手势/编辑/堆/gBCR）记进
- * 环形缓冲（最近 50 条），浮层上可一键复制成 JSON 贴回 Issue / 给我。
+ * 两个档位：
+ * - minimal（极简）：无边框，只显示帧率与堆内存，不做尖峰记录、不包装
+ *   gBCR、不装长任务观察器（开销最小，适合日常开着看）；
+ * - full（完整）：实时显示帧率 / 缓存实例数 / 堆内存 / 换真队列与速率 /
+ *   强制布局速率；帧率跳变与长任务发生时记录现场（可复制成 JSON 排查）。
  *
  * @module webview/mindmap/perfHud
  */
 
 import { BUILD_STAMP } from '../../shared/buildStamp.js';
+import type { PerfMonitorMode } from './types.js';
+
+/** 浮层档位（去掉 off）。 */
+export type PerfHudMode = Exclude<PerfMonitorMode, 'off'>;
 
 /** 帧率尖峰 / 长任务的一条现场记录。 */
 export interface PerfSpikeRecord {
@@ -39,9 +38,13 @@ const MAX_SPIKES = 50;
 const TEXT_TICK_MS = 500;
 
 export class PerfHud {
+    /** 当前档位（设置切换时 syncPerfHud 据此重建）。 */
+    public readonly mode: PerfHudMode;
+
     private readonly el: HTMLDivElement;
     private readonly textEl: HTMLDivElement;
-    private readonly spikeEl: HTMLDivElement;
+    /** 完整档才有的尖峰说明行。 */
+    private readonly spikeEl: HTMLDivElement | null;
     private readonly snapshot: () => Record<string, unknown>;
 
     private rafId: number | null = null;
@@ -55,7 +58,7 @@ export class PerfHud {
     private deltas: number[] = [];
     private readonly spikes: PerfSpikeRecord[] = [];
 
-    // —— gBCR 计数（HUD 存活期间包装，destroy 时恢复）——
+    // —— gBCR 计数（仅完整档，HUD 存活期间包装，destroy 时恢复）——
     private gbcrCount = 0;
     private gbcrOrig: typeof Element.prototype.getBoundingClientRect | null = null;
     /** 上一文本周期的瞬时速率基数。 */
@@ -65,28 +68,41 @@ export class PerfHud {
     private gbcrRate = 0;
     private fps = 0;
 
-    constructor(container: HTMLElement, snapshot: () => Record<string, unknown>) {
+    constructor(
+        container: HTMLElement,
+        snapshot: () => Record<string, unknown>,
+        mode: PerfHudMode = 'full'
+    ) {
+        this.mode = mode;
         this.snapshot = snapshot;
         this.el = document.createElement('div');
-        this.el.className = 'lwm-perf-hud';
+        this.el.className =
+            mode === 'minimal' ? 'lwm-perf-hud lwm-perf-hud-minimal' : 'lwm-perf-hud';
         this.textEl = document.createElement('div');
         this.textEl.className = 'lwm-perf-hud-line';
-        this.spikeEl = document.createElement('div');
-        this.spikeEl.className = 'lwm-perf-hud-spikes';
-        const copyBtn = document.createElement('button');
-        copyBtn.type = 'button';
-        copyBtn.className = 'lwm-perf-hud-copy';
-        copyBtn.textContent = '复制尖峰记录';
-        copyBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.copySpikes(copyBtn);
-        });
-        this.el.append(this.textEl, this.spikeEl, copyBtn);
+        this.el.appendChild(this.textEl);
+
+        // 尖峰记录 / 复制按钮只有完整档需要；极简档连 DOM 都不建
+        this.spikeEl = mode === 'full' ? document.createElement('div') : null;
+        if (mode === 'full' && this.spikeEl) {
+            this.spikeEl.className = 'lwm-perf-hud-spikes';
+            const copyBtn = document.createElement('button');
+            copyBtn.type = 'button';
+            copyBtn.className = 'lwm-perf-hud-copy';
+            copyBtn.textContent = '复制尖峰记录';
+            copyBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.copySpikes(copyBtn);
+            });
+            this.el.append(this.spikeEl, copyBtn);
+        }
         container.appendChild(this.el);
 
-        this.installGbcrCounter();
+        if (mode === 'full') {
+            this.installGbcrCounter();
+            this.startLongtaskObserver();
+        }
         this.startFpsLoop();
-        this.startLongtaskObserver();
         this.timer = setInterval(() => this.tick(), TEXT_TICK_MS);
     }
 
@@ -100,7 +116,7 @@ export class PerfHud {
                 const delta = now - this.lastFrame;
                 this.deltas.push(delta);
                 if (this.deltas.length > 240) this.deltas.shift();
-                this.maybeRecordSpike(delta);
+                if (this.mode === 'full') this.maybeRecordSpike(delta);
             }
             this.lastFrame = now;
             this.rafId = requestAnimationFrame(loop);
@@ -176,6 +192,20 @@ export class PerfHud {
     // ==================================================================
 
     private tick(): void {
+        // 帧率：滚动窗口的平均间隔（两档共用）
+        if (this.deltas.length > 0) {
+            const avg = this.deltas.reduce((a, b) => a + b, 0) / this.deltas.length;
+            this.fps = Math.round(1000 / Math.max(1, avg));
+        }
+
+        // 极简档：一行「帧率 · 堆」，不读快照、不算速率
+        if (this.mode === 'minimal') {
+            const heap = this.heapMB();
+            this.textEl.textContent =
+                heap >= 0 ? `${this.fps} fps · ${heap} MB` : `${this.fps} fps`;
+            return;
+        }
+
         const snap = this.snapshot();
         // 速率 = 计数器增量 / 周期间隔。
         // 第一个周期不算：HUD 可能挂在画布已经跑了一阵之后，
@@ -186,11 +216,6 @@ export class PerfHud {
         this.lastCreated = created;
         this.gbcrRate = (this.gbcrCount - this.lastGbcr) / (TEXT_TICK_MS / 1000);
         this.lastGbcr = this.gbcrCount;
-        // 帧率：滚动窗口的平均间隔
-        if (this.deltas.length > 0) {
-            const avg = this.deltas.reduce((a, b) => a + b, 0) / this.deltas.length;
-            this.fps = Math.round(1000 / Math.max(1, avg));
-        }
         const parts = [
             `${this.fps}fps`,
             `堆 ${this.heapMB()}MB`,
@@ -201,12 +226,11 @@ export class PerfHud {
             `布局 ${Math.round(this.gbcrRate)}/s`,
             // 挂载/卸载累计：手势期间这两个数应该纹丝不动（双圈预制的验收口径）
             `挂${snap.mountTotal ?? '?'}/卸${snap.unmountTotal ?? '?'}`,
-            `档${snap.tier ?? '?'}`,
         ];
         if (snap.interacting) parts.push('手势中');
         if (snap.editing) parts.push('编辑中');
         this.textEl.textContent = parts.join(' | ');
-        this.spikeEl.textContent =
+        this.spikeEl!.textContent =
             this.spikes.length > 0
                 ? `尖峰 ${this.spikes.length} 条（最近 ${this.spikes[this.spikes.length - 1].deltaMs}ms ${this.spikes[this.spikes.length - 1].kind}）`
                 : '无尖峰';

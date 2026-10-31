@@ -7,12 +7,6 @@
  * @module webview/mindmap/engine/canvasConstants
  */
 
-/**
- * 同屏真实显示实例的软上限（超出的离屏实例降级为占位）。
- *
- * 仅在设置「显示实例 LRU 淘汰」开启时生效；关闭时离屏实例一直保留。
- */
-export const DISPLAY_CACHE_CAP = 64;
 /** 一次 setData 中直接创建真实显示实例的节点数（其余先占位）。 */
 export const PROGRESSIVE_THRESHOLD = 24;
 /**
@@ -86,17 +80,11 @@ export const ZOOM_SETTLE_MS = 120;
 
 /**
  * 文本类节点（标题 / 列表项 / 段落）。
- * 降级渲染档里只有它们还值得建轻量 mini-CM；媒体节点直接显示摘要文本。
+ *
+ * 尺寸测量时需要「文本态 / 显示态」各量一遍取最大值，只对这几类做；
+ * 代码 / 表格 / 公式 / mermaid 是 widget 渲染，源码态宽度没有意义。
  */
 export const TEXT_KINDS = new Set<string>(['heading', 'list', 'para', 'quote']);
-
-/**
- * 渲染档位（由缩放比例自动决定）：
- * - 0 全量：mini-CM + 完整 live preview（行内格式 / 表格 / 公式 / mermaid）；
- * - 1 降级：文本节点用轻量 mini-CM（不挂 live preview），媒体节点只显示摘要；
- * - 2 纯文本：不建任何 mini-CM，所有节点显示纯文本占位，只保留节点框与连线。
- */
-export type RenderTier = 0 | 1 | 2;
 
 /**
  * 标题色板 h1~h6 的基准色（色相与 live 的默认色一致；live 会把它们

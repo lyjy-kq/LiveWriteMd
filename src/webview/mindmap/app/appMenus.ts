@@ -97,8 +97,7 @@ export function openContextMenu(app: MindMapApp, event: MouseEvent, table: { uid
  * 关闭右键菜单。
  *
  * @param keepTableContext - true = 保留表格上下文（菜单项点击后由命令
- *        自己收尾）。默认 false：顺手把右键时临时提升的全量显示实例
- *        降回当前渲染档，避免「只看了一眼菜单，节点就一直全量渲染」。
+ *        自己收尾）。默认 false：顺手刷新右键时被临时重建的显示实例。
  */
 export function closeContextMenu(app: MindMapApp, keepTableContext = false) : void {
     app.contextMenuEl?.remove();
@@ -131,20 +130,12 @@ export function resolveTableMenuContext(app: MindMapApp, event: MouseEvent) : { 
     if (!wrapper || !wrapper.closest('.lwm-node-layer')) return null;
     const uid = wrapper.dataset.uid;
     if (!uid) return null;
-    // 缩放降级档下节点可能只有占位文本，没有表格 widget / 可定位的 CM：
-    // 强制建一个全量实例（菜单关闭或命令执行完再按档降回去）
-    const modeBefore = app.canvas.getDisplayMode(uid);
+    // 占位节点没有表格 widget / 可定位的 CM：先建一个真实实例
     const display = app.canvas.ensureEditDisplay(uid);
     if (!display) return null;
     const pos = app.tablePosAtEvent(display.view, event);
     const cell = pos == null ? null : cellAt(display.view.state, pos);
-    if (!cell) {
-        // 点在节点边框 / 表格外面：菜单照常弹，但别把临时全量实例留着
-        if (modeBefore !== 'full' && app.editSession?.uid !== uid) {
-            app.canvas.refreshNode(uid, true);
-        }
-        return null;
-    }
+    if (!cell) return null;
     const selection = display.view.state.selection.main;
     // 已经框选了一片格子、右键又落在选区里：保持框选（与 live 一致）
     const insideSelection =
@@ -267,7 +258,7 @@ export function runTableMenuCommand(app: MindMapApp, command: TableCommand) : vo
         }
     }
     // 没改动（例如只剩一列不能删）或文档内容碰巧没变：
-    // 编辑会话保持原样，否则把临时全量实例降回当前档
+    // 编辑会话保持原样，否则刷新显示实例
     if (!session) app.canvas.refreshNode(uid, true);
 }
 

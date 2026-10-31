@@ -179,17 +179,27 @@ export function handleInternalLinkNavigate(app: MindMapApp, uid: string) : void 
 // 性能监控浮层
 // ==================================================================
 
-/** 按设置挂/摘性能监控浮层（幂等）。 */
+/** 按设置挂 / 摘 / 切换性能监测浮层（幂等）。 */
 export function syncPerfHud(app: MindMapApp) : void {
-    if (app.settings.mindmapPerfHud && !app.perfHud) {
-        app.perfHud = new PerfHud(app.container, () => ({
+    const mode = app.settings.mindmapPerfMonitor;
+    if (mode === 'off') {
+        if (app.perfHud) {
+            app.perfHud.destroy();
+            app.perfHud = null;
+        }
+        return;
+    }
+    // 档位没变就保留现有实例：反复 setSettings 不重建 rAF 采样
+    if (app.perfHud?.mode === mode) return;
+    app.perfHud?.destroy();
+    app.perfHud = new PerfHud(
+        app.container,
+        () => ({
             ...app.canvas.debugState(),
             docKB: Math.round(app.markdown.length / 1024),
-        }));
-    } else if (!app.settings.mindmapPerfHud && app.perfHud) {
-        app.perfHud.destroy();
-        app.perfHud = null;
-    }
+        }),
+        mode
+    );
 }
 
 

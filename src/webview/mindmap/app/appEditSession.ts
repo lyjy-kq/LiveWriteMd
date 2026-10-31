@@ -44,9 +44,7 @@ export function startEdit(app: MindMapApp, uid: string, x?: number, y?: number) 
         app.canvas.setMultiSelected(app.multiSelected);
         app.updateMultiBar();
     }
-    // 占位节点 / 被 LRU 逐出的节点：强制建一个真实显示实例。
-    // ensureEditDisplay 无视缩放降级档，保证拿到的是**全量**实例
-    // （轻量档没有 live preview 显示扩展，纯文本档根本没有实例）。
+    // 占位节点（渐进换真还没轮到它）：先把真实显示实例建出来。
     const display = app.canvas.ensureEditDisplay(uid);
     if (!display) return;
     // commitEditSession 可能刚整树重建过：上面那个 node 可能是旧模型的
@@ -430,9 +428,8 @@ export function finishEdit(app: MindMapApp, session: EditSession, text: string |
         app.toggleEmptyHint(tree.children.length === 0);
         return;
     }
-    // 文本没变：全量档下显示实例本来就是完整的，exitEdit 已经切回显示态，
-    // 就地收尾即可（只把编辑时撑高的盒子收回去）。轻量 / 纯文本档才需要
-    // 重建降档，finishEditDisplay 返回 false 时再走 refreshNode。
+    // 文本没变：显示实例本来就是完整的，exitEdit 已经切回显示态，
+    // 就地收尾即可（只把编辑时撑高的盒子收回去）。
     if (app.canvas.finishEditDisplay(session.uid, session.baseHeight, session.baseWidth)) {
         return;
     }

@@ -83,13 +83,6 @@ export interface NodeDisplayOptions {
     /** 代码块嵌套高亮语言表。 */
     codeLanguages?: readonly LanguageDescription[];
     /**
-     * 轻量渲染（画布缩放到「降级渲染」阈值以下时由 MapCanvas 传 true）：
-     * 不挂 live preview 显示扩展 —— 行内标记、代码块边框、表格 widget、
-     * 公式 / mermaid / 图片全部不构建，只留 Markdown 源码本身的排版。
-     * 缩放后这些细节本来也看不清，省掉的是每节点几十个装饰与测量。
-     */
-    lite?: boolean;
-    /**
      * 显示态（**非编辑会话**）文档被改动时回调，参数是去掉哨兵换行的源码。
      *
      * 显示态的按钮会直接改本地文档：mermaid 的宽度档位改 info 行、
@@ -231,7 +224,6 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
         // 用 mark 装饰画选中文字（含代码块 / 行内元素 / widget 高亮）。
         // 节点 CM 以前漏了它 —— 鼠标拖选时 CM 的选区状态其实变了，但屏幕上
         // 没有任何高亮，看起来就是「节点里的文字根本选不中」。
-        // 轻量档也要带上：它只是几段 mark 装饰，没有监听器/测量成本。
         codeBlockSelectionPlugin,
         // 表格边缘「+」的执行桥：显示态是只读的（editable=false），
         // runTableCommand 会直接拒绝。这里在真正执行命令的那一下临时
@@ -252,8 +244,7 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
         }),
         // 与文本模式渲染一致的**显示态** live 扩展包（无编辑交互插件：
         // 几十实例同屏时的监听器/测量钩子大头都在这里省掉）。
-        // 轻量档（画布缩得很小）连这层也省掉，只显示源码排版。
-        ...(options.lite ? [] : [createLivePreviewDisplayExtension()]),
+        createLivePreviewDisplayExtension(),
         // 编辑态扩展槽（history + 会话键位 + 交互插件，翻转时注入）
         editExtComp.of([]),
     ];

@@ -14,7 +14,6 @@ import type { MindMapTreeNode } from '../types.js';
 import { PROGRESSIVE_THRESHOLD } from './canvasConstants.js';
 import { buildMapModel, walkAll } from './model.js';
 import type { MapNode } from './model.js';
-import { PROGRESSIVE_THRESHOLD } from './canvasConstants.js';
 import type { DisplayEntry } from './canvas.js';
 
 /**
@@ -46,7 +45,11 @@ export function setData(
     // 新节点找不到同 uid 的旧节点时按内容认领（先到先得），删一个节点
     // 就只销毁被删的那棵子树，其余节点原地复用。
     const oldNodesInOrder: MapNode[] = [];
-    if (oldRoot) walkAll(oldRoot, (node) => oldNodesInOrder.push(node));
+    if (oldRoot) {
+        walkAll(oldRoot, (node) => {
+            oldNodesInOrder.push(node);
+        });
+    }
     const contentKeyOf = (node: MapNode): string =>
         [
             node.kind,
@@ -151,8 +154,6 @@ export function setData(
                     node,
                     nodeRef: entry.nodeRef,
                     kind: node.kind,
-                    // 沿用旧实例的档位：ensureContent 会检查它是否仍符合当前档
-                    mode: entry.mode,
                 });
                 node.placeholder = false;
             }

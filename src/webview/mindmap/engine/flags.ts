@@ -148,10 +148,6 @@ export function setEditing(c: MapCanvas, uid: string | null) : void {
         if (node && node.wrapper && node.wrapper.parentElement !== c.nodeLayer) {
             c.mountNode(node);
         }
-    } else {
-        // 编辑期间滚动滚轮缩放可能跨过了降级阈值：那时不能重建实例
-        // （会销毁正在编辑的 mini-CM），统一拖到会话结束后补切档。
-        c.syncRenderTier();
     }
 }
 

@@ -81,26 +81,16 @@ import * as appToolbar from './app/appToolbar.js';
 const DEFAULT_RUNTIME_SETTINGS: MindMapRuntimeSettings = {
     mindmapTheme: 'auto',
     mindmapDefaultExpandLevel: 2,
-    mindmapPerformanceMode: true,
-    // 离屏实例 LRU 淘汰：默认关闭，离屏实例一直保留（来回平移不重建 CM）
-    mindmapDisplayCache: false,
     mindmapNodeMaxWidth: 20,
     mindmapNodeMaxLines: 3,
     mindmapCodeMinWidth: 10,
-    // 缩放降级：两个档位默认都关闭（与 settingsSchema 默认值一致），
-    // 关闭时不看阈值，任何缩放比例都保持全量渲染
-    mindmapLiteEnabled: false,
-    mindmapPlainEnabled: false,
-    // 缩放降级阈值（百分比）：与 settingsSchema 默认值一致
-    mindmapLiteZoom: 70,
-    mindmapPlainZoom: 40,
     // 手势期清晰度优先：默认开启。实测平移帧间隔与提升模式一致、
     // 滚轮缩放反而少了 41ms 的建层尖峰，所以默认不提升。
     mindmapGestureCrisp: true,
     // 内链箭头层：默认开启
     mindmapInternalLinks: true,
-    // 性能监控浮层：默认关闭（开了才有采样开销）
-    mindmapPerfHud: false,
+    // 性能监测浮层：默认关闭（开了才有采样开销）
+    mindmapPerfMonitor: 'off',
 };
 
 /**
@@ -216,13 +206,8 @@ export class MindMapApp {
 
     /** 隐藏状态下改设置：等 setActive(true) 再量尺寸/重排。 */
     public pendingSettingsRefresh: {
-        performance: boolean;
         size: boolean;
         expand: boolean;
-        /** 缩放降级阈值是否变了（跨档时 canvas 会整树重建）。 */
-        tier: boolean;
-        /** 显示实例 LRU 淘汰开关是否变了。 */
-        cache: boolean;
     } | null = null;
 
     /** 最近一次喂给画布的树（编辑操作以它为基准）。 */
@@ -288,7 +273,7 @@ export class MindMapApp {
      * 右键落在表格节点上时的上下文（菜单项据此增删行列）。
      *
      * 只有真的点到表格格子才非空；菜单关闭时若没执行命令，要把临时
-     * 提升成全量的显示实例降回当前渲染档（见 closeContextMenu）。
+     * 创建的全量显示实例刷新回占位（见 closeContextMenu）。
      */
     public tableMenuContext: { uid: string; display: NodeDisplay } | null = null;
     /** 右键菜单的全局关闭监听（destroy 时要摘掉，避免实例泄漏）。 */
@@ -418,17 +403,8 @@ export class MindMapApp {
         } satisfies MapCanvasOptions);
 
         this.applyNodeSizeVars();
-        // 缩放降级阈值：先落到画布，首屏 fit 出来的缩放就会按档渲染
-        this.canvas.setZoomRenderThresholds(
-            this.settings.mindmapLiteZoom,
-            this.settings.mindmapPlainZoom,
-            this.settings.mindmapLiteEnabled,
-            this.settings.mindmapPlainEnabled
-        );
-        this.canvas.setVirtualization(this.isPerformanceEnabled());
-        // 离屏实例 LRU 淘汰：默认关闭，必须跟设置同步，否则旧行为会一直开着
-        this.canvas.setDisplayCacheEnabled(this.settings.mindmapDisplayCache);
-        // 性能监控浮层：按初始设置挂/摘
+        // 视口虚拟化恒开（画布内的默认值），不再提供开关
+        // 性能监测浮层：按初始设置挂/摘
         this.syncPerfHud();
         this.createToolbar();
         this.createMultiToolbar();
@@ -449,7 +425,6 @@ export class MindMapApp {
     // appDocument
     public setMarkdown(text: string) : void { return appDocument.setMarkdown(this, text); }
     public resolveTheme() : ThemeType { return appDocument.resolveTheme(this); }
-    public isPerformanceEnabled() : boolean { return appDocument.isPerformanceEnabled(this); }
     public bakeExpandState(tree: MindMapTreeNode) : MindMapTreeNode { return appDocument.bakeExpandState(this, tree); }
     public computeNodeDoc(node: MapNode) : { doc: string; sentinel: boolean } { return appDocument.computeNodeDoc(this, node); }
     // appSelection
@@ -617,16 +592,12 @@ export class MindMapApp {
             this.syncInternalLinks();
         }
 
-        // 性能监控浮层：开关切换即挂/摘（HUD 内部是 rAF + 500ms 定时器，
-        // 隐藏时整个销毁，不留后台采样）
-        if (previous.mindmapPerfHud !== this.settings.mindmapPerfHud) {
+        // 性能监测浮层：开关 / 档位切换即挂、摘或重建（HUD 内部是 rAF +
+        // 500ms 定时器，关闭时整个销毁，不留后台采样）
+        if (previous.mindmapPerfMonitor !== this.settings.mindmapPerfMonitor) {
             this.syncPerfHud();
         }
 
-        const performanceChanged =
-            previous.mindmapPerformanceMode !== this.settings.mindmapPerformanceMode;
-        const cacheChanged =
-            previous.mindmapDisplayCache !== this.settings.mindmapDisplayCache;
         const sizeChanged =
             previous.mindmapNodeMaxWidth !== this.settings.mindmapNodeMaxWidth ||
             previous.mindmapNodeMaxLines !== this.settings.mindmapNodeMaxLines ||
@@ -634,74 +605,30 @@ export class MindMapApp {
         if (sizeChanged) this.applyNodeSizeVars();
         const expandChanged =
             previous.mindmapDefaultExpandLevel !== this.settings.mindmapDefaultExpandLevel;
-        // 缩放降级阈值：改了不必重测（没跨档时内容不变；跨档时 canvas 自己重建）
-        // 两个开关也算在内：关掉某档要立刻退出该档，不能等阈值变化
-        const tierChanged =
-            previous.mindmapLiteZoom !== this.settings.mindmapLiteZoom ||
-            previous.mindmapPlainZoom !== this.settings.mindmapPlainZoom ||
-            previous.mindmapLiteEnabled !== this.settings.mindmapLiteEnabled ||
-            previous.mindmapPlainEnabled !== this.settings.mindmapPlainEnabled;
 
-        if (
-            !performanceChanged &&
-            !cacheChanged &&
-            !sizeChanged &&
-            !expandChanged &&
-            !tierChanged
-        ) {
+        if (!sizeChanged && !expandChanged) {
             return;
         }
 
         // 隐藏时量出来的尺寸是 0：挂起，激活后补做
         if (!this.active) {
             const pending = this.pendingSettingsRefresh ?? {
-                performance: false,
                 size: false,
                 expand: false,
-                tier: false,
-                cache: false,
             };
-            pending.performance ||= performanceChanged;
             pending.size ||= sizeChanged;
             pending.expand ||= expandChanged;
-            pending.tier ||= tierChanged;
-            pending.cache ||= cacheChanged;
             this.pendingSettingsRefresh = pending;
             return;
         }
-        this.applySettingsRefresh(
-            performanceChanged,
-            sizeChanged,
-            expandChanged,
-            tierChanged,
-            cacheChanged
-        );
+        this.applySettingsRefresh(sizeChanged, expandChanged);
     }
 
     /** 把设置变更落到已渲染的画布上。 */
-    public applySettingsRefresh(
-        performanceChanged: boolean,
-        sizeChanged: boolean,
-        expandChanged: boolean,
-        tierChanged: boolean,
-        cacheChanged: boolean
-    ): void {
-        if (tierChanged) {
-            this.canvas.setZoomRenderThresholds(
-                this.settings.mindmapLiteZoom,
-                this.settings.mindmapPlainZoom,
-                this.settings.mindmapLiteEnabled,
-                this.settings.mindmapPlainEnabled
-            );
-        }
-        if (performanceChanged) this.canvas.setVirtualization(this.isPerformanceEnabled());
-        // 从关到开时 setDisplayCacheEnabled 会立刻做一轮淘汰
-        if (cacheChanged) {
-            this.canvas.setDisplayCacheEnabled(this.settings.mindmapDisplayCache);
-        }
+    public applySettingsRefresh(sizeChanged: boolean, expandChanged: boolean): void {
         if (sizeChanged) this.canvas.remeasureAll();
         if (expandChanged) this.applyExpandLevel();
-        // 性能模式变化时也需要重算可见集合
+        // 尺寸 / 展开层级变化都可能改变可见集合
         this.canvas.resize();
     }
 
@@ -747,13 +674,7 @@ export class MindMapApp {
             const pending = this.pendingSettingsRefresh;
             if (pending) {
                 this.pendingSettingsRefresh = null;
-                this.applySettingsRefresh(
-                    pending.performance,
-                    pending.size,
-                    pending.expand,
-                    pending.tier,
-                    pending.cache
-                );
+                this.applySettingsRefresh(pending.size, pending.expand);
             }
             this.canvas.setActive(true);
             this.toggleEmptyHint((this.currentTree?.children.length ?? 0) === 0);

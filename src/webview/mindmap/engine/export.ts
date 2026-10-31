@@ -233,7 +233,6 @@ export function buildExportSvg(c: MapCanvas) : { svg: string; width: number; hei
     };
     if (!c.root) return fallback;
 
-    const wasVirtual = c.virtualization;
     // 导出中途可能抛错（克隆/序列化）；用 finally 保证临时关闭的
     // 虚拟化一定恢复，否则画布会永远全量挂载、内存回落不了。
     try {
@@ -335,9 +334,8 @@ export function buildExportSvg(c: MapCanvas) : { svg: string; width: number; hei
 
     return { svg, width, height };
     } finally {
-        // 恢复性能模式：按视口重新裁剪，顺带把导出时多创建的实例收进 LRU
-        c.virtualization = wasVirtual;
-        if (wasVirtual) c.updateViewport();
-        c.enforceDisplayCap();
+        // 恢复虚拟化：按视口重新裁剪（离屏实例保留，回视口直接复用）
+        c.virtualization = true;
+        c.updateViewport();
     }
 }

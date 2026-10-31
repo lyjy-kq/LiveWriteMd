@@ -60,29 +60,22 @@ export function fileNameFromUri(uri: string): string {
  * 从 settingsState 读取导图运行时设置。
      */
 export function readMindmapSettings(): MindMapRuntimeSettings {
+    const perfMonitor = settingsState.getString('mindmapPerfMonitor');
     return {
         mindmapTheme: settingsState.getString('mindmapTheme') || 'auto',
         mindmapDefaultExpandLevel: settingsState.getNumber('mindmapDefaultExpandLevel'),
-        mindmapPerformanceMode: settingsState.getBoolean('mindmapPerformanceMode'),
-        // 离屏实例 LRU 淘汰：默认关闭
-        mindmapDisplayCache: settingsState.getBoolean('mindmapDisplayCache'),
         // 节点尺寸上限：getNumber 缺省/异常时回退 0，这里兜底成默认值
         mindmapNodeMaxWidth: settingsState.getNumber('mindmapNodeMaxWidth') || 20,
         mindmapNodeMaxLines: settingsState.getNumber('mindmapNodeMaxLines') || 3,
         // 代码块最小宽度：0 是合法值（不设），不能 || 兜底
         mindmapCodeMinWidth: settingsState.getNumber('mindmapCodeMinWidth'),
-        // 缩放降级开关：默认关闭，关闭时阈值不参与判断
-        mindmapLiteEnabled: settingsState.getBoolean('mindmapLiteEnabled'),
-        mindmapPlainEnabled: settingsState.getBoolean('mindmapPlainEnabled'),
-        // 缩放降级阈值（百分比）：0 不是合法值（等于任何时候都降级），兜底默认
-        mindmapLiteZoom: settingsState.getNumber('mindmapLiteZoom') || 70,
-        mindmapPlainZoom: settingsState.getNumber('mindmapPlainZoom') || 40,
         // 手势期清晰度优先：默认关闭（关闭 = 手势期提升合成层，帧率优先）
         mindmapGestureCrisp: settingsState.getBoolean('mindmapGestureCrisp'),
         // 内链箭头层：默认开启（schema 默认值即 true）
         mindmapInternalLinks: settingsState.getBoolean('mindmapInternalLinks'),
-        // 性能监控浮层：默认关闭
-        mindmapPerfHud: settingsState.getBoolean('mindmapPerfHud'),
+        // 性能监测浮层：只认三个合法值，其它（含旧 boolean 配置）一律关闭
+        mindmapPerfMonitor:
+            perfMonitor === 'minimal' || perfMonitor === 'full' ? perfMonitor : 'off',
     };
 }
 

@@ -251,7 +251,7 @@ export const NODE_CONTENT_CSS = `
     margin: 4px 8px;
     background: var(--vscode-widget-border, #454545);
 }
-/* 节点过多自动开启性能模式的一次性提示 */
+/* 画布上的临时提示（如导出失败） */
 .lwm-perf-notice {
     position: absolute;
     left: 50%;
@@ -288,6 +288,25 @@ export const NODE_CONTENT_CSS = `
 #mindmap[data-lwm-theme="light"] .lwm-perf-hud {
     background: rgba(255, 255, 255, 0.9);
     color: #1c6fb5;
+}
+/* 极简档：右上角一行小字，无边框、无底色（文字阴影保证任何背景上可读） */
+#mindmap[data-lwm-theme] .lwm-perf-hud.lwm-perf-hud-minimal {
+    top: 6px;
+    right: 10px;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: var(--vscode-editor-foreground, #d4d4d4);
+    font-size: 11px;
+    line-height: 1.4;
+    opacity: 0.72;
+    text-shadow: 0 0 3px var(--vscode-editor-background, #1e1e1e);
+}
+#mindmap[data-lwm-theme="light"] .lwm-perf-hud.lwm-perf-hud-minimal {
+    background: transparent;
+    color: var(--vscode-editor-foreground, #333);
+    text-shadow: 0 0 3px var(--vscode-editor-background, #fff);
 }
 .lwm-perf-hud-spikes {
     color: #d8a04a;

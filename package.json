@@ -2,7 +2,7 @@
     "name": "livewrite-md",
     "displayName": "LiveWriteMD",
     "description": "WYSIWYG Markdown editor for VS Code with Obsidian-style live preview. Tables, Mermaid diagrams, KaTeX math, code block syntax highlighting, and full IME support.",
-    "version": "0.0.24",
+    "version": "0.0.25",
     "publisher": "lyjy",
     "license": "SEE LICENSE IN LICENSE",
     "repository": {
@@ -402,51 +402,25 @@
                     "maximum": 10,
                     "markdownDescription": "思维导图文本节点最多显示几行，超出截断加省略号；点击已选中节点可先展开，再点进入编辑。"
                 },
-                "liveWriteMd.mindmapPerformanceMode": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Only render nodes inside the visible canvas area for better performance on large documents."
-                },
-                "liveWriteMd.mindmapDisplayCache": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "开启后，离屏节点最多保留 64 个真实渲染实例，超出时把最早创建的降级为纯文本占位；关闭（默认）时不淘汰，离屏实例一直保留。"
-                },
                 "liveWriteMd.mindmapInternalLinks": {
                     "type": "boolean",
                     "default": true,
                     "description": "在思维导图中把文档内链接（[[#标题]] / [文字](#标题)）绘制为底层虚线箭头，点击箭头跳转到目标标题。"
                 },
-                "liveWriteMd.mindmapPerfHud": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "在思维导图右上角显示性能监控浮层：帧率 / 缓存实例数 / 堆内存 / 换真队列与速率 / 强制布局速率，并记录帧率跳变现场供排查。"
-                },
-                "liveWriteMd.mindmapLiteEnabled": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "启用思维导图降级渲染：缩放低于阈值时省掉行内格式、代码高亮、表格 / 公式 / mermaid 图。"
-                },
-                "liveWriteMd.mindmapLiteZoom": {
-                    "type": "number",
-                    "default": 70,
-                    "minimum": 10,
-                    "maximum": 100,
-                    "multipleOf": 5,
-                    "markdownDescription": "思维导图缩放到该比例（%）以下时降级渲染：不渲染行内格式、代码高亮、表格 / 公式 / mermaid 图，只保留 Markdown 源码排版。仅在开启「启用降级渲染」后生效。"
-                },
-                "liveWriteMd.mindmapPlainEnabled": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "启用思维导图纯文本缩放：缩放低于阈值时节点只用纯文本占位，不创建 CodeMirror 实例。"
-                },
-                "liveWriteMd.mindmapPlainZoom": {
-                    "type": "number",
-                    "default": 40,
-                    "minimum": 5,
-                    "maximum": 100,
-                    "multipleOf": 5,
-                    "markdownDescription": "思维导图缩放到该比例（%）以下时只用纯文本占位，不创建 CodeMirror 实例。仅在开启「启用纯文本缩放」后生效；建议不高于降级渲染缩放。"
+                "liveWriteMd.mindmapPerfMonitor": {
+                    "type": "string",
+                    "default": "off",
+                    "enum": [
+                        "off",
+                        "minimal",
+                        "full"
+                    ],
+                    "enumDescriptions": [
+                        "关闭",
+                        "极简（帧率 + 内存）",
+                        "完整（详细指标）"
+                    ],
+                    "description": "在思维导图右上角显示性能数据：极简版无边框，只显示帧率与堆内存；完整版另含实例数 / 换真队列 / 强制布局速率，并记录帧率跳变现场。"
                 },
                 "liveWriteMd.highlightActiveLine": {
                     "type": "boolean",
@@ -964,11 +938,6 @@
                     "maximum": 6,
                     "multipleOf": 1
                 },
-                "mindmapPerformanceMode": {
-                    "description": "画布可视区域外的节点不渲染，大文档更流畅。",
-                    "type": "boolean",
-                    "default": true
-                },
                 "mindmapNodeMaxWidth": {
                     "description": "文本节点一行最多排几列（1 列 = 1 个中文字宽），超出换行；与「节点最大行数」共同决定截断点。",
                     "type": "number",
@@ -993,21 +962,20 @@
                     "maximum": 60,
                     "multipleOf": 1
                 },
-                "mindmapLiteZoom": {
-                    "description": "缩小到该比例以下时，节点不再渲染行内格式、代码高亮、表格 / 公式 / mermaid 图，只保留 Markdown 源码排版，拖动更流畅。",
-                    "type": "number",
-                    "default": 70,
-                    "minimum": 10,
-                    "maximum": 100,
-                    "multipleOf": 5
-                },
-                "mindmapPlainZoom": {
-                    "description": "缩小到该比例以下时，节点只用纯文本占位（媒体节点显示摘要），不创建任何 CodeMirror 实例；建议不高于「降级渲染缩放」。",
-                    "type": "number",
-                    "default": 40,
-                    "minimum": 5,
-                    "maximum": 100,
-                    "multipleOf": 5
+                "mindmapPerfMonitor": {
+                    "description": "在画布右上角实时显示性能数据。极简版无边框，只显示帧率与堆内存；完整版另含实例数 / 换真队列 / 强制布局速率，并记录帧率跳变与长任务现场。",
+                    "type": "string",
+                    "default": "off",
+                    "enum": [
+                        "off",
+                        "minimal",
+                        "full"
+                    ],
+                    "enumDescriptions": [
+                        "关闭",
+                        "极简（帧率 + 内存）",
+                        "完整（详细指标）"
+                    ]
                 },
                 "theme": {
                     "description": "设为自动时跟随 VS Code 当前主题。",

@@ -266,7 +266,7 @@ export function buildMindMapTree(markdown: string, fileName: string): MindMapTre
         const fromLine = lineOf(node.from);
         const toLine = lineOf(node.to - 1);
         const src = doc.slice(node.from, node.to);
-        // 摘要文字：第一行去掉 > 标记后的内容（降级档 / 纯文本占位用）
+        // 摘要文字：第一行去掉 > 标记后的内容（占位节点用）
         const firstLine = (src.split('\n')[0] ?? '').replace(/^\s*>+\s?/, '').trim();
         parent.children.push({
             kind: 'quote',
@@ -307,7 +307,7 @@ export function buildMindMapTree(markdown: string, fileName: string): MindMapTre
         } else if (kind === 'math') {
             text = `数学 · ${toLine - fromLine + 1} 行`;
         } else if (kind === 'html') {
-            // HTML 块的摘要：剥掉标签后的可见文字（降级档只显示摘要），
+            // HTML 块的摘要：剥掉标签后的可见文字（占位节点只显示摘要），
             // 纯图片块没有文字就退回「HTML · N 行」。
             const plain = src
                 .replace(/<[^>]*>/g, ' ')

@@ -14,13 +14,12 @@
  * - **一份模型**：MapNode 树同时承担布局与渲染状态；
  * - **测量即布局**：节点包裹元素在离屏层用 max-content 量出宽高，再写死尺寸，
  *   布局只跟数字打交道，不做 DOM 二次读取；
- * - **视口虚拟化**：只把当前视口（+ 余量）内的节点挂进 DOM；拖动画布时只改变
- *   世界层 transform，不重建任何节点；
+ * - **视口虚拟化（恒开）**：只把当前视口（+ 余量）内的节点挂进 DOM；拖动画布时
+ *   只改变世界层 transform，不重建任何节点。导出时会临时关闭，以便克隆全图；
  * - **按 uid 复用**：重排/拖动/编辑后重建模型时，未变化的节点把 wrapper 与
  *   mini-CM 整棵 DOM 搬过去，同时保留滚动/选区/编辑态；
- * - **显示实例缓存**：离屏实例默认保留（平移回来直接复用）；设置里开启
- *   「显示实例 LRU 淘汰」后，超过上限的最旧离屏实例降级回静态占位，
- *   回到视口时按需重建。
+ * - **离屏实例保留**：挂载圈内的节点用真实 mini-CM，圈外只留轻量占位；
+ *   实例本身不主动淘汰，平移回来直接复用。
  *
  * 该文件不处理 markdown 回写：拖动落点通过 onDrop 交给上层，
  * 由 MarkdownEdit 计算新全文后再 setData 回来。
@@ -42,7 +41,7 @@ import {
     walkVisible,
     type MapNode,
 } from './model.js';
-import { DISPLAY_CACHE_CAP, MINIMAP_H, MINIMAP_W, PREWARM_DELAY_MS, PROGRESSIVE_THRESHOLD } from './canvasConstants.js';
+import { MINIMAP_H, MINIMAP_W, PREWARM_DELAY_MS, PROGRESSIVE_THRESHOLD } from './canvasConstants.js';
 import * as displayPool from './displayPool.js';
 import * as flags from './flags.js';
 import * as links from './links.js';
@@ -53,7 +52,6 @@ import * as viewport from './viewport.js';
 import { buildExportSvg } from './export.js';
 import { computeInternalLinkGeometry, rayExitRect } from './internalLinkGeometry.js';
 import { setData as setDataImpl } from './setData.js';
-import type { RenderTier } from './canvasConstants.js';
 
 
 /** 拖动落点。 */
@@ -167,7 +165,7 @@ type PointerState =
     | null;
 
 /** 拖动落点候选。 */
-interface DropCandidate {
+export interface DropCandidate {
     parentUid: string;
     prevUid: string | null;
     nextUid: string | null;
@@ -191,7 +189,7 @@ interface DragState {
 }
 
 /** 显示实例缓存条目。 */
-interface DisplayEntry {
+export interface DisplayEntry {
     display: NodeDisplay;
     wrapper: HTMLElement;
     node: MapNode;
@@ -206,11 +204,6 @@ interface DisplayEntry {
      */
     nodeRef: { current: MapNode };
     kind: string;
-    /**
-     * 实例档位：full = 完整 live preview，lite = 轻量源码渲染。
-     * 缩放在两档之间来回跨阈值时，靠它判断现有实例是否还能复用。
-     */
-    mode: 'full' | 'lite';
 }
 
 export class MapCanvas {
@@ -279,14 +272,6 @@ export class MapCanvas {
 
     // —— 显示实例 / 挂载 ——
     public displays = new Map<string, DisplayEntry>();
-    /**
-     * 是否启用离屏实例 LRU 淘汰（设置项，默认关闭）。
-     *
-     * 关闭时离屏节点的真实 mini-CM 一直保留，来回平移直接复用，代价是
-     * 内存随文档节点数增长；开启后超过 DISPLAY_CACHE_CAP 的离屏实例
-     * 会被销毁并降级为纯文本占位。
-     */
-    public displayCacheEnabled = false;
     public readonly mounted = new Set<string>();
     public readonly queue: string[] = [];
     public readonly queued = new Set<string>();
@@ -333,8 +318,6 @@ export class MapCanvas {
     // —— 性能监控计数（HUD 用；纯自增整数，零成本）——
     /** 累计创建的真实显示实例数（换真速率 = 它的增量/时间）。 */
     public createdTotal = 0;
-    /** 累计 LRU 淘汰的实例数。 */
-    public evictedTotal = 0;
     /** 累计挂载 / 卸载次数（手势期间应该纹丝不动——双圈预热制的验收口径）。 */
     public mountTotal = 0;
     public unmountTotal = 0;
@@ -355,6 +338,12 @@ export class MapCanvas {
     public panX = 0;
     public panY = 0;
     public active = false;
+    /**
+     * 视口虚拟化：恒为 true。
+     *
+     * 唯一的例外是导出 SVG：buildExportSvg 会临时置 false 把全图挂进 DOM，
+     * 克隆完再恢复。没有对应的设置项，也不对外暴露开关。
+     */
     public virtualization = true;
     public hasFit = false;
     /** 最后一次滚轮事件的时间戳（换真泵据此避开缩放手势）。 */
@@ -369,22 +358,6 @@ export class MapCanvas {
      */
     public gestureCrisp = false;
 
-    // —— 缩放降级渲染 ——
-    /** 当前渲染档（0 全量 / 1 降级 / 2 纯文本），随 zoom 自动切换。 */
-    public renderTier: RenderTier = 0;
-    /**
-     * 是否启用降级档（默认关闭）。关闭时 liteZoom 完全不参与判断，
-     * 即使缩到很小也保持全量渲染。
-     */
-    public liteEnabled = false;
-    /**
-     * 是否启用纯文本档（默认关闭）。关闭时 plainZoom 完全不参与判断。
-     */
-    public plainEnabled = false;
-    /** 降级阈值（缩放比例，0-1）：zoom < liteZoom 进入档 1。 */
-    public liteZoom = 0.7;
-    /** 纯文本阈值（缩放比例，0-1）：zoom < plainZoom 进入档 2。 */
-    public plainZoom = 0.4;
     /** 上一轮容器尺寸：尺寸变化时用位移补偿保持内容视觉居中。 */
     public lastViewWidth = 0;
     public lastViewHeight = 0;
@@ -461,8 +434,6 @@ export class MapCanvas {
         this.bindEvents();
         this.applyTransform();
         this.applyThemeVars();
-        // 初始档位（CSS 钩子；全量档没有额外样式，保留 data 便于调试/探针）
-        this.container.dataset.lwmTier = '0';
 
         // 字体真正就绪前量出来的宽度可能是回退字体的：字体加载完后补测一次
         if (typeof document !== 'undefined' && document.fonts?.ready) {
@@ -477,8 +448,7 @@ export class MapCanvas {
     public ensureWrapper(node: MapNode) : HTMLElement { return displayPool.ensureWrapper(this, node); }
     public refreshWrapperClasses(node: MapNode | undefined | null) : void { return displayPool.refreshWrapperClasses(this, node); }
     public ensureContent(node: MapNode) : void { return displayPool.ensureContent(this, node); }
-    public placeholderTextOf(node: MapNode, doc?: string) : string { return displayPool.placeholderTextOf(this, node, doc); }
-    public createDisplay(node: MapNode, mode?: 'full' | 'lite') : void { return displayPool.createDisplay(this, node, mode); }
+    public createDisplay(node: MapNode) : void { return displayPool.createDisplay(this, node); }
     public setPlaceholder(node: MapNode, doc?: string) : void { return displayPool.setPlaceholder(this, node, doc); }
     public measureNode(node: MapNode) : void { return displayPool.measureNode(this, node); }
     public measureNodes(nodes: MapNode[]) : void { return displayPool.measureNodes(this, nodes); }
@@ -490,7 +460,6 @@ export class MapCanvas {
     public setNodeWidth(uid: string, width: number) : boolean { return displayPool.setNodeWidth(this, uid, width); }
     public ensureEditDisplay(uid: string) : NodeDisplay | null { return displayPool.ensureEditDisplay(this, uid); }
     public growNodeHeight(uid: string, contentHeight: number) : boolean { return displayPool.growNodeHeight(this, uid, contentHeight); }
-    public enforceDisplayCap() : void { return displayPool.enforceDisplayCap(this); }
     public enqueueSwap(uid: string) : void { return displayPool.enqueueSwap(this, uid); }
     public interactionActive() : boolean { return displayPool.interactionActive(this); }
     public schedulePump(delay = 16) : void { return displayPool.schedulePump(this, delay); }
@@ -503,14 +472,7 @@ export class MapCanvas {
     public scheduleViewport() : void { return mounting.scheduleViewport(this); }
     public schedulePrewarm(delay = PREWARM_DELAY_MS) : void { return mounting.schedulePrewarm(this, delay); }
     // viewport
-    public setZoomRenderThresholds(litePercent: number, plainPercent: number, liteEnabled: boolean = this.liteEnabled, plainEnabled: boolean = this.plainEnabled) : void { return viewport.setZoomRenderThresholds(this, litePercent, plainPercent, liteEnabled, plainEnabled); }
-    public directTier() : RenderTier { return viewport.directTier(this); }
-    public tierForZoom() : RenderTier { return viewport.tierForZoom(this); }
-    public syncRenderTier(force = false) : void { return viewport.syncRenderTier(this, force); }
-    public applyRenderTier(tier: RenderTier) : void { return viewport.applyRenderTier(this, tier); }
-    public setDisplayCacheEnabled(enabled: boolean) : void { return viewport.setDisplayCacheEnabled(this, enabled); }
     public setGestureCrisp(enabled: boolean) : void { return viewport.setGestureCrisp(this, enabled); }
-    public setVirtualization(enabled: boolean) : void { return viewport.setVirtualization(this, enabled); }
     public applyTransform() : void { return viewport.applyTransform(this); }
     public markZooming() : void { return viewport.markZooming(this); }
     public scheduleWorldLayer() : void { return viewport.scheduleWorldLayer(this); }
@@ -580,7 +542,7 @@ export class MapCanvas {
     public remapFlags(remap: Map<string, string>) : void { return flags.remapFlags(this, remap); }
     public setTheme(theme: ThemeType) : void { return flags.setTheme(this, theme); }
     // export
-    public buildExportSvg(): string { return buildExportSvg(this); }
+    public buildExportSvg(): { svg: string; width: number; height: number } { return buildExportSvg(this); }
 
 
     // ==================================================================
@@ -618,16 +580,6 @@ export class MapCanvas {
     /** 按 uid 取显示实例（编辑入口用）。 */
     getDisplay(uid: string): NodeDisplay | null {
         return this.displays.get(uid)?.display ?? null;
-    }
-
-    /**
-     * 按 uid 取显示实例的渲染模式（全量 / 轻量；没有实例时为 null）。
-     *
-     * 给「临时强制全量、用完要降档」的调用方判断是否真的改过档：
-     * 本来就是全量的话，收尾时不必再重建一遍。
-     */
-    getDisplayMode(uid: string): 'full' | 'lite' | null {
-        return this.displays.get(uid)?.mode ?? null;
     }
 
     /** 遍历全部已创建的显示实例（选区复位用）。 */
@@ -828,11 +780,9 @@ export class MapCanvas {
             active: this.active,
             // —— 性能监控 ——
             queue: this.queue.length,
-            tier: this.renderTier,
             interacting: this.interactionActive(),
             editing: this.editingUid !== null,
             createdTotal: this.createdTotal,
-            evictedTotal: this.evictedTotal,
             mountTotal: this.mountTotal,
             unmountTotal: this.unmountTotal,
         };

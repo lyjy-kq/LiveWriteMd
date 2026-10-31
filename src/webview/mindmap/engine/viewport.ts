@@ -6,195 +6,14 @@
  * @module webview/mindmap/engine/viewport
  */
 
-import { HI_ZOOM_THRESHOLD, MAX_ZOOM, MIN_ZOOM, PROGRESSIVE_THRESHOLD, ZOOM_SETTLE_MS } from './canvasConstants.js';
-import { createDisplay, ensureContent } from './displayPool.js';
-import { setEditing } from './flags.js';
-import { relayout } from './links.js';
-import type { RenderTier } from './canvas.js';
+import { HI_ZOOM_THRESHOLD, MAX_ZOOM, MIN_ZOOM, ZOOM_SETTLE_MS } from './canvasConstants.js';
 import type { MapCanvas } from './canvas.js';
 import { computeBounds } from './layout.js';
 import type { MapBounds } from './layout.js';
-import { walkAll, walkVisible } from './model.js';
+import { walkVisible } from './model.js';
 import type { MapNode } from './model.js';
 
 
-/**
- * 设置缩放降级阈值与两个档位的开关（百分比）。
- *
- * 两个阈值把缩放分成三档，跨越阈值时整树按新档重建内容：
- * - zoom >= lite：全量渲染；
- * - plain <= zoom < lite：降级（文本节点轻量 CM，媒体只显示摘要）；
- * - zoom < plain：纯文本（不建任何 CM）。
- *
- * 两个开关默认关闭：关闭的档位无论缩放多小都不会进入，
- * 因此默认行为是「任何缩放比例都全量渲染」。
- *
- * @param litePercent 降级阈值（1-100）
- * @param plainPercent 纯文本阈值（1-100，超过降级阈值时按降级阈值处理）
- * @param liteEnabled 是否启用降级档（缺省沿用当前值）
- * @param plainEnabled 是否启用纯文本档（缺省沿用当前值）
- */
-export function setZoomRenderThresholds(c: MapCanvas, litePercent: number, plainPercent: number, liteEnabled: boolean = c.liteEnabled, plainEnabled: boolean = c.plainEnabled) : void {
-    const toRatio = (value: number): number =>
-        Math.min(100, Math.max(1, value)) / 100;
-    const lite = toRatio(litePercent);
-    // plain 高于 lite 时没有意义（会出现空档），钳到 lite
-    const plain = Math.min(toRatio(plainPercent), lite);
-    const enabledChanged =
-        liteEnabled !== c.liteEnabled || plainEnabled !== c.plainEnabled;
-    if (
-        lite === c.liteZoom &&
-        plain === c.plainZoom &&
-        !enabledChanged
-    ) {
-        return;
-    }
-    c.liteZoom = lite;
-    c.plainZoom = plain;
-    c.liteEnabled = liteEnabled;
-    c.plainEnabled = plainEnabled;
-    // 开关变化必须强制重算档位：回差逻辑会让「关闭某个档」卡在原档里
-    // （例如当前在纯文本档、用户关掉它，缩放仍低于阈值 → 不越过回差
-    // 边界就永远出不来）。这里直接按无回差目标档同步。
-    c.syncRenderTier(enabledChanged);
-}
-
-
-/**
- * 当前缩放「应该」处的档位（无回差）。
- *
- * 关闭的档位直接跳过：纯文本关掉后哪怕 zoom 很小也最多降到降级档；
- * 两个都关掉则始终是全量档。
- */
-export function directTier(c: MapCanvas) : RenderTier {
-    const zoom = c.zoom;
-    if (c.plainEnabled && zoom < c.plainZoom) return 2;
-    if (c.liteEnabled && zoom < c.liteZoom) return 1;
-    return 0;
-}
-
-
-/**
- * 当前缩放应处的档位。
- *
- * 带回差（2%）：滚轮在阈值附近来回时不会反复触发整树重建 ——
- * 每跨一次阈值都要重建内容 + 重量，抖动一下就是几百毫秒。
- */
-export function tierForZoom(c: MapCanvas) : RenderTier {
-    const zoom = c.zoom;
-    // 先算「无回差」目标档，再按缩放方向决定是否要越过阈值 2% 才生效。
-    // 不能只比较相邻档：编辑期间缩放被挂起，结束后可能一次跨两档
-    // （例如从 100% 直接滚到 30%），必须一次算到最终档。
-    const target: RenderTier = c.directTier();
-    if (target === c.renderTier) return target;
-    // 当前所在档已被用户关闭：直接跳出去，不走回差。否则缩放仍在
-    // 原阈值的死区内（比如 30% < 纯文本阈值 40%），会永远卡在原档。
-    if (
-        (c.renderTier === 2 && !c.plainEnabled) ||
-        (c.renderTier === 1 && !c.liteEnabled)
-    ) {
-        return target;
-    }
-    const latch = 0.02;
-    const goingDown = target > c.renderTier;
-    // 本次要跨过的阈值：向下 = 目标档的上边界；向上 = 当前档的下边界
-    const boundary = goingDown
-        ? target === 2
-            ? c.plainZoom
-            : c.liteZoom
-        : c.renderTier === 2
-          ? c.plainZoom
-          : c.liteZoom;
-    const deadZone = boundary * latch;
-    if (goingDown) {
-        return zoom < boundary - deadZone ? target : c.renderTier;
-    }
-    return zoom > boundary + deadZone ? target : c.renderTier;
-}
-
-
-/**
- * 缩放变化后同步档位（无变化时零开销）。
- *
- * @param force 忽略回差、直接按 directTier 切换（开关变化时用）
- */
-export function syncRenderTier(c: MapCanvas, force = false) : void {
-    const next = force ? c.directTier() : c.tierForZoom();
-    if (next === c.renderTier) return;
-    // 编辑中不能整树重建：applyRenderTier 会销毁所有显示实例，
-    // 正在编辑的 mini-CM 也在其中（会话持有它的引用，销毁后直接坏掉）。
-    // 编辑结束（setEditing(null)）时会再同步一次。
-    if (c.editingUid !== null) return;
-    c.applyRenderTier(next);
-}
-
-
-/**
- * 切换渲染档：销毁所有显示实例，按新档重建整树内容并重量。
- *
- * 只在跨阈值时发生（回差避免了抖动），一次几百毫秒可以接受；
- * 换来的是小缩放下不再维持成百上千个 live preview 装饰与 widget。
- */
-export function applyRenderTier(c: MapCanvas, tier: RenderTier) : void {
-    c.renderTier = tier;
-    // CSS 钩子：纯文本档可以进一步去掉阴影之类的装饰
-    c.container.dataset.lwmTier = String(tier);
-    // 换真队列只服务全量 / 轻量档
-    c.queue.length = 0;
-    c.queued.clear();
-    if (c.pumpTimer !== null) {
-        clearTimeout(c.pumpTimer);
-        c.pumpTimer = null;
-    }
-    if (!c.root) return;
-
-    // 1) 销毁全部实例（wrapper 保留，DOM 复用），清空内容
-    for (const entry of c.displays.values()) entry.display.destroy();
-    c.displays.clear();
-    for (const node of c.byUid.values()) {
-        node.display = null;
-        node.placeholder = false;
-        node.wrapper?.replaceChildren();
-    }
-
-    // 2) 按新档重建内容。档 2 下 ensureContent 只写纯文本占位；
-    //    档 1 下仍走渐进预算（先 24 个轻量 CM，其余排队换真）。
-    //    手势进行中（滚轮缩放跨档）不预建：24 个 CM 同步造出来
-    //    要上百毫秒，等缩放停下后交给换真泵慢慢补。
-    c.progressiveCount = 0;
-    c.eagerDisplayBudget = c.interactionActive() ? 0 : PROGRESSIVE_THRESHOLD;
-    const toMeasure: MapNode[] = [];
-    walkAll(c.root, (node) => {
-        c.ensureWrapper(node);
-        c.ensureContent(node);
-        toMeasure.push(node);
-    });
-    c.eagerDisplayBudget = 0;
-
-    // 3) 内容形态变了（源码 ↔ 轻量 CM ↔ 纯文本）：全部重量一次。
-    //    批量测量只触发一次强制布局，比逐节点量便宜得多。
-    c.measureNodes(toMeasure);
-    c.relayout();
-    c.updateViewport();
-    c.scheduleMeasureSettle();
-}
-
-
-/**
- * 显示实例 LRU 淘汰开关（设置项，默认关闭）。
- *
- * 从关到开时立刻执行一轮淘汰，而不是等下一次 createDisplay：
- * 用户可能在关闭状态下已经攒了几百个离屏实例，打开设置后应当马上
- * 释放到上限，而不是继续保留。
- */
-export function setDisplayCacheEnabled(c: MapCanvas, enabled: boolean) : void {
-    if (c.displayCacheEnabled === enabled) return;
-    c.displayCacheEnabled = enabled;
-    if (enabled) c.enforceDisplayCap();
-}
-
-
-/** 性能模式开关：false = 不做视口裁剪（所有节点常驻 DOM）。 */
 /**
  * 手势期间是否放弃合成层提升（设置：「手势期间保持清晰」）。
  *
@@ -215,23 +34,6 @@ export function setGestureCrisp(c: MapCanvas, enabled: boolean) : void {
     // 覆盖 lwm-panning / lwm-zooming 的 will-change）。这样平移时的
     // cursor: grabbing 之类挂在原 class 上的样式不受影响。
     c.canvasEl.classList.toggle('lwm-crisp', enabled);
-}
-
-
-export function setVirtualization(c: MapCanvas, enabled: boolean) : void {
-    if (c.virtualization === enabled) return;
-    c.virtualization = enabled;
-    if (enabled) {
-        c.updateViewport();
-    } else if (c.root) {
-        walkVisible(c.root, (node) => {
-            if (node.wrapper) c.mountNode(node);
-        });
-        c.updateLinksVisibility();
-        c.updateInternalLinksVisibility();
-        c.updateExpandButtonsVisibility();
-        c.visibilityVersion = c.mountedVersion;
-    }
 }
 
 
@@ -371,8 +173,6 @@ export function zoomAt(c: MapCanvas, screenX: number, screenY: number, nextZoom:
     c.panY = screenY - worldY * zoom;
     // 缩放进行中：缩放层临时提升为合成层，每帧只改 scale 不重栅格化
     c.markZooming();
-    // 跨过降级阈值：先按新档重建内容，再做视口更新
-    c.syncRenderTier();
     c.applyTransform();
     c.scheduleViewport();
     // 缩放改变了栅格化比例：撤掉空闲合成层，停下后按新比例再提升
@@ -406,9 +206,6 @@ export function fit(c: MapCanvas) : void {
     c.lastViewWidth = rect.width;
     c.lastViewHeight = rect.height;
     c.hasFit = true;
-    // 大文档 fit 出来可能远低于降级阈值：先切档再更新视口，
-    // 否则会先把全量节点挂上去再拆掉
-    c.syncRenderTier();
     c.applyTransform();
     c.updateViewport();
     c.options.onViewChange();

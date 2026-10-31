@@ -308,7 +308,7 @@ function initialize(): void {
         onSettingsChange: (msg) => {
             // 完整设置 → CSS 变量 / 运行时读取
             if (msg.allSettings) settingsState.replaceAll(msg.allSettings);
-            // 导图三项设置（主题 / 默认展开层级 / 性能模式）
+            // 导图运行时设置（主题 / 展开层级 / 尺寸 / 性能监测等）
             ctx.mindmapApp?.setSettings(readMindmapSettings());
             // 结构化设置（行号 / 换行等）重配置编辑器
             if (msg.settings && ctx.editor?.isReady()) {

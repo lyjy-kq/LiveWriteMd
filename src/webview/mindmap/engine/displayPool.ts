@@ -1,12 +1,12 @@
 /**
- * MapCanvas 协作模块（从 canvas.ts 拆出）：显示实例生命周期：wrapper/mini-CM 创建、测量、编辑态尺寸、LRU 淘汰与换真泵（性能打磨核心区，整体搬迁）。
+ * MapCanvas 协作模块（从 canvas.ts 拆出）：显示实例生命周期：wrapper/mini-CM 创建、测量、编辑态尺寸与换真泵（性能打磨核心区，整体搬迁）。
  *
  * 全部是原 MapCanvas 方法，this 换成第一参数 c；跨模块调用走 c 上的薄包装方法，行为与拆前完全一致。
  *
  * @module webview/mindmap/engine/displayPool
  */
 
-import { DISPLAY_CACHE_CAP, HEADING_TINT_FALLBACKS, PROGRESSIVE_BATCH, PUMP_PAUSE_MS, TEXT_KINDS, WHEEL_ACTIVE_MS } from './canvasConstants.js';
+import { HEADING_TINT_FALLBACKS, PROGRESSIVE_BATCH, PUMP_PAUSE_MS, TEXT_KINDS, WHEEL_ACTIVE_MS } from './canvasConstants.js';
 import { relayout } from './links.js';
 import { mountNode } from './mounting.js';
 import type { MapCanvas } from './canvas.js';
@@ -97,27 +97,10 @@ export function ensureContent(c: MapCanvas, node: MapNode) : void {
     const wrapper = node.wrapper;
     if (!wrapper) return;
     const { doc, sentinel } = c.options.computeDoc(node);
-    // 档位决定这个节点应该长什么样：全量/轻量 CM，或纯文本占位。
-    // 编辑中的节点永远用全量实例：编辑要能看到行内元素、表格 widget，
-    // 提交后 finishEdit 的 refreshNode 会再把它降回当前档位。
-    const wantMode: 'full' | 'lite' | 'plain' =
-        c.editingUid === node.uid
-            ? 'full'
-            : c.renderTier === 2
-              ? 'plain'
-              : c.renderTier === 1 && !TEXT_KINDS.has(node.kind)
-                ? 'plain'
-                : c.renderTier === 1
-                  ? 'lite'
-                  : 'full';
 
     const entry = c.displays.get(node.uid);
     if (entry) {
-        // 实例档位与当前渲染档不符（缩放下了阈值）：先销毁，
-        // 下面按 wantMode 重建。
-        const modeOk = entry.mode === wantMode;
         if (
-            modeOk &&
             entry.display.sourceDoc === doc &&
             entry.display.sentinel === sentinel
         ) {
@@ -132,7 +115,7 @@ export function ensureContent(c: MapCanvas, node: MapNode) : void {
             node.placeholder = false;
             return;
         }
-        // 文档变了 / 档位不符：旧实例作废，重建（尺寸也要重量）
+        // 文档变了：旧实例作废，重建（尺寸也要重量）
         entry.display.destroy();
         c.displays.delete(node.uid);
         node.display = null;
@@ -141,9 +124,9 @@ export function ensureContent(c: MapCanvas, node: MapNode) : void {
     // 占位内容没变就原地复用，别重建 DOM、也别重量。
     //
     // setData 每次都会走完整棵树；占位节点没有 display entry，以前一律
-    // 在这里 replaceChildren + measured=false。纯文本档 / 渐进换真队列
-    // 里的占位动辄几百个，改一个字提交一次就是几百次 DOM 重建和上千次
-    // 强制布局（实测 640 节点文档：单节点改名提交 1195 次布局、56ms）。
+    // 在这里 replaceChildren + measured=false。渐进换真队列里的占位动辄
+    // 几百个，改一个字提交一次就是几百次 DOM 重建和上千次强制布局
+    // （实测 640 节点文档：单节点改名提交 1195 次布局、56ms）。
     //
     // 判定条件必须严：DOM 里那一个子元素就是占位、文本与本次要写的完全
     // 一致、并且尺寸已经量过。三条都满足时，占位内容与排版都和上次一样，
@@ -153,7 +136,7 @@ export function ensureContent(c: MapCanvas, node: MapNode) : void {
         if (
             child instanceof HTMLElement &&
             child.classList.contains('lwm-node-placeholder') &&
-            child.textContent === c.placeholderTextOf(node, doc)
+            child.textContent === doc
         ) {
             node.display = null;
             node.placeholder = true;
@@ -167,25 +150,9 @@ export function ensureContent(c: MapCanvas, node: MapNode) : void {
     // 拖动/改名后就会一直用旧宽度，直到点进编辑再失焦才被刷新。
     node.measured = false;
 
-    if (wantMode === 'plain') {
-        // 纯文本档：不建 CM、不进换真队列（档 2 下没有「之后换真」）
-        c.setPlaceholder(node, c.placeholderTextOf(node, doc));
-        return;
-    }
-    if (wantMode === 'lite') {
-        // 降级档：轻量 CM 仍走渐进预算/换真队列，避免一次造几百个
-        if (c.progressiveCount < c.eagerDisplayBudget) {
-            c.progressiveCount += 1;
-            c.createDisplay(node, 'lite');
-            return;
-        }
-        c.setPlaceholder(node, c.placeholderTextOf(node, doc));
-        c.enqueueSwap(node.uid);
-        return;
-    }
     if (c.progressiveCount < c.eagerDisplayBudget) {
         c.progressiveCount += 1;
-        c.createDisplay(node, 'full');
+        c.createDisplay(node);
         return;
     }
     c.setPlaceholder(node, doc);
@@ -194,32 +161,11 @@ export function ensureContent(c: MapCanvas, node: MapNode) : void {
 
 
 /**
- * 纯文本占位应该显示什么。
- *
- * - 全量档的占位（渐进换真之前）就是完整源码，尺寸与真实渲染接近；
- * - 降级 / 纯文本档：媒体节点只显示摘要（`代码 · 12 行` 之类），
- *   把整段围栏源码塞进一个格子既没意义又拖慢测量；
- * - 纯文本档的文本节点用节点文字（node.text），比源码少了 `#`/`-`
- *   这类标记，更接近「只看文字」。
- */
-export function placeholderTextOf(c: MapCanvas, node: MapNode, doc?: string) : string {
-    const source = doc ?? c.options.computeDoc(node).doc;
-    if (c.renderTier === 0) return source;
-    if (c.renderTier === 1 && TEXT_KINDS.has(node.kind)) return source;
-    return node.text || source;
-}
-
-
-/**
  * 创建真实显示实例（节点尺寸随后由 measureNode 更新）。
- *
- * @param mode 实例档位；缺省按当前渲染档（档 1 = 轻量、不挂 live preview）
  */
-export function createDisplay(c: MapCanvas, node: MapNode, mode?: 'full' | 'lite') : void {
+export function createDisplay(c: MapCanvas, node: MapNode) : void {
     const wrapper = node.wrapper;
     if (!wrapper) return;
-    const effectiveMode: 'full' | 'lite' =
-        mode ?? (c.renderTier === 1 ? 'lite' : 'full');
     // 兜底：调用方本该先销毁旧实例（换主题 / 内容变更）。若没销毁就
     // 直接建新的，旧 EditorView 会变成没有引用的孤儿（监听器、
     // ResizeObserver 都还在），大文档反复拖动会越来越卡。
@@ -237,8 +183,6 @@ export function createDisplay(c: MapCanvas, node: MapNode, mode?: 'full' | 'lite
         sentinel,
         theme: c.options.getTheme(),
         codeLanguages: c.options.codeLanguages,
-        // 轻量档只省显示用的 live preview 扩展，编辑态仍会补回交互插件
-        lite: effectiveMode === 'lite',
         // 显示态按钮（mermaid 宽度、表格加行/列）改了本地文档后，
         // 立刻交给上层回写源文档
         onDisplayChange: (text) => c.options.onDisplayEdit?.(nodeRef.current, text),
@@ -255,10 +199,8 @@ export function createDisplay(c: MapCanvas, node: MapNode, mode?: 'full' | 'lite
         node,
         nodeRef,
         kind: node.kind,
-        mode: effectiveMode,
     });
     // 新内容尺寸可能与占位不同：调用方负责重新测量
-    c.enforceDisplayCap();
 }
 
 
@@ -266,7 +208,7 @@ export function createDisplay(c: MapCanvas, node: MapNode, mode?: 'full' | 'lite
 export function setPlaceholder(c: MapCanvas, node: MapNode, doc?: string) : void {
     const wrapper = node.wrapper;
     if (!wrapper) return;
-    const text = doc ?? c.placeholderTextOf(node);
+    const text = doc ?? c.options.computeDoc(node).doc;
     const el = document.createElement('div');
     el.className = 'lwm-node-display lwm-node-placeholder';
     el.textContent = text;
@@ -531,8 +473,8 @@ export function remeasureAll(c: MapCanvas) : void {
  * 节点内容变化后刷新：重建显示实例、重新测量、重排。
  *
  * @param uid 节点 uid
- * @param force 忽略渐进阈值，立即按**当前渲染档**建实例
- *              （纯文本档建占位；编辑入口请用 ensureEditDisplay）
+ * @param force 忽略渐进阈值，立即建真实实例
+ *              （编辑入口请用 ensureEditDisplay）
  */
 export function refreshNode(c: MapCanvas, uid: string, force = false) : void {
     const node = c.byUid.get(uid);
@@ -546,12 +488,7 @@ export function refreshNode(c: MapCanvas, uid: string, force = false) : void {
     if (node.wrapper) node.wrapper.replaceChildren();
     if (force) {
         c.ensureWrapper(node);
-        // 纯文本档不建 CM；其余档立即建（轻量档建轻量实例）
-        if (c.renderTier === 2 && c.editingUid !== uid) {
-            c.setPlaceholder(node);
-        } else {
-            c.createDisplay(node);
-        }
+        c.createDisplay(node);
     } else {
         c.ensureContent(node);
     }
@@ -565,14 +502,11 @@ export function refreshNode(c: MapCanvas, uid: string, force = false) : void {
 /**
  * 编辑结束、文本**没有变化**时的快速收尾。
  *
- * 全量档下编辑用的本来就是完整的显示实例（enterEdit 只是换了组
- * compartment），exitEdit 之后它就已经是正常的显示态。以前无条件走
+ * 编辑用的本来就是完整的显示实例（enterEdit 只是换了组 compartment），
+ * exitEdit 之后它就已经是正常的显示态。以前无条件走
  * refreshNode(uid, true) —— 那会 destroy + 重建整个 mini-CM，一次失焦
  * 白花 30~40ms，用户能明显看到一顿。这里只把编辑期间被撑高的盒子
  * 收回原高度（Enter 加行又删掉的情况），再重排一次。
- *
- * 轻量 / 纯文本档不能就地保留：实例是全量档的，和当前档不符，必须
- * 重建降档。返回 false 让调用方走 refreshNode。
  *
  * @param uid 节点 uid
  * @param baseHeight 进入编辑前的节点高度（0 = 没记录，不恢复）
@@ -582,7 +516,7 @@ export function finishEditDisplay(c: MapCanvas, uid: string, baseHeight: number,
     const node = c.byUid.get(uid);
     if (!node) return false;
     const entry = c.displays.get(uid);
-    if (!entry || entry.mode !== 'full' || c.renderTier !== 0) return false;
+    if (!entry) return false;
     let changed = false;
     // 编辑期间 growNodeHeight 只增不减，文本没变就恢复到进编辑前的高度
     const target =
@@ -647,26 +581,17 @@ export function setNodeWidth(c: MapCanvas, uid: string, width: number) : boolean
 
 
 /**
- * 编辑入口：保证节点有一个**全量**显示实例可翻转成编辑态。
+ * 编辑入口：保证节点有一个显示实例可翻转成编辑态。
  *
- * 缩放降级档（1）下挂的是轻量实例（没有 live preview 显示扩展），
- * 纯文本档（2）下根本没有实例；直接进去编辑会看到「行内元素全变源码」。
- * 这里无视档位强制建一个全量实例。编辑结束后 finishEdit 走
- * refreshNode(uid, true)，会按当前档位降回去。
+ * 占位节点（渐进换真还没轮到它）没有实例；这里按需建一个。
  */
 export function ensureEditDisplay(c: MapCanvas, uid: string) : NodeDisplay | null {
     const node = c.byUid.get(uid);
     if (!node?.wrapper) return null;
     const entry = c.displays.get(uid);
-    if (entry) {
-        if (entry.mode === 'full') return entry.display;
-        entry.display.destroy();
-        c.displays.delete(uid);
-        node.display = null;
-        node.wrapper.replaceChildren();
-    }
-    c.createDisplay(node, 'full');
-    // 全量实例的尺寸可能在上一档下没量准：补量一次再进编辑
+    if (entry) return entry.display;
+    c.createDisplay(node);
+    // 新实例的尺寸可能还没量准：补量一次再进编辑
     c.measureNode(node);
     return c.displays.get(uid)?.display ?? null;
 }
@@ -707,29 +632,8 @@ export function growNodeHeight(c: MapCanvas, uid: string, contentHeight: number)
 }
 
 
-/** 显示实例超上限时，把最旧的离屏实例降级回占位。 */
-export function enforceDisplayCap(c: MapCanvas) : void {
-    // 设置关闭时不做任何淘汰：离屏实例保留，回到视口直接复用
-    if (!c.displayCacheEnabled) return;
-    if (c.displays.size <= DISPLAY_CACHE_CAP) return;
-    for (const [uid, entry] of c.displays) {
-        if (uid === c.editingUid) continue;
-        if (entry.wrapper.parentElement === c.nodeLayer) continue;
-        entry.display.destroy();
-        c.evictedTotal += 1;
-        c.displays.delete(uid);
-        const node = entry.node;
-        node.display = null;
-        if (node.wrapper) c.setPlaceholder(node);
-        if (c.displays.size <= DISPLAY_CACHE_CAP) return;
-    }
-}
-
-
 /** 把节点加入换真队列（去重）。 */
 export function enqueueSwap(c: MapCanvas, uid: string) : void {
-    // 纯文本档没有「换真」这回事：占位就是最终形态
-    if (c.renderTier === 2) return;
     if (c.queued.has(uid)) return;
     c.queued.add(uid);
     c.queue.push(uid);
@@ -757,8 +661,6 @@ export function schedulePump(c: MapCanvas, delay = 16) : void {
     if (c.pumpTimer !== null) return;
     c.pumpTimer = setTimeout(() => {
         c.pumpTimer = null;
-        // 排队期间缩到了纯文本档：队列已清空，不再造 CM
-        if (c.renderTier === 2) return;
         // 手势进行中只轮询不干活。这里必须轮询而不是直接 return：
         // mountNode/enqueueSwap 不会在松手时再触发一次 schedulePump，
         // 直接丢弃定时器会让队列一直躺着。

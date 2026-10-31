@@ -74,56 +74,21 @@ export interface MindMapTreeNode {
     children: MindMapTreeNode[];
 }
 
+/** 性能监测浮层档位：关闭 / 极简 / 完整。 */
+export type PerfMonitorMode = 'off' | 'minimal' | 'full';
+
 /** 导图相关设置（从 allSettings 里抽取）。 */
 export interface MindMapRuntimeSettings {
     /** 配色：auto 跟随编辑器明暗 / default 等具体主题名。 */
     mindmapTheme: string;
     /** 默认展开层级 0-6。 */
     mindmapDefaultExpandLevel: number;
-    /** 是否开启性能模式（画布外不渲染）。 */
-    mindmapPerformanceMode: boolean;
-    /**
-     * 是否启用显示实例 LRU 淘汰（默认关闭）。
-     *
-     * 开启后离屏实例最多保留 64 个，超出时销毁最早创建的并降级为纯文本
-     * 占位；关闭时离屏实例一直保留，回到视口直接复用，不再重建 CM。
-     */
-    mindmapDisplayCache: boolean;
     /** 文本节点最大宽度（列，1 列 = 1 个中文字宽 = 1em）。 */
     mindmapNodeMaxWidth: number;
     /** 文本节点最大行数，超出截断加省略号。 */
     mindmapNodeMaxLines: number;
     /** 代码块节点最小宽度（列 = 等宽字符 ch；0 = 不设）。 */
     mindmapCodeMinWidth: number;
-    /**
-     * 是否启用降级渲染档。
-     *
-     * 关闭（默认）时无视下面的阈值，任何缩放比例都按全量档渲染；
-     * 开启后缩放到 mindmapLiteZoom 以下才进入降级档。
-     */
-    mindmapLiteEnabled: boolean;
-    /**
-     * 是否启用纯文本档。
-     *
-     * 关闭（默认）时永远不会进入纯文本档；开启后缩放到
-     * mindmapPlainZoom 以下才用纯文本占位。
-     */
-    mindmapPlainEnabled: boolean;
-    /**
-     * 降级渲染阈值（缩放百分比，1-100）。
-     * 缩放低于该值时，节点不再挂完整的 live preview 显示扩展
-     * （行内格式、代码高亮、表格/公式/mermaid widget 全部省掉），
-     * 只保留 Markdown 源码排版与基本文字 —— 小缩放下这些细节根本看不清，
-     * 省掉的是每个节点的几十个装饰、测量与 widget 构建。
-     */
-    mindmapLiteZoom: number;
-    /**
-     * 纯文本阈值（缩放百分比，1-100，应不大于 mindmapLiteZoom）。
-     * 缩放低于该值时连 mini-CM 都不建：节点显示成纯文本占位，
-     * 媒体节点只显示摘要（代码 · N 行 / 表格 N 行 × N 列），
-     * 保证超大文档在很小缩放下拖动/缩放仍然跟手。
-     */
-    mindmapPlainZoom: number;
     /**
      * 手势期间是否放弃合成层提升（清晰度优先）。
      *
@@ -143,12 +108,12 @@ export interface MindMapRuntimeSettings {
      */
     mindmapInternalLinks: boolean;
     /**
-     * 是否在画布右上角显示性能监控浮层（默认关闭）。
+     * 画布右上角的性能监测浮层（默认关闭）。
      *
-     * 实时显示帧率 / 缓存实例数 / 堆内存 / 换真队列与速率 / 强制布局速率，
-     * 并记录帧率跳变与长任务发生时的现场（可复制成 JSON 供排查）。
+     * - minimal：无边框，只显示帧率与堆内存；
+     * - full：另含实例数 / 换真队列 / 强制布局速率与尖峰记录。
      */
-    mindmapPerfHud: boolean;
+    mindmapPerfMonitor: PerfMonitorMode;
 }
 
 /** 导图编辑回调：把导图操作算出的新全文交回宿主（CM dispatch / CONTENT_CHANGE）。 */

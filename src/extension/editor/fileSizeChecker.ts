@@ -131,7 +131,7 @@ export async function checkFileSize(document: vscode.TextDocument): Promise<IFil
     const largeFileThreshold = ConfigManager.getLargeFileThreshold();
 
     // 按用户要求：不再弹任何大小提醒，一律直接用 LiveWriteMD 打开。
-    // 大文件的性能由 webview 侧的虚拟化 / 降级渲染兜底，
+    // 大文件的性能由 webview 侧的视口虚拟化兜底，
     // 弹窗只会打断「双击即开」的节奏。保留日志便于排查性能问题。
     if (fileSize > SMALL_FILE_THRESHOLD) {
         Logger.info(

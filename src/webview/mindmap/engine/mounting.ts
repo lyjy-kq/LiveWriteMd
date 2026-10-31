@@ -6,10 +6,7 @@
  * @module webview/mindmap/engine/mounting
  */
 
-import { DISPLAY_CACHE_CAP, PREWARM_BATCH, PREWARM_CAP, PREWARM_DELAY_MS, UNMOUNT_MARGIN_MULT, VIEW_MARGIN } from './canvasConstants.js';
-import { createDisplay, enforceDisplayCap, refreshNode } from './displayPool.js';
-import { setTheme } from './flags.js';
-import { handlePointerUp } from './pointer.js';
+import { PREWARM_BATCH, PREWARM_CAP, PREWARM_DELAY_MS, UNMOUNT_MARGIN_MULT, VIEW_MARGIN } from './canvasConstants.js';
 import type { MapCanvas } from './canvas.js';
 import { walkVisible } from './model.js';
 import type { MapNode } from './model.js';
@@ -46,13 +43,8 @@ export function mountNode(c: MapCanvas, node: MapNode) : void {
     }
     c.positionNode(node);
     // 占位节点进入视口：排队换真。
-    //
-    // 这里**不能**再用 `displays.size < DISPLAY_CACHE_CAP` 做门槛：
-    // 缓存满 64 个之后，新进入视口的占位节点永远排不上队；而淘汰
-    // 只发生在 createDisplay 里 —— 于是死锁，屏幕上留下一批永远是
-    // 纯文本占位的节点（看起来「渲染和宽度都不对」，点进编辑再失焦
-    // 才被 refreshNode 强制变成真实 CM）。让 pump 去创建，创建时
-    // enforceDisplayCap 会自动淘汰离屏实例。
+    // 换真泵只处理「已在画布上」的占位，离屏节点等挂载后再入队，
+    // 避免大文档一次性把几十个 CM 全建出来。
     if (node.placeholder) c.enqueueSwap(node.uid);
     // 之前离屏、没赶上 settle 的新实例：进入视口后补一次
     else if (c.settleUids.has(node.uid)) c.scheduleMeasureSettle();

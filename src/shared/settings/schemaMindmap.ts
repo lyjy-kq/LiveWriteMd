@@ -37,13 +37,6 @@ export const MINDMAP_SECTIONS: SettingSection[] = [
                 unit: '层',
             },
             {
-                key: 'mindmapPerformanceMode',
-                label: '性能模式',
-                description: '画布可视区域外的节点不渲染，大文档更流畅。',
-                control: 'toggle',
-                default: true,
-            },
-            {
                 key: 'mindmapInternalLinks',
                 label: '显示内链箭头',
                 description:
@@ -52,20 +45,17 @@ export const MINDMAP_SECTIONS: SettingSection[] = [
                 default: true,
             },
             {
-                key: 'mindmapPerfHud',
-                label: '性能监控面板',
+                key: 'mindmapPerfMonitor',
+                label: '性能监测',
                 description:
-                    '在画布右上角实时显示帧率 / 缓存实例数 / 堆内存 / 换真队列与速率 / 强制布局速率；帧率跳变与长任务发生时记录当时现场，可一键复制成 JSON 供排查。',
-                control: 'toggle',
-                default: false,
-            },
-            {
-                key: 'mindmapDisplayCache',
-                label: '显示实例 LRU 淘汰',
-                description:
-                    '开启后，离屏节点的真实渲染实例最多保留 64 个，超出时把最早创建的降级为纯文本占位，回到视口再重建。关闭（默认）时不淘汰，离屏实例一直保留，来回平移不会重复创建 CodeMirror，代价是内存随节点数增长。',
-                control: 'toggle',
-                default: false,
+                    '在画布右上角实时显示性能数据。极简版无边框，只显示帧率与堆内存；完整版另含实例数 / 换真队列 / 强制布局速率，并记录帧率跳变与长任务现场（可一键复制成 JSON）。默认关闭。',
+                control: 'select',
+                default: 'off',
+                options: [
+                    { value: 'off', label: '关闭' },
+                    { value: 'minimal', label: '极简（帧率 + 内存）' },
+                    { value: 'full', label: '完整（详细指标）' },
+                ],
             },
             {
                 // 影响「文字观感」的旋钮：底色越淡，文字与底色的对比度越高。
@@ -139,46 +129,6 @@ export const MINDMAP_SECTIONS: SettingSection[] = [
                 max: 60,
                 step: 1,
                 unit: '列',
-            },
-            {
-                key: 'mindmapLiteEnabled',
-                label: '启用降级渲染',
-                description:
-                    '开启后，缩小到「降级渲染缩放」以下时省掉行内格式、代码高亮、表格 / 公式 / mermaid 图。关闭（默认）时任何缩放比例都保持完整渲染。',
-                control: 'toggle',
-                default: false,
-            },
-            {
-                key: 'mindmapLiteZoom',
-                label: '降级渲染缩放',
-                description:
-                    '缩放到该比例以下才进入降级渲染。仅在开启「启用降级渲染」后生效。',
-                control: 'slider',
-                default: 70,
-                min: 10,
-                max: 100,
-                step: 5,
-                unit: '%',
-            },
-            {
-                key: 'mindmapPlainEnabled',
-                label: '启用纯文本缩放',
-                description:
-                    '开启后，缩小到「纯文本缩放」以下时节点只用纯文本占位（媒体节点显示摘要），不创建任何 CodeMirror 实例。关闭（默认）时不进入该档。',
-                control: 'toggle',
-                default: false,
-            },
-            {
-                key: 'mindmapPlainZoom',
-                label: '纯文本缩放',
-                description:
-                    '缩放到该比例以下才进入纯文本档。仅在开启「启用纯文本缩放」后生效；建议不高于「降级渲染缩放」。',
-                control: 'slider',
-                default: 40,
-                min: 5,
-                max: 100,
-                step: 5,
-                unit: '%',
             },
         ],
     },

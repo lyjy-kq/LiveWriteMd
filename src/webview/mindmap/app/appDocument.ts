@@ -28,17 +28,6 @@ export function resolveTheme(app: MindMapApp): ThemeType {
 }
 
 /**
- * 性能模式完全由用户设置决定。
- *
- * 早期版本在节点数超过 800 时会强制虚拟化并提示一次，但这会让
- * 「关闭了性能模式」变成一句空话：用户明确要全量 DOM 时仍被强制
- * 切到虚拟化。现在取消阈值强制，关闭就是全量渲染。
- */
-export function isPerformanceEnabled(app: MindMapApp): boolean {
-    return app.settings.mindmapPerformanceMode;
-}
-
-/**
  * 重建前把展开状态烤进树：新 uid 按默认展开层级初始化，旧 uid 跟随用户操作。
  */
 export function bakeExpandState(app: MindMapApp, tree: MindMapTreeNode): MindMapTreeNode {

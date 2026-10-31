@@ -48,28 +48,21 @@ function readMindmapSettings(
     const pick = (key: string): SettingValue => all?.[key] ?? defaults[key];
     const expandLevel = Number(pick('mindmapDefaultExpandLevel'));
     const codeMinWidth = Number(pick('mindmapCodeMinWidth'));
+    const perfMonitor = String(pick('mindmapPerfMonitor') || 'off');
     return {
         mindmapTheme: String(pick('mindmapTheme') || 'auto'),
         mindmapDefaultExpandLevel: Number.isFinite(expandLevel) ? expandLevel : 2,
-        mindmapPerformanceMode: Boolean(pick('mindmapPerformanceMode')),
-        // 离屏实例 LRU 淘汰：默认关闭
-        mindmapDisplayCache: Boolean(pick('mindmapDisplayCache')),
         // 顺带补齐尺寸类设置（此前面板只取三项，靠 CSS 回落兜底）
         mindmapNodeMaxWidth: Number(pick('mindmapNodeMaxWidth')) || 20,
         mindmapNodeMaxLines: Number(pick('mindmapNodeMaxLines')) || 3,
         mindmapCodeMinWidth: Number.isFinite(codeMinWidth) ? codeMinWidth : 10,
-        // 缩放降级开关：默认关闭，关闭时阈值不参与判断
-        mindmapLiteEnabled: Boolean(pick('mindmapLiteEnabled')),
-        mindmapPlainEnabled: Boolean(pick('mindmapPlainEnabled')),
-        // 缩放降级阈值（百分比）
-        mindmapLiteZoom: Number(pick('mindmapLiteZoom')) || 70,
-        mindmapPlainZoom: Number(pick('mindmapPlainZoom')) || 40,
         // 手势期清晰度优先：默认关闭
         mindmapGestureCrisp: Boolean(pick('mindmapGestureCrisp')),
         // 内链箭头层：默认开启
         mindmapInternalLinks: Boolean(pick('mindmapInternalLinks')),
-        // 性能监控浮层：默认关闭
-        mindmapPerfHud: Boolean(pick('mindmapPerfHud')),
+        // 性能监测浮层：只认三个合法值，其它一律关闭
+        mindmapPerfMonitor:
+            perfMonitor === 'minimal' || perfMonitor === 'full' ? perfMonitor : 'off',
     };
 }
 
