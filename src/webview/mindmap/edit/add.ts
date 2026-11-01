@@ -14,8 +14,18 @@ import type { MindMapTreeNode, NodeLineRange } from '../types.js';
 
 
 /**
+ * 「新增子节点」默认只建到二级标题：
+ * - H1 的子节点是 H2；
+ * - H2（以及更深的 H3+）的子节点是普通文本。
+ *
+ * 更深的标题（H3/H4）仍可在工具条悬浮菜单里显式选择插入。
+ */
+const MAX_DEFAULT_HEADING_LEVEL = 2;
+
+
+/**
  * §6.2 在 parent 下新增子节点。
- * root -> H1（文末）；H(n<6) -> H(n+1)；H6 -> 无序列表项；
+ * root -> H1（文末）；H1 -> H2；H2 及更深 -> 普通文本；
  * list -> 缩进 +1 的同类型列表项；para 先原地升级成列表项再插子项。
  *
  * @param text - 新节点的初始文字（默认「分支主题」）。
@@ -67,14 +77,35 @@ export function addChildNode(
     }
     if (parent.data._kind === 'heading') {
         const level = parent.data._headingLevel ?? 1;
-        const { toLine } = rangeOf(parent);
-        if (level < 6) {
-            insertHeadingAt(lines, toLine + 1, level + 1, text);
-        } else {
-            // H6 不能再深：转无序列表项（2 空格缩进，作为 H6 节内顶层列表）
-            insertListItem(lines, toLine + 1, 2, false, text, true);
+        if (level + 1 <= MAX_DEFAULT_HEADING_LEVEL) {
+            // 默认标题结构：H1 下面新增 H2，直接追加到整节末尾即可，
+            // 新标题自然成为该标题的子节点。
+            insertHeadingAt(lines, rangeOf(parent).toLine + 1, level + 1, text);
+            return { text: lines.join('\n'), newNodeUid: newUid };
         }
-        return { text: lines.join('\n'), newNodeUid: newUid };
+        // H2 及更深不再往深处建标题：子节点用普通文本。
+        //
+        // 段落必须插在「标题自身内容之后、第一个子标题之前」：
+        // 如果按整节末尾插，它会落在最后一个子标题的章节里，被树解析成
+        // 那个子标题的子节点（用户看到「新子节点跑进更深层」）。
+        const self =
+            (parent.data._selfLineRange as NodeLineRange | undefined) ?? rangeOf(parent);
+        // 直接子节点里非标题的那些一定在第一个子标题之前（见 treeBuilder），
+        // 新段落接在它们最后一项之后，索引也正好等于它们的数量。
+        const nonHeadingChildren = parent.children.filter(
+            (child) => child.data._kind !== 'heading'
+        );
+        const lastNonHeading = nonHeadingChildren[nonHeadingChildren.length - 1];
+        const anchor =
+            (lastNonHeading?.data._lineRange as NodeLineRange | undefined)?.toLine ??
+            self.toLine;
+        const inserted = insertBlockLines(lines, anchor + 1, [text], true, markdown);
+        lines.length = 0;
+        lines.push(...inserted);
+        return {
+            text: lines.join('\n'),
+            newNodeUid: `${parent.data.uid}/${nonHeadingChildren.length}`,
+        };
     }
 
     // list：缩进 +1，类型继承父节点

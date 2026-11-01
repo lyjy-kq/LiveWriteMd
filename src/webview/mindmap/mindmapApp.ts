@@ -15,6 +15,7 @@ import type { LanguageDescription } from '@codemirror/language';
 import { EditorSelection } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import type { ThemeType } from '../../shared/types.js';
+import type { SettingValue } from '../../shared/settings/index.js';
 import {
     toggleBold,
     toggleInlineCode,
@@ -29,6 +30,7 @@ import {
     type TableCommand,
 } from '../codemirror/extensions/livePreview/table/tableCommands.js';
 import type { NodeDisplay } from './miniCm.js';
+import { QuickCardRail } from './quickCardRail.js';
 import { MindmapSearchBar } from './searchBar.js';
 import { ensureMindMapCss } from './styles/index.js';
 import { PerfHud } from './perfHud.js';
@@ -38,6 +40,7 @@ import {
     type DropPayload,
     type MapCanvasOptions,
 } from './engine/canvas.js';
+import { walkVisible } from './engine/model.js';
 import type { MapNode } from './engine/model.js';
 import {
     toPdfDataUrl,
@@ -53,7 +56,16 @@ import type {
 } from './types.js';
 import { addChildNode, addNode, addSiblingNode } from './edit/add.js';
 import type { NewNodeSpec } from './edit/add.js';
-import { extractSubtreeText, insertSubtreeFromText } from './edit/clipboard.js';
+import {
+    extractSubtreeText,
+    insertSiblingFromText,
+    insertSubtreeFromText,
+} from './edit/clipboard.js';
+import {
+    deleteQuickCard,
+    insertQuickCard,
+    parseQuickCards,
+} from './edit/staging.js';
 import { moveNode } from './edit/move.js';
 import { deleteChildNodes, deleteNode, deleteNodes, deleteSelfKeepChildren } from './edit/remove.js';
 import { isMediaKind, renameNode } from './edit/rename.js';
@@ -91,6 +103,9 @@ const DEFAULT_RUNTIME_SETTINGS: MindMapRuntimeSettings = {
     mindmapInternalLinks: true,
     // 性能监测浮层：默认关闭（开了才有采样开销）
     mindmapPerfMonitor: 'off',
+    // 快速卡片：默认显示；宽度全局生效（拖动卡片左边界调，拖完持久化）
+    quickCardEnabled: true,
+    quickCardWidth: 280,
 };
 
 /**
@@ -121,6 +136,11 @@ export interface MindMapAppOptions {
     onSelectLine?: (line: number) => void;
     /** 导出结果回调（宿主把内容发 extension 存盘；缺省则不显示导出项）。 */
     onExport?: (payload: MindmapExportPayload) => void;
+    /**
+     * 在画布上直接改动某个设置（目前只有拖动卡片左边界改 quickCardWidth）。
+     * 宿主负责写 settingsState + 发 UPDATE_SETTING 落盘。
+     */
+    onPersistSetting?: (key: string, value: SettingValue) => void;
 }
 
 /** 导图导出载荷（webview → extension）。 */
@@ -176,6 +196,13 @@ export class MindMapApp {
     public readonly canvas: MapCanvas;
     /** 导图内搜索条。 */
     public readonly searchBar: MindmapSearchBar;
+    /**
+     * 右边界快速卡片栏。
+     *
+     * 卡片写进文档的 `<<<` / `>>>` 块，不参与导图树；改动统一走 commit，
+     * 和节点操作共用同一条 undo / 同步链路。
+     */
+    public quickCards: QuickCardRail | null = null;
     /** 性能监控浮层（设置开启时非 null）。 */
     public perfHud: PerfHud | null = null;
 
@@ -393,8 +420,25 @@ export class MindMapApp {
             onExpandChange: (uid, expanded, recursive) =>
                 this.handleExpandChange(uid, expanded, recursive),
             onDrop: (payload) => this.handleDrop(payload),
+            // 拖节点到右侧侧边 = 转成快速卡片（判定 / 高亮由卡片栏提供）；
+            // 拖卡片到画布 = 转成节点（见 quickCards 的 onCardDropOnMap）
+            isDragOverRail: (clientX, clientY) => {
+                const rail = this.quickCards;
+                const over = rail?.hitTest(clientX, clientY) ?? false;
+                rail?.setDropActive(over);
+                // 拖到侧边上时把「会插到第几张」的指示线也同步出来
+                rail?.setDropIndex(rail && over ? rail.indexAt(clientY) : null);
+                return over;
+            },
+            onDropToRail: (uid, clientX, clientY) =>
+                this.dropNodeToRail(uid, clientX, clientY),
             onViewChange: () => this.positionToolbar(),
             canDrop: (dragUid, parentUid) => this.validateDropParent(dragUid, parentUid),
+            // 快速卡片拖进画布：落点能不能收下子节点（与 dropCardOnMap 同一口径）
+            canDropExternal: (parentUid) => {
+                const node = this.canvas.getNode(parentUid);
+                return node ? this.canAcceptCardChild(node) : false;
+            },
             onMarqueeSelect: (uids) => this.applyMarqueeSelection(uids),
             onDisplayEdit: (node, text) => this.handleDisplayEdit(node, text),
             // 内链：节点里的 #锚点 链接（Ctrl+点击）与内链箭头共用同一套跳转
@@ -409,6 +453,40 @@ export class MindMapApp {
         this.createToolbar();
         this.createMultiToolbar();
         this.createContextMenu();
+
+        // 右边界快速卡片栏：卡片内容直接读写文档，不经过导图树。
+        // 用回调而不是直接引用 this 的方法，模块之间保持单向依赖。
+        this.quickCards = new QuickCardRail(container, {
+            getMarkdown: () => this.markdown,
+            commit: (text) => this.commit({ text }),
+            getSettings: () => ({
+                enabled: this.settings.quickCardEnabled,
+                width: this.settings.quickCardWidth,
+            }),
+            // 卡片正文复用节点那套只读 mini-CM：主题与代码高亮语言表也得和节点同源
+            getTheme: () => this.resolveTheme(),
+            codeLanguages: options.codeLanguages,
+            // 右键加号生成的提示词要带当前文件名
+            getFileName: () => this.fileName,
+            // 拖动卡片左边界：先更新本地运行时设置（立即生效），再持久化
+            onResize: (width) => {
+                this.settings.quickCardWidth = width;
+                this.options.onPersistSetting?.('quickCardWidth', width);
+            },
+            // 复制提示词 / 复制卡片走扩展侧 relay（webview 原生剪贴板在 VS Code 里不稳）
+            copyText: (text) => this.writeClipboardText(text),
+            // 卡片里 Ctrl+V：读剪贴板后在当前卡片下面新建一张
+            readText: () => this.readClipboardText(),
+            // 卡片拖动中：指针在画布上时让画布高亮落点（和拖普通节点同一套效果），
+            // 拖回侧边栏里（at = null）就把高亮撤掉
+            onCardDragPreview: (at) => {
+                if (at) this.canvas.previewExternalDrop(at.clientX, at.clientY);
+                else this.canvas.clearExternalDrop();
+            },
+            // 选中卡片后拖到画布上：卡片内容插到落点节点下面，卡片随之删除
+            onCardDropOnMap: (index, clientX, clientY) =>
+                this.dropCardOnMap(index, clientX, clientY),
+        });
 
         window.addEventListener('keydown', this.handleWindowKeyDown, true);
         // 双击手势收尾（必须在容器捕获阶段，抢在画布 nodeLayer 的 dblclick 前）
@@ -449,7 +527,7 @@ export class MindMapApp {
     public showToolbar(uid: string) : void { return appToolbar.showToolbar(this, uid); }
     public positionToolbar() : void { return appToolbar.positionToolbar(this); }
     // appEditSession
-    public startEdit(uid: string, x?: number, y?: number) : void { return appEditSession.startEdit(this, uid, x, y); }
+    public startEdit(uid: string, x?: number, y?: number, selectPlaceholder = false) : void { return appEditSession.startEdit(this, uid, x, y, selectPlaceholder); }
     public measureEditingSourceWidth(display: NonNullable<ReturnType<MapCanvas['getDisplay']>>) : number { return appEditSession.measureEditingSourceWidth(this, display); }
     public scheduleGrowEditingNode(session: EditSession) : void { return appEditSession.scheduleGrowEditingNode(this, session); }
     public cancelGrowEditingNode() : void { return appEditSession.cancelGrowEditingNode(this); }
@@ -493,6 +571,113 @@ export class MindMapApp {
     // appDragDrop
     public validateDropParent(dragUid: string, parentUid: string) : boolean { return appDragDrop.validateDropParent(this, dragUid, parentUid); }
     public handleDrop(payload: DropPayload) : void { return appDragDrop.handleDrop(this, payload); }
+
+    // ==================================================================
+    // 侧边卡片 ↔ 导图节点互拖
+    // ==================================================================
+
+    /** 屏幕坐标命中的最深的可见节点（卡片拖进画布时的落点）。 */
+    public findNodeAtClient(clientX: number, clientY: number) : MapNode | null {
+        const root = this.canvas.getRoot();
+        if (!root) return null;
+        const point = this.canvas.screenToWorld(clientX, clientY);
+        let hit: MapNode | null = null;
+        walkVisible(root, (node) => {
+            if (
+                point.x >= node.x &&
+                point.x <= node.x + node.width &&
+                point.y >= node.y &&
+                point.y <= node.y + node.height
+            ) {
+                if (!hit || node.depth > hit.depth) hit = node;
+            }
+        });
+        return hit;
+    }
+
+    /**
+     * 卡片拖到画布上松手：按落点转成节点，并删掉这张卡片。
+     *
+     * 落点规则与拖普通节点完全一致（见 pointer 的 computeCandidate）：
+     * - 压在节点上 → 成为它的子节点（insertSubtreeFromText）；
+     * - 落在节点旁的间隙 → 插到那个位置的前 / 后成为兄弟
+     *   （insertSiblingFromText），anchor = prev ?? next，before = 没有 prev。
+     *
+     * 插入与删卡片在同一份文本上顺序完成，最后只 commit 一次 = 一步撤销。
+     * 落点为空的区域 / 插入失败时什么都不做（卡片原样留着，不丢内容）。
+     */
+    public dropCardOnMap(index: number, clientX: number, clientY: number) : void {
+        // 拖动预览的高亮已经在松手前撤掉了，这里按同一口径重算落点
+        this.canvas.clearExternalDrop();
+        if (!this.currentTree) return;
+        const card = parseQuickCards(this.markdown)[index];
+        if (!card || !card.text.trim()) return;
+        // 先收掉正在编辑的节点：提交会重排文本 / 树，落点要按新布局算
+        this.endEditBeforeStructuralOp();
+        const candidate = this.canvas.externalDropCandidate(clientX, clientY);
+        if (!candidate) return;
+        let withNodes: string;
+        if (candidate.targetUid) {
+            // 落在节点上：成为它的子节点
+            withNodes = insertSubtreeFromText(
+                this.markdown,
+                this.currentTree,
+                candidate.targetUid,
+                card.text
+            ).text;
+        } else {
+            // 落在兄弟间隙：插到间隙一侧的节点旁边
+            const anchorUid = candidate.prevUid ?? candidate.nextUid;
+            if (!anchorUid) return;
+            withNodes = insertSiblingFromText(
+                this.markdown,
+                this.currentTree,
+                anchorUid,
+                !candidate.prevUid,
+                card.text
+            ).text;
+        }
+        if (withNodes === this.markdown) return;
+        const next = deleteQuickCard(withNodes, index);
+        if (next !== this.markdown) this.commit({ text: next });
+    }
+
+    /**
+     * 快速卡片的落点能不能收下子节点。
+     *
+     * 与 insertSubtreeFromText 的规约保持一致：meta（front matter）与
+     * 媒体节点不能有子节点；其余（root / 标题 / 列表 / 段落）都行。
+     * 预览高亮与真正插入都用这一条，避免「亮着却插不进去」。
+     */
+    private canAcceptCardChild(node: MapNode) : boolean {
+        return node.kind !== 'meta' && !isMediaKind(node.kind);
+    }
+
+    /**
+     * 节点拖到侧边松手：整棵子树变成末尾的一张快速卡片，节点从树里删除。
+     *
+     * 与 {@link dropCardOnMap} 一样只 commit 一次。
+     */
+    /**
+     * 节点拖到侧边松手：转成快速卡片。
+     *
+     * 落点坐标决定插到第几张卡片的位置（拖到中间就插在中间，
+     * 拖到最下面就是列表末尾），不再固定追加到文末。
+     */
+    public dropNodeToRail(uid: string, clientX = 0, clientY = 0) : void {
+        this.quickCards?.setDropActive(false);
+        this.quickCards?.setDropIndex(null);
+        if (!this.currentTree || uid === '0') return;
+        const text = extractSubtreeText(this.markdown, this.currentTree, [uid]).trim();
+        if (!text) return;
+        // 插入序号要在删除前算（卡片顺序不受删节点影响，但坐标对应的是当前列表）
+        const index = this.quickCards?.indexAt(clientY) ?? Number.POSITIVE_INFINITY;
+        this.endEditBeforeStructuralOp();
+        const afterDelete = deleteNode(this.markdown, this.currentTree, uid).text;
+        if (afterDelete === this.markdown) return;
+        const next = insertQuickCard(afterDelete, index, text);
+        if (next !== this.markdown) this.commit({ text: next });
+    }
     public remapUidSets(remap: Map<string, string>) : void { return appDragDrop.remapUidSets(this, remap); }
     public computeDropRemap(dragUid: string, parentUid: string, oldTree: MindMapTreeNode, newTree: MindMapTreeNode) : Map<string, string> { return appDragDrop.computeDropRemap(this, dragUid, parentUid, oldTree, newTree); }
     // appMenus
@@ -540,6 +725,8 @@ export class MindMapApp {
     setDocument(markdown: string, fileName: string): void {
         // 导图自身编辑会回环一次 UPDATE；内容没变就不重建（避免白做）
         if (this.currentTree && markdown === this.markdown && fileName === this.fileName) return;
+        // 快速卡片按序号记选中：换了一份文档，同一个序号已经是另一张卡
+        this.quickCards?.clearSelection();
         this.setMarkdown(markdown);
         this.fileName = fileName;
         const tree = buildMindMapTree(markdown, fileName);
@@ -568,6 +755,9 @@ export class MindMapApp {
         if (this.settings.mindmapTheme === 'auto') {
             this.canvas.setTheme(this.resolveTheme());
         }
+        // 卡片里的 mini-CM 在创建时就锁定了明暗主题（代码配色/控件图标），
+        // 换主题只能强制重建；refresh 编辑中会自己延后，不会打断输入
+        this.quickCards?.refresh(undefined, true);
     }
 
     /**
@@ -577,9 +767,16 @@ export class MindMapApp {
         const previous = this.settings;
         this.settings = { ...DEFAULT_RUNTIME_SETTINGS, ...settings };
 
+        // 快速卡片栏：开关与宽度即时生效（幂等，不必等「尺寸变化」判定）
+        this.quickCards?.applySettings();
+        // 宽度变了，卡片高度 / 重叠关系要重算
+        this.quickCards?.relayout();
+
         // ① 配色：即时切换（与画布可见性无关）
         if (previous.mindmapTheme !== this.settings.mindmapTheme) {
             this.canvas.setTheme(this.resolveTheme());
+            // 卡片里的 mini-CM 也锁了主题，换主题要强制重建
+            this.quickCards?.refresh(undefined, true);
         }
 
         // ② 手势期清晰度：无条件同步一次。不能只在「值变了」时调用 ——
@@ -677,12 +874,16 @@ export class MindMapApp {
                 this.applySettingsRefresh(pending.size, pending.expand);
             }
             this.canvas.setActive(true);
+            // 卡片栏的开关 / 尺寸可能在隐藏期间被改过
+            this.quickCards?.applySettings();
             this.toggleEmptyHint((this.currentTree?.children.length ?? 0) === 0);
         } else {
             // 切回文本模式时收起浮动 UI（编辑会话提交）
             this.commitEditSession();
             this.searchBar.close();
             this.closeContextMenu();
+            // 卡片栏：提交正在编辑的卡片并收起（下次进 map 从收起态开始）
+            this.quickCards?.deactivate();
             this.clearSelection();
             this.toggleEmptyHint(false);
         }
@@ -699,6 +900,9 @@ export class MindMapApp {
         this.lastContainerWidth = width;
         this.lastContainerHeight = height;
         this.canvas.resize();
+        // 侧边卡片栏：宽度变量重设 + 按新的视口高度重新平铺 / 重叠
+        this.quickCards?.applySettings();
+        this.quickCards?.relayout();
     }
 
     /** 销毁实例。 */
@@ -725,6 +929,9 @@ export class MindMapApp {
         this.toolbarEl = null;
         this.multiBarEl?.remove();
         this.multiBarEl = null;
+        // 卡片栏：提交未落盘的编辑并摘掉全局监听
+        this.quickCards?.destroy();
+        this.quickCards = null;
         this.closeContextMenu();
         this.resizeObserver?.disconnect();
         this.resizeObserver = null;

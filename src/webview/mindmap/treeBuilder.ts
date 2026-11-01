@@ -17,6 +17,7 @@
 import { GFM } from '@lezer/markdown';
 import type { SyntaxNode } from '@lezer/common';
 import { tunedMarkdownLanguage } from '../codemirror/extensions/markdownParser.js';
+import { maskQuickCardLines } from './edit/staging.js';
 import type {
     MindMapNodeKind,
     MindMapTreeNode,
@@ -65,7 +66,10 @@ export function buildMindMapTree(markdown: string, fileName: string): MindMapTre
     // 先修正「缩进不够」的嵌套列表，再解析（见 normalizeNestedListIndent）。
     // 注意后续所有文本切片都用修正后的 doc：行数不变、只有行首空白变了，
     // 行号映射仍然有效；显示侧 dedentListSource 会把补出来的缩进去掉。
-    const doc = normalizeNestedListIndent(raw);
+    // 快速卡片（`<<<` … `>>>`）不是导图节点：解析前把卡片占用的行清空。
+    // 行数不变，卡片行以外的源码一个字符都不动，所以节点行号、
+    // 文本切片、回写逻辑全部照旧；卡片内容也不会和相邻段落并成一块。
+    const doc = maskQuickCardLines(normalizeNestedListIndent(raw));
     const tree = mindmapParser.parse(doc);
     const lines = collectLineStarts(doc);
     const lineOf = (pos: number): number => positionToLine(lines, pos);

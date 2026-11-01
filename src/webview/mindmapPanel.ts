@@ -63,6 +63,9 @@ function readMindmapSettings(
         // 性能监测浮层：只认三个合法值，其它一律关闭
         mindmapPerfMonitor:
             perfMonitor === 'minimal' || perfMonitor === 'full' ? perfMonitor : 'off',
+        // 快速卡片：开关 + 宽高（0 视为没读到，回退 schema 默认值）
+        quickCardEnabled: Boolean(pick('quickCardEnabled')),
+        quickCardWidth: Number(pick('quickCardWidth')) || 280,
     };
 }
 
@@ -128,6 +131,12 @@ function ensureApp(): MindMapApp | null {
         // 迭代 N3：导图导出 → extension 存盘
         onExport: (payload) => {
             vscode.postMessage({ type: 'saveMindmapExport', ...payload });
+        },
+        // 画布上改的设置（拖动快速卡片左边界 = quickCardWidth）：本地
+        // settingsState 同步 + 走 UPDATE_SETTING 落盘（扩展侧会再广播回来）
+        onPersistSetting: (key, value) => {
+            settingsState.set(key, value);
+            vscode.postMessage({ type: MESSAGE_TYPES.UPDATE_SETTING, key, value });
         },
     });
     app.setTheme(currentTheme);

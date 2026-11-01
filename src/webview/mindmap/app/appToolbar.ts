@@ -68,8 +68,6 @@ export function createToolbar(app: MindMapApp) : void {
         // 删除的二级菜单项（只删自己 / 只删子节点 / 连同子树）
         const delItem = target.closest<HTMLElement>('[data-del]');
         if (delItem) {
-            // class 禁用的项（self：含非标题子节点的标题）：点了不执行
-            if (delItem.classList.contains('lwm-item-disabled')) return;
             app.deleteFromMenu(delItem);
             return;
         }
@@ -333,9 +331,11 @@ export function createAddMenu(app: MindMapApp, act: 'child' | 'sibling', label: 
  * 造「删除」按钮 + 悬浮二级菜单。
  *
  * 普通点击保留原来的默认行为（删整棵子树，有子项时先变红要二次确认），
- * 悬停展开的二级菜单提供导图里另外两种常见删法：
+ * 悬停展开的二级菜单提供导图里的其它删法：
  * - 只删除自己：子节点整体上移一级，接替当前节点的位置；
- * - 只删除子节点：保留当前节点，清空它下面的分支。
+ * - 只删除子节点：保留当前节点，清空它下面的分支；
+ * - 删除标题格式 / 删除列表格式：整组同级节点降成普通文本（按节点类型
+ *   动态显示，且只有所有兄弟都是同一格式时才可用）。
  *
  * 实现方式与「＋子节点 / ＋兄弟」完全一致（`.lwm-tool-menu`），
  * 显示/隐藏交给 CSS 的 :hover，不额外维护开关状态。
@@ -390,7 +390,7 @@ export function createDeleteMenu(app: MindMapApp) : HTMLDivElement {
     const popup = document.createElement('div');
     popup.className = 'lwm-tool-popup';
     const addItem = (
-        act: 'subtree' | 'self' | 'children',
+        act: 'subtree' | 'self' | 'children' | 'format',
         text: string,
         title: string
     ): void => {
@@ -409,6 +409,14 @@ export function createDeleteMenu(app: MindMapApp) : HTMLDivElement {
         '保留子节点，让它们接替当前节点的位置（列表项会转成同级标题）'
     );
     addItem('children', '只删除子节点', '保留当前节点，删掉它下面的所有分支');
+    // 「删除标题格式 / 删除列表格式」：文案和可见性由 showToolbar 按节点
+    // 类型和兄弟格式动态决定，默认先藏着
+    const formatItem = document.createElement('button');
+    formatItem.type = 'button';
+    formatItem.dataset.del = 'format';
+    formatItem.textContent = '删除格式';
+    formatItem.style.display = 'none';
+    popup.appendChild(formatItem);
     wrap.appendChild(popup);
     return wrap;
 }
@@ -417,10 +425,10 @@ export function createDeleteMenu(app: MindMapApp) : HTMLDivElement {
 /**
  * 普通点击「＋子节点 / ＋兄弟」：新节点**优先跟当前节点同类型**。
  *
- * - 标题：子节点 = 深一级标题（H2 下面就是 H3），兄弟 = 同级标题。
- *   以前这里一律插「普通文本」，标题下点 ＋子节点得到的是一个段落；
- *   而键盘 Tab / Enter 走 addChildNode / addSiblingNode，本来就是标题
- *   对标题，两条入口的表现不一致（菜单里显式选「普通文本」仍然插段落）。
+ * - 标题：默认标题层级只有 H1 / H2 ——
+ *   H1 加子节点 = H2；**H2 加子节点 = 普通文本**（不再一直往 H3/H4 深处堆）；
+ *   加兄弟仍是同级标题。键盘 Tab / Enter 走 addChildNode / addSiblingNode，
+ *   两条入口保持同一口径（菜单里显式选「标题」仍可插 H3/H4）。
  * - 列表：列表项本身（有序 / 无序跟随当前项，addNode 里已处理）。
  * - 根节点（文件名）：子节点 = 一级标题，与 Tab 的行为一致。
  * - 段落 / 引用：普通文本（段落加子节点时 addNode 会先把它升级成列表项）。
@@ -430,11 +438,18 @@ export function addQuick(app: MindMapApp, placement: 'child' | 'sibling') : void
     let spec: NewNodeSpec = { type: 'text' };
     if (node?.kind === 'heading') {
         const level = Number(node.data._headingLevel ?? 1);
-        spec = {
-            type: 'heading',
-            // 子标题的级别下限由 addNode 再钳一次（≥ 父级 + 1，H6 退化成列表项）
-            level: clampHeading(placement === 'child' ? level + 1 : level),
-        };
+        if (placement === 'child' && level >= 2) {
+            // H2 及更深：子节点用普通文本（见上方说明）
+            spec = { type: 'text' };
+        } else {
+            spec = {
+                type: 'heading',
+                // 子标题的级别下限由 addNode 再钳一次（≥ 父级 + 1）
+                level: clampHeading(
+                    placement === 'child' ? level + 1 : level
+                ),
+            };
+        }
     } else if (node?.kind === 'list') {
         spec = { type: 'list' };
     } else if (node?.kind === 'root' && placement === 'child') {
@@ -562,28 +577,43 @@ export function showToolbar(app: MindMapApp, uid: string) : void {
                 ? '当前节点没有子节点'
                 : '保留当前节点，删掉它下面的所有分支';
     }
-    // 「只删除自己」的前提是子节点能整体上移一级。标题的子标题可以
-    //（## 升 #，天然还是根的子节点）；**列表项**也可以（转成同级标题，
-    // 见 deleteSelfKeepChildren）；但段落 / 引用 / 表格 / 代码这些不行：
-    // Markdown 没有「节结束」标记，文档中部的顶层段落/表格必然归入前一个
-    // 标题的章节 —— 提升出去就挂到了上一个兄弟标题下面（看着像「删了 B，
-    // 内容全跑进 A」）。这种标题禁用该项并说明原因。
-    // 注意用 class 而不是 disabled 属性：禁用按钮不派发鼠标事件，
-    // title 里的原因提示会永远看不到。
+    // 「删除标题格式 / 删除列表格式」：只有节点和它的所有兄弟都是同一种
+    // 格式时才出现。整组一起剥标记，层级才不会乱（见 deleteNodeFormat）。
+    // 元数据（front matter）不是内容兄弟，判断时忽略。
+    const formatItem = deleteMenu?.querySelector<HTMLButtonElement>(
+        '[data-del="format"]'
+    );
+    if (formatItem) {
+        const formatKind = treeNode?.node.data._kind;
+        const siblings = treeNode?.parent
+            ? treeNode.parent.children.filter(
+                  (child) => child.data._kind !== 'meta'
+              )
+            : [];
+        const canStrip =
+            (formatKind === 'heading' || formatKind === 'list') &&
+            siblings.length > 0 &&
+            siblings.every((child) => child.data._kind === formatKind);
+        formatItem.style.display = canStrip ? '' : 'none';
+        if (canStrip) {
+            formatItem.textContent =
+                formatKind === 'heading' ? '删除标题格式' : '删除列表格式';
+            formatItem.title =
+                formatKind === 'heading'
+                    ? '把这一组同级标题连同子树里的标题一起改成普通文本'
+                    : '把这一组同级列表项都改成普通文本（子列表上提一级）';
+        }
+    }
+    // 「只删除自己」对标题也放开：子标题 / 列表项会接替它的位置
+    //（列表项转成同级标题，见 deleteSelfKeepChildren）；段落 / 引用 /
+    // 表格 / 代码这些没法变成标题的，就原地保留，自然成为上文
+    //（通常就是前一个提升出来的标题）的子节点。
     const selfItem = deleteMenu?.querySelector<HTMLButtonElement>(
         '[data-del="self"]'
     );
     if (selfItem) {
-        const hasUnpromotableChild =
-            treeNode?.node.data._kind === 'heading' &&
-            treeNode.node.children.some(
-                (child) =>
-                    child.data._kind !== 'heading' && child.data._kind !== 'list'
-            );
-        selfItem.classList.toggle('lwm-item-disabled', !!hasUnpromotableChild);
-        selfItem.title = hasUnpromotableChild
-            ? '子节点含段落 / 引用 / 表格 / 代码等无法提升的内容：Markdown 里它们会归入上一个标题的章节，请改用其它删除方式'
-            : '保留子节点，让它们接替当前节点的位置（列表项会转成同级标题）';
+        selfItem.title =
+            '保留子节点，让它们接替当前节点的位置（列表项会转成同级标题，其余内容原地保留）';
     }
     app.toolbarEl.style.display = 'flex';
     app.positionToolbar();

@@ -31,8 +31,16 @@ export function handleWindowKeyDown(app: MindMapApp, event: KeyboardEvent): void
         return;
     }
     if (app.editSession) return;
-    const target = event.target as HTMLElement | null;
+    // 快速卡片栏里的按键（粘贴 / 复制 / 撤销 / 查找）全部交给卡内 mini-CM
+    // 自己处理。卡片不是 editSession，少了这一条 Ctrl+V 会落到画布的
+    // 「粘贴子树」上，表现为「往卡片里粘贴，结果粘到主画布」。
+    const targetEl = event.target instanceof Element ? event.target : null;
+    if (targetEl?.closest('.lwm-qcards')) return;
+    const target = targetEl as HTMLElement | null;
     if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+    // 侧边卡片选中时，复制 / 剪切 / 粘贴归卡片栏（作用于这张卡片），
+    // 不能再落到导图树的子树剪贴上
+    if (app.quickCards?.handleKey(event)) return;
 
     if ((event.ctrlKey || event.metaKey) && !event.altKey) {
         if (key === 'f') {

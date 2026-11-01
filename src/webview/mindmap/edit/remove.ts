@@ -237,6 +237,185 @@ export function deleteSelfKeepChildren(
 
 
 /**
+ * 删除标题格式 / 删除列表格式：把节点所在的那一组兄弟整体降成普通文本。
+ *
+ * 为什么必须**整组**处理、且要求所有兄弟同格式：
+ * - 只剥掉其中某一个标题的 `#`，剩下的兄弟还是标题，Markdown 会把这个
+ *   普通段落并进前一个兄弟的章节里 —— 层级直接乱掉；
+ * - 整组一起剥，这一层就从「标题链 / 列表链」变成普通段落，兄弟关系保持原样。
+ *
+ * 标题组：兄弟和它们**子树里所有标题**一起剥（`## 文字` → `文字`，
+ * setext 的 `===` / `---` 下划线行删掉）。只剥到兄弟这一层的话，
+ * 中间的 H3 仍会把后面被剥掉的兄弟“吸”成自己的子节点，导图里层级就错了。
+ * 列表组：去掉 `- ` / `1. ` 标记，子树整体左移到父项内容列；
+ * 任务标记 `[x]` 属于列表语法，转成普通文字后保留勾选状态。
+ *
+ * 剥掉标记后相邻两行会被并成同一个段落，所以段落之间要补空行。
+ *
+ * @param markdown 源全文
+ * @param tree 当前导图树
+ * @param uid 触发操作的节点 uid（root / 媒体 / 段落不适用）
+ * @returns 新全文；兄弟格式不一致时原样返回
+ */
+export function deleteNodeFormat(
+    markdown: string,
+    tree: MindMapTreeNode,
+    uid: string
+): EditResult {
+    const found = findNodeByUid(tree, uid);
+    if (!found || !found.parent) return { text: markdown };
+    const kind = found.node.data._kind;
+    if (kind !== 'heading' && kind !== 'list') return { text: markdown };
+    // 兄弟 = 父节点的全部子节点。元数据（front matter）不是内容兄弟，忽略。
+    const siblings = found.parent.children.filter(
+        (child) => child.data._kind !== 'meta'
+    );
+    if (
+        siblings.length === 0 ||
+        siblings.some((child) => child.data._kind !== kind)
+    ) {
+        return { text: markdown };
+    }
+
+    const lines = markdown.split('\n');
+    const entries = siblings
+        .map((node) => ({
+            node,
+            range: node.data._lineRange as NodeLineRange | undefined,
+        }))
+        .filter(
+            (entry): entry is { node: MindMapTreeNode; range: NodeLineRange } =>
+                !!entry.range
+        )
+        // 从后往前改：setext 会删行、补空行会增行，前面的行号不受影响
+        .sort((a, b) => b.range.fromLine - a.range.fromLine);
+    for (const { node, range } of entries) {
+        const block = lines.slice(range.fromLine, range.toLine + 1);
+        const converted =
+            kind === 'heading'
+                ? stripHeadingBlock(node, range, lines)
+                : stripListBlock(block);
+        // 前后补空行：剥掉标记后，紧挨着的普通行会并进同一个段落。
+        // 原位置已经空着就不重复补；最后统一折叠多余空行。
+        if (range.fromLine > 0 && (lines[range.fromLine - 1] ?? '').trim() !== '') {
+            converted.unshift('');
+        }
+        if ((lines[range.toLine + 1] ?? '').trim() !== '') {
+            converted.push('');
+        }
+        lines.splice(range.fromLine, block.length, ...converted);
+    }
+    const joined = lines
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .replace(/^\n+/, '');
+    return { text: joined };
+}
+
+
+/**
+ * 标题块 → 普通段落块：兄弟自己 + 子树里所有标题一起剥掉标记。
+ *
+ * 用树节点的 `_selfLineRange` 定位标题行，而不是正则扫全文 ——
+ * 围栏代码 / 引用里的 `#` 不是导图节点，必须原样保留。
+ *
+ * - ATX：去掉行首 `#{1,6}`（保留缩进）；
+ * - setext：下划线行紧跟在标题文字行后面，直接删掉。
+ *
+ * 剥完的标题变成普通段落：相邻段落之间补空行，否则会被并成同一段。
+ */
+function stripHeadingBlock(
+    node: MindMapTreeNode,
+    range: NodeLineRange,
+    lines: string[]
+): string[] {
+    /** 需要剥掉 `#` 的 ATX 标题行（绝对行号）。 */
+    const stripLines = new Set<number>();
+    /** 需要整行删除的 setext 下划线行（绝对行号）。 */
+    const dropLines = new Set<number>();
+    const collect = (current: MindMapTreeNode): void => {
+        if (current.data._kind === 'heading') {
+            const self = current.data._selfLineRange as
+                | NodeLineRange
+                | undefined;
+            if (self) {
+                const line = lines[self.fromLine] ?? '';
+                if (/^[ \t]*#{1,6}(?:[ \t]+|$)/.test(line)) {
+                    stripLines.add(self.fromLine);
+                } else {
+                    // setext：下划线紧跟在标题文字行后面
+                    dropLines.add(self.fromLine + 1);
+                }
+            }
+        }
+        current.children.forEach(collect);
+    };
+    collect(node);
+
+    const converted: string[] = [];
+    for (let i = range.fromLine; i <= range.toLine; i += 1) {
+        if (dropLines.has(i)) {
+            // 下划线删掉后，标题文字会跟下一行并成同一段：原位补一个空行
+            if (
+                converted.length > 0 &&
+                converted[converted.length - 1].trim() !== '' &&
+                (lines[i + 1] ?? '').trim() !== ''
+            ) {
+                converted.push('');
+            }
+            continue;
+        }
+        const line = lines[i] ?? '';
+        if (!stripLines.has(i)) {
+            converted.push(line);
+            continue;
+        }
+        // 剥掉 # 后就是普通段落：前后都要有空行，避免跟相邻段落粘连
+        if (
+            converted.length > 0 &&
+            converted[converted.length - 1].trim() !== ''
+        ) {
+            converted.push('');
+        }
+        converted.push(line.replace(/^([ \t]*)#{1,6}(?:[ \t]+|$)/, '$1'));
+        const next = lines[i + 1] ?? '';
+        if (!dropLines.has(i + 1) && next.trim() !== '') converted.push('');
+    }
+    return converted;
+}
+
+
+/**
+ * 列表项块 → 普通段落块：剥掉首行标记，子树整体左移到父项内容列。
+ *
+ * 左移量是「标记 + 标记后空白」（不含缩进）：
+ * 顶层列表因此顶格，嵌套列表则留在父列表项的内容列里 ——
+ * 子节点上提一级，但不会跳出父项。
+ */
+function stripListBlock(block: string[]): string[] {
+    const first = block[0] ?? '';
+    const mark = /^([ \t]*)([-*+]|\d+[.)])([ \t]+)(\[[ xX]\][ \t]+)?(.*)$/.exec(
+        first
+    );
+    if (!mark) return block;
+    // 标记宽度（Tab 按 4 空格算，和 listIndentOf 保持同一口径）
+    const markerWidth =
+        mark[2].replace(/\t/g, '    ').length +
+        mark[3].replace(/\t/g, '    ').length +
+        (mark[4] ?? '').replace(/\t/g, '    ').length;
+    return block.map((line, index) => {
+        if (index === 0) {
+            // 任务标记 [x] 当普通文字保留，勾选状态不会丢
+            return mark[1] + (mark[4] ?? '') + mark[5];
+        }
+        if (line.trim() === '') return line;
+        const remove = Math.min(markerWidth, listIndentOf(line));
+        return line.slice(remove);
+    });
+}
+
+
+/**
  * 只删除节点的全部子节点，保留节点自己。
  *
  * 子节点的 `_lineRange` 已经包含各自的整棵子树，所以直接按区间删；

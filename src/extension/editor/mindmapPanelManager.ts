@@ -16,6 +16,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { MESSAGE_TYPES } from '../../shared/messageTypes.js';
 import { ConfigManager } from './configManager.js';
+import type { SettingValue } from '../../shared/settings/index.js';
 import { getMindmapPanelHtml } from './webviewContent.js';
 import { getThemeType } from './editorProvider.js';
 import { saveMindmapExport } from '../export/mindmapExport.js';
@@ -234,6 +235,22 @@ export class MindmapPanelManager implements vscode.Disposable {
                 } catch (error) {
                     Logger.error(
                         `Mindmap panel ${kind} failed: ${entry.uri.fsPath}`,
+                        error instanceof Error ? error : new Error(String(error))
+                    );
+                }
+                break;
+            }
+
+            // 画布上直接改的设置（拖动快速卡片左边界 = quickCardWidth）：
+            // 落盘后 onDidChangeConfiguration 会把新设置广播回本面板
+            case MESSAGE_TYPES.UPDATE_SETTING: {
+                const settingMsg = message as { key?: string; value?: SettingValue };
+                if (!settingMsg.key) return;
+                try {
+                    await ConfigManager.updateSetting(settingMsg.key, settingMsg.value);
+                } catch (error) {
+                    Logger.error(
+                        `Mindmap panel setting update failed: ${settingMsg.key}`,
                         error instanceof Error ? error : new Error(String(error))
                     );
                 }

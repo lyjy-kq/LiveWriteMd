@@ -260,10 +260,14 @@ export const CANVAS_CSS = `
 }
 /* 浅色主题的节点文字 / 纯文本占位：和实时模式一样用纯黑，
    否则节点里的正文会比编辑器正文淡一档（.lwm-node 的 color 会压过继承）。 */
-#mindmap[data-lwm-theme="light"] .lwm-node {
+#mindmap[data-lwm-theme="light"] .lwm-node,
+#mindmap[data-lwm-theme="light"] .lwm-qcard {
     color: #000;
 }
-.lwm-node .cm-editor {
+/* 节点里的 CM 背景压透明，节点自己的底色才露得出来。
+   快速卡片共用同一套外框视觉，同样要压掉（否则浅色主题下卡片是一块白底） */
+.lwm-node .cm-editor,
+.lwm-qcard .cm-editor {
     background: transparent !important;
 }
 
@@ -275,16 +279,12 @@ export const CANVAS_CSS = `
    注意：这里不要写会影响内容的 color / font-weight 覆盖，尤其不要按
    data-depth 改文字颜色。节点内容是一份只读的 live 预览，正文色和标题色
    都该和实时模式保持一致；节点外框只负责「容器」的视觉。 */
-.lwm-node {
+/* 外框视觉（底色 / 描边 / 圆角 / 投影 / 字体）**节点与快速卡片共用**：
+   卡片只在这套基础上加自己的尺寸、右侧色条和内容滚动，别的不要重写，
+   不然两处会慢慢长歪。 .lwm-node 下面那段只放节点盒独有的排版。 */
+.lwm-node,
+.lwm-qcard {
     box-sizing: border-box;
-    width: max-content;
-    height: auto;
-    display: flex;
-    align-items: center;
-    /* 单元格本身不留内边距 / 外边距：文字贴边由内部 mini-CM 的
-       .cm-content 内边距控制，节点盒不再叠加一圈空白 */
-    padding: 0;
-    margin: 0;
     /* 底色 = 标题色 + 一点透明。具体用哪一个标题色，由 JS 写在元素上的
        --lwm-node-tint 决定（同级轮换，所有层级共用同一套色板）。
        变量没定义时用 h3 的默认色兜底。 */
@@ -305,10 +305,22 @@ export const CANVAS_CSS = `
         var(--livewritemd-font-scale, 1)
     );
     font-weight: var(--livewritemd-font-weight, 400);
+    color: var(--vscode-editor-foreground, #d4d4d4);
+}
+/* 节点盒独有的排版：宽度由引擎测量后写成内联像素值，
+   单行、居中、不选字；卡片要换行、要能选字，所以这些不共用 */
+.lwm-node {
+    width: max-content;
+    height: auto;
+    display: flex;
+    align-items: center;
+    /* 单元格本身不留内边距 / 外边距：文字贴边由内部 mini-CM 的
+       .cm-content 内边距控制，节点盒不再叠加一圈空白 */
+    padding: 0;
+    margin: 0;
     /* 节点是单行，行高固定即可：不跟随 --livewritemd-line-height，
        避免倍行距把节点撑高、导图布局整体变形 */
     line-height: 1.5;
-    color: var(--vscode-editor-foreground, #d4d4d4);
     white-space: nowrap;
     user-select: none;
 }
@@ -321,15 +333,9 @@ export const CANVAS_CSS = `
    和标题的颜色，和实时模式对不上。
    这段 CSS 整体是一个模板字符串，注释里千万别写反引号，
    否则会把字符串提前截断，编译出来的代码运行时报 line is not defined。 */
-/* 高倍缩放（>=150%，由 canvas.ts 加 class）：把节点底色浓度按倍数压低。
-   依据：同一段文字在纯深底上的 Laplacian 比 16% 淡色底高 12%，
-   而高倍下正是「读大字」的时候，底色越淡文字越显利。
-   浓度由 settingsState 直接算好写成 --lwm-node-wash-hi：
-   开启 = 底色浓度 × 0.35（16% → 5.6%），关闭 = 与普通缩放相同。
-   不要改成在 color-mix 里写 calc(...)：Chromium 会丢弃整条声明。 */
-.lwm-canvas.lwm-hi-zoom .lwm-node {
-    background: color-mix(in srgb, var(--lwm-node-tint) var(--lwm-node-wash-hi, 2.8%), transparent);
-}
+/* 节点底色浓度只由设置（--lwm-node-wash）决定，不随缩放比例变化：
+   以前放大到 150% 会把底色压淡（「高倍缩放增强清晰度」），实际观感像掉色，
+   已按用户要求整条取消，别再按缩放比例改 background。 */
 .lwm-node[data-depth="0"] {
     border: 3px solid color-mix(in srgb, var(--lwm-node-tint) 68%, transparent);
 }
@@ -344,7 +350,8 @@ export const CANVAS_CSS = `
    以前选中只体现在工具条上，节点本身没有任何视觉反馈；框选多选之后
    必须能一眼看出哪些节点会被删掉，所以选中态直接画在节点外圈。
    用 outline 而不是 border：不参与盒模型，不会让节点尺寸/布局跳一下。 */
-.lwm-node.lwm-node-selected {
+.lwm-node.lwm-node-selected,
+.lwm-qcard.lwm-node-selected {
     outline: 2px solid var(--vscode-focusBorder, #007fd4);
     outline-offset: 2px;
 }

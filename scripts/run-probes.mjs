@@ -56,9 +56,11 @@ const PROBES = [
     {
         name: 'mapDeleteMenuProbe',
         expect: [
-            'menu=true items=3',
+            // 菜单多了「删除标题格式」；标题现在允许「只删除自己」（同级列表接替）
+            'menu=true items=4',
             'ui self: writes=1',
-            'mixed heading: self disabled=true clickWrites=0',
+            'format:删除标题格式',
+            'mixed heading: self disabled=false',
         ],
     },
     {
@@ -118,6 +120,34 @@ const PROBES = [
             'del setext: underlineKept=true',
             'del multi: hrGone=true keepJia=true keepDing=true',
         ],
+    },
+    {
+        // 快速卡片栏本轮改版：收起露左边缘并整体左移滑出 / 底色不透明 /
+        // 点击语义完全复刻节点 / 拖左边界改全局宽度 / 加号是小卡片且右键复制提示词
+        name: 'quickCardUiProbe',
+        expect: [
+            '1a. 收起时色带贴右边界且能命中卡片: PASS',
+            '1b. 收起时卡片本体在画布外（左边缘 ≈ 右边界 - 4px）: PASS',
+            '2. 卡片底色不透明: PASS',
+            '3a. 单击选中（复用节点 .lwm-node-selected）: PASS',
+            '3b. 选中后整张卡片滑出来（不再只露色带）: PASS',
+            '3c. 点已经选中的卡片 = 进入编辑: PASS',
+            '3d. 选中后出工具条（与普通节点一致）: PASS',
+            '4a. 双击未选中卡片只选中、不进编辑: PASS',
+            '4b. 卡片内编辑器 padding 全 0: PASS',
+            '5a. 拖左边界变宽（+60px）: PASS',
+            '5b. 宽度写回设置（全局）: PASS',
+            '5c. 所有卡片同一宽度: PASS',
+            '6a. 加号就是一张侧边卡片: PASS',
+            '6b. 右键加号复制到文末回答提示词: PASS',
+            '6c. 复制后有小浮条提示: PASS',
+            '7. 卡片里的 Ctrl+V 不落到画布: PASS',
+            '8a. 放不下时重叠摆放（出现负 margin）: PASS',
+            '8b. 最后一张（加号卡片）仍在视口内: PASS',
+            '9. 卡片拖进画布 → 插入为节点（卡片删除）: PASS',
+            '10. 节点拖到侧边 → 变成快速卡片: PASS',
+        ],
+        forbid: ['FAIL'],
     },
     {
         // 内链箭头遮挡：穿过节点的虚线段被裁掉（采样点不再落在节点上）

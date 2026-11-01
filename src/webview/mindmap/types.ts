@@ -114,6 +114,10 @@ export interface MindMapRuntimeSettings {
      * - full：另含实例数 / 换真队列 / 强制布局速率与尖峰记录。
      */
     mindmapPerfMonitor: PerfMonitorMode;
+    /** 是否显示右边界快速卡片栏（默认开启）。 */
+    quickCardEnabled: boolean;
+    /** 快速卡片宽度（px）：全局生效，拖动卡片左边界调整并持久化。 */
+    quickCardWidth: number;
 }
 
 /** 导图编辑回调：把导图操作算出的新全文交回宿主（CM dispatch / CONTENT_CHANGE）。 */

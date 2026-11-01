@@ -8,7 +8,7 @@
 
 import type { MindMapApp } from '../mindmapApp.js';
 import { addChildNode, addSiblingNode } from '.././edit/add.js';
-import { deleteChildNodes, deleteNode, deleteNodes, deleteSelfKeepChildren } from '.././edit/remove.js';
+import { deleteChildNodes, deleteNode, deleteNodeFormat, deleteNodes, deleteSelfKeepChildren } from '.././edit/remove.js';
 import { countSubtreeNodes } from '.././edit/shared.js';
 import { buildMindMapTree } from '.././treeBuilder.js';
 import { findNodeByUid as findTreeNodeByUid } from '../edit/shared.js';
@@ -40,8 +40,11 @@ export function commit(app: MindMapApp, result: { text: string; newNodeUid?: str
         app.selectedUid = uid;
         app.canvas.setSelected(uid);
         app.showToolbar(uid);
-        // 新节点已在同步渲染里就位，直接进编辑
-        requestAnimationFrame(() => app.startEdit(uid));
+        // 新节点已在同步渲染里就位，直接进编辑。
+        // 占位文字自动全选（见 startEdit），用户接着敲字就是替换。
+        requestAnimationFrame(() =>
+            app.startEdit(uid, undefined, undefined, true)
+        );
     }
 }
 
@@ -146,6 +149,11 @@ export function deleteFromMenu(app: MindMapApp, item: HTMLElement) : void {
             app.commit(result);
             if (app.selectedUid === uid) app.showToolbar(uid);
             return;
+        case 'format':
+            // 删除标题/列表格式：节点还在，但整层上提后 uid 可能变化，
+            // 统一收起选中（走下面的 clearSelection + commit）
+            result = deleteNodeFormat(app.markdown, tree, uid);
+            break;
         default:
             // 含子树：与点击「删除」一致
             result = deleteNode(app.markdown, tree, uid);

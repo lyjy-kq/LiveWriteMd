@@ -7,7 +7,16 @@
  */
 
 import { addChildNode, addNode } from './add.js';
-import { insertBlockLines, listContentColumn, listIndentOf, promoteParagraphToList, reindentLines } from './move.js';
+import {
+    insertBlockLines,
+    listContentColumn,
+    listIndentOf,
+    promoteParagraphToList,
+    reindentLines,
+    transformHeadingBlock,
+    transformHeadingBlockToList,
+    transformListBlockToHeading,
+} from './move.js';
 import { isMediaKind } from './rename.js';
 import { EditResult, findNodeByUid, rangeOf } from './shared.js';
 import { buildMindMapTree, normalizeNestedListIndent } from '../treeBuilder.js';
@@ -219,6 +228,103 @@ export function insertSubtreeFromText(
     }
 
     return { text: markdown };
+}
+
+
+/**
+ * §6.7 把一段 Markdown 作为**兄弟节点**插到 anchorUid 的前面 / 后面。
+ *
+ * 场景：把快速卡片拖到两个节点之间的间隙（而不是压在某个节点上）。
+ * 与 insertSubtreeFromText（作为子节点）互补，落点语义照抄拖普通节点：
+ * 「落在节点上 = 子节点，落在旁边 = 兄弟」。
+ *
+ * 兄弟的类型必须跟锚点一致，所以按锚点类型做换算：
+ * - 列表锚点：标题 / 段落降级成同缩进、同标记的列表项；列表 / 媒体块
+ *   整体平移到锚点的标记缩进；
+ * - 标题锚点：标题块平移到同一层级（最浅的那级落到锚点级别），
+ *   段落 / 列表升成同级标题；
+ * - 段落 / 媒体锚点：原样插入（块之间空行分隔）。
+ *
+ * 媒体块（代码 / 公式 / 表格）没法当列表项或标题，列表锚点下会退化成
+ * 锚点列表项的内容（Markdown 语法本身就不允许别的写法）。
+ *
+ * @param before - true = 插到锚点前面，false = 插到锚点后面
+ * @returns 新全文；剪贴板为空 / 锚点是 root 时原样返回（root 没有兄弟）
+ */
+export function insertSiblingFromText(
+    markdown: string,
+    tree: MindMapTreeNode,
+    anchorUid: string,
+    before: boolean,
+    clipText: string
+): EditResult {
+    // CRLF 归一：文本可能来自任何编辑器
+    const clip = clipText.replace(/\r\n/g, '\n').trim();
+    if (!clip) return { text: markdown };
+    const found = findNodeByUid(tree, anchorUid);
+    // root 没有兄弟：退回「作为子节点」，至少不丢内容
+    if (!found || !found.parent || found.node.data._kind === 'root') {
+        return insertSubtreeFromText(markdown, tree, anchorUid, clip);
+    }
+    const anchor = found.node;
+    const clipLines = clip.split('\n');
+    const clipTree = buildMindMapTree(clip, '粘贴');
+    const children = clipTree.children.filter((c) => c.data._kind !== 'meta');
+    if (children.length === 0) return { text: markdown };
+
+    /** 取 clip 子节点（含子树）的源码行块。 */
+    const blockOf = (node: MindMapTreeNode): string[] => {
+        const range = node.data._lineRange;
+        return range ? clipLines.slice(range.fromLine, range.toLine + 1) : [];
+    };
+    /** 整块平移到目标缩进列（列表 / 媒体块用）。 */
+    const reindentTo = (block: string[], indent: number): string[] => {
+        const from = listIndentOf(block[0] ?? '');
+        return from === indent ? block : reindentLines(block, indent - from);
+    };
+
+    const lines = markdown.split('\n');
+    const anchorLine = lines[rangeOf(anchor).fromLine] ?? '';
+    const kind = anchor.data._kind;
+    const blocks: string[][] = [];
+
+    if (kind === 'list') {
+        const indent = listIndentOf(anchorLine);
+        // 标记沿用锚点（`-` / `*` / `1.` …）；有序列表不重排后续序号，
+        // CommonMark 渲染时只看第一个数字，重建树也不依赖序号
+        const marker = /^(\s*)([-*+]|\d+[.)])(\s+)/.exec(anchorLine)?.[2] ?? '-';
+        for (const child of children) {
+            const block = blockOf(child);
+            if (child.data._kind === 'heading' || child.data._kind === 'para') {
+                blocks.push(transformHeadingBlockToList(block, indent, marker));
+            } else {
+                blocks.push(reindentTo(block, indent));
+            }
+        }
+    } else if (kind === 'heading') {
+        const level = anchor.data._headingLevel ?? 1;
+        for (const child of children) {
+            const block = blockOf(child);
+            if (child.data._kind === 'heading') {
+                blocks.push(transformHeadingBlock(block, child.data._headingLevel ?? 1, level));
+            } else {
+                blocks.push(transformListBlockToHeading(block, level));
+            }
+        }
+    } else {
+        for (const child of children) blocks.push(blockOf(child));
+    }
+
+    const range = rangeOf(anchor);
+    const at = before ? range.fromLine : range.toLine + 1;
+    // 列表项之间不能塞空行（会被拆成两段列表），其余块用空行隔开
+    const blankSeparated = kind !== 'list';
+    const block: string[] = [];
+    blocks.forEach((linesOfBlock, i) => {
+        if (i > 0 && blankSeparated) block.push('');
+        block.push(...linesOfBlock);
+    });
+    return { text: insertBlockLines(lines, at, block, blankSeparated, markdown).join('\n') };
 }
 
 

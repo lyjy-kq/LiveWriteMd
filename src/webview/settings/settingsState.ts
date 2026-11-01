@@ -193,21 +193,16 @@ function applyOneToCss(key: string, value: SettingValue): void {
             setVar('--livewritemd-h1-size', `${Number(value)}em`);
             break;
         // ---- 导图节点底色浓度 ----
-        // 只改背景色的混比，不动字形 / 栅格化路径：比例越低对比度越高，
-        // 大字（高倍缩放）下的观感差别最明显。两个 webview 共用这套变量。
-        // 底色浓度有两个落点：普通缩放的浓度、高倍缩放（>=150%）时的浓度。
-        // 两个键都会影响这一组变量，所以放在同一个分支里一起重算。
-        // 这里直接算出百分比写进两个变量，而不是在 CSS 里用 calc 相乘 ——
-        // Chromium 不接受 color-mix 的百分比参数里放 calc()（实测整条声明
-        // 被丢弃，底色完全不生效）。
-        case 'mindmapNodeWash':
-        case 'mindmapHiZoomContrast': {
+        // 只改背景色的混比，不动字形 / 栅格化路径：比例越低对比度越高。
+        // 两个 webview 共用这套变量。缩放比例不再影响底色（高倍缩放压底色
+        // 的那套已经按用户要求取消：放大后背景变淡看起来像「掉色」）。
+        // 直接写百分比而不是在 CSS 里用 calc 相乘 —— Chromium 不接受
+        // color-mix 的百分比参数里放 calc()（实测整条声明被丢弃）。
+        case 'mindmapNodeWash': {
             // 注意不能用 `|| 16` 兜底：0% 是合法取值（完全透明），会被 || 吃掉。
             const raw = Number(settingsState.get('mindmapNodeWash'));
             const base = Number.isFinite(raw) ? raw : 8;
-            const boost = settingsState.getBoolean('mindmapHiZoomContrast');
             setVar('--lwm-node-wash', `${base}%`);
-            setVar('--lwm-node-wash-hi', `${(base * (boost ? 0.35 : 1)).toFixed(2)}%`);
             break;
         }
         case 'headingBold':

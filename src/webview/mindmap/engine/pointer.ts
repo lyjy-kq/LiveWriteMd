@@ -393,7 +393,26 @@ export function updateDrag(c: MapCanvas, event: PointerEvent) : void {
     if (c.autoPanDx !== 0 || c.autoPanDy !== 0) c.startAutoPan();
     else c.stopAutoPan();
 
+    // 记下最新指针位置：拖到侧边松手时要用它算插到第几张卡片
+    drag.lastClientX = event.clientX;
+    drag.lastClientY = event.clientY;
+
     c.updateDropCandidate(event.clientX, event.clientY);
+
+    // 右侧快速卡片投放区：落在侧边上时不算树内落点，清掉高亮，
+    // 松手转成卡片（见 finishDrag）。自动平移也停掉，别一边拖一边滚。
+    const overRail = c.options.isDragOverRail?.(event.clientX, event.clientY) ?? false;
+    if (overRail) {
+        const previous = c.dropCandidate;
+        c.dropCandidate = null;
+        drag.candidate = null;
+        if (previous?.targetUid) c.refreshWrapperClasses(c.byUid.get(previous.targetUid));
+        c.dropLine.style.display = 'none';
+        c.stopAutoPan();
+        c.autoPanDx = 0;
+        c.autoPanDy = 0;
+    }
+    drag.overRail = overRail;
 }
 
 
@@ -420,17 +439,34 @@ export function stopAutoPan(c: MapCanvas) : void {
 }
 
 
-/** 计算指针下方的落点候选并更新高亮。 */
-export function updateDropCandidate(c: MapCanvas, clientX: number, clientY: number) : void {
-    const drag = c.drag;
-    if (!drag) return;
+/** 外部拖动时没有「自己的子树要排除」，用这个空集合占位。 */
+const NO_EXCLUDED: ReadonlySet<string> = new Set();
+
+/**
+ * 计算指针下方的落点候选（纯计算，不碰 DOM）。
+ *
+ * 节点拖动与外部内容（快速卡片）拖动共用同一套命中口径：
+ * 1. 指针落在某个节点上 → 成为它的子节点（取最深的一个）；
+ * 2. 否则取最近节点（220px 内）的兄弟间隙 → 插到它前 / 后。
+ *
+ * 两者只有两点不同：要不要排除被拖子树（节点拖动要，卡片不用），
+ * 以及父节点能不能收下（规则各有各的）。
+ *
+ * @param accept 父节点是否收得下当前位置的落点
+ */
+function computeCandidate(
+    c: MapCanvas,
+    clientX: number,
+    clientY: number,
+    excluded: ReadonlySet<string>,
+    accept: (parentUid: string) => boolean
+): DropCandidate | null {
+    if (!c.root) return null;
     const point = c.screenToWorld(clientX, clientY);
-    const excluded = collectSubtreeUids(drag.node);
     let hovered: MapNode | null = null;
     let nearest: MapNode | null = null;
     let nearestDist = Infinity;
 
-    if (!c.root) return;
     walkVisible(c.root, (node) => {
         if (excluded.has(node.uid)) return;
         // 1) 命中（取最深的一个）
@@ -455,7 +491,7 @@ export function updateDropCandidate(c: MapCanvas, clientX: number, clientY: numb
     let candidate: DropCandidate | null = null;
     if (hovered) {
         const target = hovered as MapNode;
-        if (c.canDrop(drag.uid, target.uid)) {
+        if (accept(target.uid)) {
             candidate = {
                 parentUid: target.uid,
                 prevUid: null,
@@ -475,7 +511,7 @@ export function updateDropCandidate(c: MapCanvas, clientX: number, clientY: numb
             const before = point.y < near.y + near.height / 2;
             const prev = before ? siblings[index - 1] ?? null : near;
             const next = before ? near : siblings[index + 1] ?? null;
-            if (c.canDrop(drag.uid, parent.uid)) {
+            if (accept(parent.uid)) {
                 candidate = {
                     parentUid: parent.uid,
                     prevUid: prev?.uid ?? null,
@@ -490,10 +526,14 @@ export function updateDropCandidate(c: MapCanvas, clientX: number, clientY: numb
             }
         }
     }
+    return candidate;
+}
 
+
+/** 把候选写到画布状态并更新高亮（节点描边 + 兄弟插入线）。 */
+function applyCandidate(c: MapCanvas, candidate: DropCandidate | null): void {
     const previous = c.dropCandidate;
     c.dropCandidate = candidate;
-    drag.candidate = candidate;
     if (previous?.targetUid) c.refreshWrapperClasses(c.byUid.get(previous.targetUid));
     if (candidate?.targetUid) c.refreshWrapperClasses(c.byUid.get(candidate.targetUid));
     if (candidate?.line) {
@@ -506,9 +546,66 @@ export function updateDropCandidate(c: MapCanvas, clientX: number, clientY: numb
 }
 
 
+/** 计算指针下方的落点候选并更新高亮（节点拖动）。 */
+export function updateDropCandidate(c: MapCanvas, clientX: number, clientY: number) : void {
+    const drag = c.drag;
+    if (!drag) return;
+    const candidate = computeCandidate(
+        c,
+        clientX,
+        clientY,
+        collectSubtreeUids(drag.node),
+        (parentUid) => canDrop(c, drag.uid, parentUid)
+    );
+    drag.candidate = candidate;
+    applyCandidate(c, candidate);
+}
+
+
 /** 类型规则交给上层（上层看得到 markdown 语义）。 */
 export function canDrop(c: MapCanvas, dragUid: string, parentUid: string) : boolean {
     return c.options.canDrop ? c.options.canDrop(dragUid, parentUid) : true;
+}
+
+
+/** 外部内容（快速卡片）能不能落进这个节点：规则由上层给。 */
+export function canDropExternal(c: MapCanvas, parentUid: string) : boolean {
+    return c.options.canDropExternal ? c.options.canDropExternal(parentUid) : true;
+}
+
+
+/**
+ * 外部内容（快速卡片 → 画布）的落点预览。
+ *
+ * 和拖普通节点完全同一套：落在节点上 → 高亮该节点（成为它的子节点）；
+ * 落在节点旁边 → 画出兄弟插入线（插到它前 / 后）。松手时按同一个
+ * 候选写文档（见 MindMapApp.dropCardOnMap），预览和结果不会打架。
+ *
+ * @returns 落点候选（null = 当前落点放不下）
+ */
+export function previewExternalDrop(c: MapCanvas, clientX: number, clientY: number) : DropCandidate | null {
+    // 节点拖动进行中：落点归 updateDropCandidate 管，别在这里抢
+    if (!c.root || c.drag) return null;
+    const candidate = computeCandidate(c, clientX, clientY, NO_EXCLUDED, (parentUid) =>
+        canDropExternal(c, parentUid)
+    );
+    applyCandidate(c, candidate);
+    return candidate;
+}
+
+
+/** 纯计算版本（松手时用：不写高亮，避免「先亮一下再提交」）。 */
+export function externalDropCandidate(c: MapCanvas, clientX: number, clientY: number) : DropCandidate | null {
+    if (!c.root) return null;
+    return computeCandidate(c, clientX, clientY, NO_EXCLUDED, (parentUid) =>
+        canDropExternal(c, parentUid)
+    );
+}
+
+
+/** 清掉外部拖动的落点高亮（卡片拖回侧边栏 / 松手 / 取消时调用）。 */
+export function clearExternalDrop(c: MapCanvas) : void {
+    applyCandidate(c, null);
 }
 
 
@@ -605,7 +702,14 @@ export function finishDrag(c: MapCanvas) : void {
     c.refreshWrapperClasses(drag.node);
     // 先回到布局位置：若上层 setData 复用同一 wrapper，起点就是正确的
     c.positionNode(drag.node);
-    if (candidate) {
+    if (drag.overRail) {
+        // 拖到右侧快速卡片投放区：上层把节点转成卡片（坐标决定插入位置）
+        c.options.onDropToRail?.(
+            drag.uid,
+            drag.lastClientX ?? drag.startClientX,
+            drag.lastClientY ?? drag.startClientY
+        );
+    } else if (candidate) {
         c.options.onDrop({
             dragUid: drag.uid,
             parentUid: candidate.parentUid,
@@ -633,7 +737,17 @@ export function handleWheel(c: MapCanvas, event: WheelEvent): void {
         c.scheduleViewport();
         return;
     }
-    c.zoomAt(localX, localY, c.zoom * Math.exp(-event.deltaY * 0.0015));
+    if (event.ctrlKey || event.metaKey) {
+        // Ctrl + 滚轮 = 缩放（触控板双指捏合同样会带 ctrlKey）
+        c.zoomAt(localX, localY, c.zoom * Math.exp(-event.deltaY * 0.0015));
+        return;
+    }
+    // 普通滚轮 = 上下翻页：直接平移视口，不再缩放。
+    // deltaX 也一起吃掉，触控板的横向滑动同样变成平移
+    c.panX -= event.deltaX;
+    c.panY -= event.deltaY;
+    c.applyTransform();
+    c.scheduleViewport();
 };
 
 

@@ -173,7 +173,12 @@ function initialize(): void {
             // 隔着两次 IPC，拖滑杆时节点要滞后一拍才变（用户看到的就是
             // 「代码块最小宽度改了没反应，再动一下才生效」）。
             // settingsState 已在面板 commit 时更新过，这里直接重测重排。
-            if (key.startsWith('mindmap') && ctx.mindmapApp) {
+            // quickCard* 也是导图运行时设置（卡片栏开关），
+            // 只匹配 mindmap 前缀会让「快速卡片」分组拖滑杆没反应。
+            if (
+                (key.startsWith('mindmap') || key.startsWith('quickCard')) &&
+                ctx.mindmapApp
+            ) {
                 ctx.mindmapApp.setSettings(readMindmapSettings());
             }
         });

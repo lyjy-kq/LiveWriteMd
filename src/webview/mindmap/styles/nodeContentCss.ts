@@ -29,15 +29,18 @@ export const NODE_CONTENT_CSS = `
 /* 导图节点里的滚动条一律消失（bug 1：单元格右侧出现划不动的滑动栏——
    显示态内容截断交给节点 CSS，不需要任何滚动条）。
    编辑态允许盒内滚动但仍不显示条（拖内容即可滚）。 */
-.lwm-node * {
+.lwm-node *,
+.lwm-qcard * {
     scrollbar-width: none !important;
 }
-.lwm-node *::-webkit-scrollbar {
+.lwm-node *::-webkit-scrollbar,
+.lwm-qcard *::-webkit-scrollbar {
     display: none !important;
     width: 0 !important;
     height: 0 !important;
 }
-.lwm-node .cm-scroller {
+.lwm-node .cm-scroller,
+.lwm-qcard .cm-scroller {
     overflow: hidden !important;
 }
 .lwm-node.lwm-node-editing .cm-scroller {
@@ -46,7 +49,8 @@ export const NODE_CONTENT_CSS = `
 
 /* 导图节点的列表行不显示 rainbow indent 色带（bug 3；live 模式不受影响，
    色带是 plugin 写在行内样式里的线性渐变，这里按类压掉背景图） */
-.lwm-node .cm-md-indent {
+.lwm-node .cm-md-indent,
+.lwm-qcard .cm-md-indent {
     background-image: none !important;
 }
 
@@ -115,16 +119,6 @@ export const NODE_CONTENT_CSS = `
     border: none;
     box-shadow: none;
     border-radius: 0;
-}
-/* 高倍缩放条规则的「画布 + 高倍 + 节点」是 3 个类，
-   特异性高于上面 2 个类的媒体规则；放大到 150% 时媒体节点又会冒出
-   导图底色，所以这里要再用同等特异性压一次。 */
-.lwm-canvas.lwm-hi-zoom .lwm-node.lwm-node-code,
-.lwm-canvas.lwm-hi-zoom .lwm-node.lwm-node-table,
-.lwm-canvas.lwm-hi-zoom .lwm-node.lwm-node-image,
-.lwm-canvas.lwm-hi-zoom .lwm-node.lwm-node-math,
-.lwm-canvas.lwm-hi-zoom .lwm-node.lwm-node-mermaid {
-    background: transparent;
 }
 /* 代码块节点：上限 40 列 × 20 行；
    最小宽度走设置 mindmapCodeMinWidth（容器变量 --lwm-code-min-width） */
@@ -269,12 +263,14 @@ export const NODE_CONTENT_CSS = `
 }
 
 /* 性能监控浮层（设置「性能监控面板」开启）：画布右上角，半透明小字；
-   整体不接指针事件（不挡画布拖动），只有复制按钮可点 */
+   整体不接指针事件（不挡画布拖动），只有复制按钮可点。
+   z-index 必须低于右侧快速卡片栏（18）：卡片展开时会盖到右上角，
+   监控条不能压在卡片上面（用户要求卡片优先） */
 .lwm-perf-hud {
     position: absolute;
     top: 8px;
     right: 8px;
-    z-index: 45;
+    z-index: 17;
     padding: 5px 8px;
     border-radius: 6px;
     background: rgba(20, 24, 31, 0.82);

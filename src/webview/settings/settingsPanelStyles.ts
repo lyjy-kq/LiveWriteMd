@@ -189,6 +189,39 @@ export const PANEL_STYLES = `
 }
 .fms-nav-icon { width: 18px; text-align: center; }
 
+/* 二级导航：父分组可展开 / 收起，子分组缩进显示 */
+.fms-nav-btn--parent { font-weight: 500; }
+/* 当前选中项在它下面时给一点弱高亮，帮助一眼看出层级归属 */
+.fms-nav-btn--parent[data-child-active="true"] {
+    color: var(--vscode-list-activeSelectionForeground, inherit);
+}
+/* 展开箭头：用位移表示状态，不依赖额外的字体图标 */
+.fms-nav-caret {
+    margin-left: auto;
+    font-size: 10px;
+    opacity: 0.65;
+    transition: transform 0.15s ease;
+}
+.fms-nav-btn--parent[data-expanded="false"] .fms-nav-caret {
+    transform: rotate(-90deg);
+}
+/* 子项列表：左侧一条细引导线 + 缩进，沿用现有配色变量 */
+.fms-nav-children {
+    margin: 0 0 2px;
+    padding-left: 6px;
+    border-left: 1px solid var(--vscode-editorGroup-border, rgba(128,128,128,0.2));
+    margin-left: 17px;
+}
+.fms-nav-children[data-expanded="false"] { display: none; }
+.fms-nav-btn--child {
+    padding: 6px 8px 6px 10px;
+    font-size: 12.5px;
+}
+.fms-nav-btn--child .fms-nav-icon {
+    width: 16px;
+    font-size: 12px;
+}
+
 .fms-content {
     flex: 1 1 auto;
     overflow-y: auto;

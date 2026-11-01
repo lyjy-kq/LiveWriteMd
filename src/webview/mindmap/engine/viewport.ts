@@ -6,7 +6,7 @@
  * @module webview/mindmap/engine/viewport
  */
 
-import { HI_ZOOM_THRESHOLD, MAX_ZOOM, MIN_ZOOM, ZOOM_SETTLE_MS } from './canvasConstants.js';
+import { MAX_ZOOM, MIN_ZOOM, ZOOM_SETTLE_MS } from './canvasConstants.js';
 import type { MapCanvas } from './canvas.js';
 import { computeBounds } from './layout.js';
 import type { MapBounds } from './layout.js';
@@ -71,13 +71,8 @@ export function applyTransform(c: MapCanvas) : void {
     const panY = Math.round(c.panY * dpr) / dpr;
     c.worldEl.style.transform = `translate(${panX}px, ${panY}px)`;
     c.scalerEl.style.transform = `scale(${c.zoom})`;
-    // 高倍缩放下的阅读增强：只切一个 class，真正的「压底色」写在 CSS 里。
-    // 这里只在跨过阈值时动 DOM，平移/缩放的每一帧不会重复写 classList。
-    const hiZoom = c.zoom >= HI_ZOOM_THRESHOLD;
-    if (hiZoom !== c.hiZoomActive) {
-        c.hiZoomActive = hiZoom;
-        c.canvasEl.classList.toggle('lwm-hi-zoom', hiZoom);
-    }
+    // 注意：这里刻意不按缩放比例改任何视觉（以前 >=150% 会压淡节点底色，
+    // 用户觉得放大后像掉色，已取消）。缩放的每一帧只动 transform。
     // 视口框跟着动；重绘是合并的，拖动画布时也不会每帧都重画整棵树
     c.scheduleMinimap();
 }

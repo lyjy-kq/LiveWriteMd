@@ -10,6 +10,9 @@
       package  构建 + 打包出 .vsix，但不安装
       all      全部完成：构建 + 探针回归 + 打包 + 覆盖安装（探针挂了不出包）
       debug    构建 + 用 CLI 起一个独立的扩展开发宿主，并等调试端口就绪（F5 用这个）
+               启动前会先关掉上一轮留下的开发宿主窗口：VS Code 的 CLI 会复用
+               「extensionDevelopmentPath 相同」的旧窗口并 reload，reload 不会
+               打开这次 -File 指定的目录（表现为「F5 后窗口开了，目录没开」）。
       watch    只起增量构建（前台阻塞，改代码自动重编）
 
     package / install 打包前会自动把 package.json 的补丁版本号 +1
@@ -23,8 +26,9 @@
     build / install（默认）/ package / all / debug / watch，见上面的说明。
 
 .PARAMETER File
-    可选。用扩展开发宿主或已安装的 VS Code 打开某个 Markdown 文件，
+    可选。用扩展开发宿主或已安装的 VS Code 打开某个 Markdown 文件 / 目录，
     例如 -File .\README.md，省得自己再去点文件。
+    debug 模式不传时默认打开 $DefaultDebugFolder（见脚本里的常量）。
 
 .PARAMETER Port
     debug 模式下的扩展宿主调试端口（Node inspector），默认 9229。
@@ -112,6 +116,66 @@ try {
 
 # 仓库根目录 = scripts 目录的上一级
 $repoRoot = Split-Path -Parent $PSScriptRoot
+
+# debug 模式没显式给 -File 时默认打开的目录（日常调试验收用的笔记库）。
+# F5 的 tasks.json 也传同一个路径；要换验收对象，改这里 + tasks.json 两处，
+# 或者给脚本显式传 -File。
+$DefaultDebugFolder = 'C:\Users\pc\Desktop\code\work'
+
+# 把 -File 参数转成绝对路径。
+# 路径不存在时直接抛一句人话，而不是让 Resolve-Path 在
+# $ErrorActionPreference = 'Stop' 下抛一屏调用栈 —— 常见的触发场景是
+# 验收目录改名 / 挪盘后，.vscode/tasks.json 里的路径忘了跟着改。
+function Resolve-ExistingPath {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "要打开的路径不存在：$Path`n（-File 接受已存在的 .md 文件或目录，检查一下是不是目录改名或换了盘符。）"
+    }
+    return (Resolve-Path -LiteralPath $Path).Path
+}
+
+<#
+.SYNOPSIS
+    关掉已经开着的开发宿主窗口（debug 模式专用）。
+.DESCRIPTION
+    为什么要主动关：VS Code 的 CLI 在 openExtensionDevelopmentHostWindow 里
+    会先找「extensionDevelopmentPath 相同」的已有窗口，找到就 reload + focus
+    那个窗口，而不是新开一个 —— reload 时 CLI 只带 --disable-extensions，
+    位置参数（要打开的文件夹）被清空。结果就是：上一次 F5 留下的宿主还开着时，
+    这次 F5 只会把它刷新一下，`-File` 指定的目录根本不会打开。
+    先关掉旧宿主，保证每次 F5 都是「新窗口 + 指定目录」。
+.PARAMETER ExtensionPath
+    开发扩展的根目录（与 CLI 的 --extensionDevelopmentPath 对应）。
+#>
+function Close-ExistingDevHost {
+    param([Parameter(Mandatory)][string]$ExtensionPath)
+
+    $findHosts = {
+        Get-CimInstance Win32_Process -Filter "Name='Code.exe'" -ErrorAction SilentlyContinue |
+            Where-Object {
+                $cmd = $_.CommandLine
+                # 只认带 --extensionDevelopmentPath 的宿主进程；日常窗口的
+                # 命令行里没有这个参数，不会被误伤
+                $cmd -and
+                $cmd.IndexOf('--extensionDevelopmentPath', [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+                $cmd.IndexOf($ExtensionPath, [StringComparison]::OrdinalIgnoreCase) -ge 0
+            }
+    }
+
+    $hosts = @(& $findHosts)
+    if ($hosts.Count -eq 0) { return }
+
+    foreach ($proc in $hosts) {
+        Write-Host "==> 关闭旧的开发宿主窗口（PID $($proc.ProcessId)），让新目录能打开" -ForegroundColor Yellow
+        Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    # 等进程真正退出：否则下一个 Test-TcpPort 会认为端口还是旧的宿主占着
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadline -and @(& $findHosts).Count -gt 0) {
+        Start-Sleep -Milliseconds 200
+    }
+}
 
 <#
 .SYNOPSIS
@@ -378,7 +442,7 @@ function Invoke-Install {
         Write-Host "  Ctrl+Shift+P → Developer: Reload Window"
 
         if ($File) {
-            $target = (Resolve-Path -LiteralPath $File).Path
+            $target = Resolve-ExistingPath -Path $File
             Invoke-Native -Exe $codeCli -Arguments @($target) -What "打开 $target"
         }
 }
@@ -459,11 +523,44 @@ switch ($Mode) {
             '--disable-extensions',                              # 只加载开发中的扩展，排除其它插件干扰
             $inspectFlag                                         # 开调试端口，供调试器 attach
         )
+        # 没给 -File 就用默认验收目录；目录不存在时退回「什么都不打开」，
+        # 不要因为一个默认值把整个调试拉起流程卡死
+        if (-not $File -and (Test-Path -LiteralPath $DefaultDebugFolder)) {
+            $File = $DefaultDebugFolder
+        }
+        # 用 --folder-uri / --file-uri 而不是位置参数：开发宿主窗口在
+        # openExtensionDevelopmentHostWindow 里会显式读这两个选项，比位置参数
+        # 更不容易被 CLI 的转发 / 子命令解析吃掉。位置参数一旦丢了，VS Code
+        # 会退回「恢复上一次开发宿主的窗口」，表现成「F5 打开的是上次那个
+        # 文件（甚至已删除的 test.md），不是 -File 指定的目录」。
         if ($File) {
-            $devArgs += (Resolve-Path -LiteralPath $File).Path
+            $resolved = Resolve-ExistingPath -Path $File
+            $uri = ([System.Uri]$resolved).AbsoluteUri
+            if (Test-Path -LiteralPath $resolved -PathType Container) {
+                $devArgs += @('--folder-uri', $uri)
+            } else {
+                $devArgs += @('--file-uri', $uri)
+            }
         }
 
         Write-Host "调试端口：$Port" -ForegroundColor Yellow
+
+        # 先关掉上一轮还开着的开发宿主：CLI 会复用「extensionDevelopmentPath
+        # 相同」的窗口并 reload，而 reload 不会打开新的 -File 目录（见
+        # Close-ExistingDevHost 的说明），表现为「F5 后 VS Code 开了，但
+        # 指定目录没打开」。
+        Close-ExistingDevHost -ExtensionPath $repoRoot
+
+        # 清掉开发宿主的窗口状态。开发宿主没有开文件夹时用的是 VS Code 的
+        # 「空窗口」工作区存储（workspaceStorage/ext-dev），VS Code 会按它
+        # 恢复上次打开的编辑器 —— 用户之前打开过的 test.md 已经删掉了，F5
+        # 后却还在恢复它，看起来就像「F5 打开的是 test.md，不是指定目录」。
+        # 宿主已经被上面关掉了，这个目录此刻没有进程在用，删掉让窗口干净重开。
+        $devHostStorage = Join-Path $env:APPDATA 'Code\User\workspaceStorage\ext-dev'
+        if (Test-Path -LiteralPath $devHostStorage) {
+            Write-Host "==> 清掉开发宿主上次的窗口状态（避免恢复已删除的旧文件）" -ForegroundColor Yellow
+            Remove-Item -LiteralPath $devHostStorage -Recurse -Force -ErrorAction SilentlyContinue
+        }
 
         # 启动前先记下端口是不是被上一轮的调试宿主占着。
         # 如果已经开着，code 命令会复用那个实例并 reload 开发宿主窗口：

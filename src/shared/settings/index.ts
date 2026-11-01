@@ -48,9 +48,33 @@ export const SETTINGS_SCHEMA: SettingSection[] = [
     ...MINDMAP_SECTIONS,
 ];
 
-/** 全部设置项（扁平），按 schema 顺序。 */
-export const ALL_SETTING_ITEMS: SettingItem[] = SETTINGS_SCHEMA.flatMap(
-    (section) => section.items
+/**
+ * 收集叶子分组（真正承载 items 的分组）。
+ *
+ * schema 支持一层嵌套：父分组只有 children，自身不放设置项。
+ * 面板导航、搜索、跳转都以叶子为准，所以这里递归摊平一遍；
+ * 虽然目前只有一层，写成递归也让以后加深层级时不用改调用方。
+ */
+function collectLeafSections(sections: SettingSection[]): SettingSection[] {
+    const leaves: SettingSection[] = [];
+    for (const section of sections) {
+        if (section.children && section.children.length > 0) {
+            leaves.push(...collectLeafSections(section.children));
+        } else {
+            leaves.push(section);
+        }
+    }
+    return leaves;
+}
+
+/** 全部叶子分组（扁平，按面板展示顺序）。 */
+export const SETTING_SECTIONS_FLAT: SettingSection[] = collectLeafSections(
+    SETTINGS_SCHEMA
+);
+
+/** 全部设置项（扁平），按 schema 顺序；children 里的项也会算进来。 */
+export const ALL_SETTING_ITEMS: SettingItem[] = SETTING_SECTIONS_FLAT.flatMap(
+    (section) => section.items ?? []
 );
 
 /** key -> SettingItem 查找表。 */

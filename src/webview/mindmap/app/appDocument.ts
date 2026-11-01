@@ -14,10 +14,16 @@ import { renameNode } from '.././edit/rename.js';
 import type { MapNode } from '.././engine/model.js';
 import type { MindMapTreeNode, NodeLineRange } from '.././types.js';
 
-/** 更新 markdown 并同步按行缓存。 */
+/**
+ * 更新 markdown 并同步按行缓存。
+ *
+ * 所有导图操作与外部更新最终都汇到这里，顺手刷新右边界快速卡片栏：
+ * 卡片内容直接写在文档里，不经过导图树，只有重新解析文本才知道增删改。
+ */
 export function setMarkdown(app: MindMapApp, text: string): void {
     app.markdown = text;
     app.markdownLines = text.split('\n');
+    app.quickCards?.refresh(text);
 }
 
 /** 按主题设置解析实际明暗。 */

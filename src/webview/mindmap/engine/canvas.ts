@@ -89,10 +89,29 @@ export interface MapCanvasOptions {
     onExpandChange(uid: string, expanded: boolean, recursive: boolean): void;
     /** 拖动结束且落点合法。 */
     onDrop(payload: DropPayload): void;
+    /**
+     * 拖动中指针是否落在右侧快速卡片的投放区（屏幕坐标）。
+     *
+     * 拖到侧边时不再高亮树内落点，松手交给 onDropToRail。
+     */
+    isDragOverRail?(clientX: number, clientY: number): boolean;
+    /**
+     * 节点被拖到侧边投放区松手：转成一张快速卡片。
+     *
+     * 带松手坐标：侧边栏按它决定插到第几张卡片的位置。
+     */
+    onDropToRail?(dragUid: string, clientX: number, clientY: number): void;
     /** 视口平移/缩放/布局变化（工具条跟随）。 */
     onViewChange(): void;
     /** 落点预校验（类型规则由上层决定；返回 false 不高亮）。 */
     canDrop?(dragUid: string, parentUid: string): boolean;
+    /**
+     * 外部内容（快速卡片）落点预校验：父节点能不能收下它。
+     *
+     * 卡片不是树节点，没有 dragUid 可查，因此单独给一条规则；
+     * 预览高亮与实际插入（insertSubtreeFromText）必须用同一口径。
+     */
+    canDropExternal?(parentUid: string): boolean;
     /**
      * Ctrl + 拖拽框选的结果（每次移动都会回调，松手后保留）。
      *
@@ -186,6 +205,16 @@ interface DragState {
     originY: number;
     candidate: DropCandidate | null;
     pointerId: number;
+    /**
+     * 指针当前是否落在右侧快速卡片的投放区上（由上层判定）。
+     *
+     * 落在投放区时不按「树内换父节点」处理，松手转成快速卡片
+     * （见 finishDrag 的 onDropToRail）。
+     */
+    overRail?: boolean;
+    /** 拖动中指针最后的屏幕坐标（松手时给侧边栏算插入位置用）。 */
+    lastClientX?: number;
+    lastClientY?: number;
 }
 
 /** 显示实例缓存条目。 */
@@ -350,8 +379,6 @@ export class MapCanvas {
     public lastWheelTime = 0;
     /** 滚轮缩放结束后撤掉缩放层提升的定时器（null = 没排队）。 */
     public zoomTimer: ReturnType<typeof setTimeout> | null = null;
-    /** 当前是否处于「高倍缩放」（canvas 上挂着 lwm-hi-zoom）。 */
-    public hiZoomActive = false;
     /**
      * 手势期间是否放弃合成层提升（设置：「手势期间保持清晰」）。
      * false = 现状：拖动/缩放时临时提升，帧率优先。
@@ -519,6 +546,10 @@ export class MapCanvas {
     public stopAutoPan() : void { return pointer.stopAutoPan(this); }
     public updateDropCandidate(clientX: number, clientY: number) : void { return pointer.updateDropCandidate(this, clientX, clientY); }
     public canDrop(dragUid: string, parentUid: string) : boolean { return pointer.canDrop(this, dragUid, parentUid); }
+    // 外部拖动（快速卡片 → 画布）：与节点拖动同一套落点（子节点 / 兄弟间隙）
+    public previewExternalDrop(clientX: number, clientY: number) : DropCandidate | null { return pointer.previewExternalDrop(this, clientX, clientY); }
+    public externalDropCandidate(clientX: number, clientY: number) : DropCandidate | null { return pointer.externalDropCandidate(this, clientX, clientY); }
+    public clearExternalDrop() : void { return pointer.clearExternalDrop(this); }
     public handlePointerUp(event: PointerEvent, fromWindow = false) : void { return pointer.handlePointerUp(this, event, fromWindow); }
     public handlePointerCancel(event: PointerEvent) : void { return pointer.handlePointerCancel(this, event); }
     public finishDrag() : void { return pointer.finishDrag(this); }

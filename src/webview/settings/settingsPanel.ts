@@ -15,6 +15,7 @@
 
 import {
     SETTINGS_SCHEMA,
+    SETTING_SECTIONS_FLAT,
     ALL_SETTING_ITEMS,
     type SettingItem,
     type SettingSection,
@@ -51,8 +52,13 @@ class SettingsPanelImpl {
     private resetAllBtn: HTMLButtonElement;
     /** 「已应用 / 已恢复」提示。 */
     private applyHint: HTMLElement;
-    /** 当前选中分组 id。 */
+    /** 当前选中分组 id（始终是叶子分组：带 children 的父项只负责导航）。 */
     private activeSection = SETTINGS_SCHEMA[0].id;
+    /**
+     * 二级导航里已展开的父分组 id。
+     * 默认全部展开，保持原来「一眼看到所有分组」的浏览习惯；用户可以单个收起。
+     */
+    private expandedParents = new Set<string>();
     /** 当前搜索词（空串 = 正常分组视图）。 */
     private query = '';
     /** 持久化回调。 */
@@ -159,6 +165,14 @@ class SettingsPanelImpl {
             if (e.key === 'Escape') this.close();
         });
 
+        // 父分组默认展开：导航项不多，展开后所有叶子一眼可见，
+        // 和拆分前的单层导航体验一致（之后仍可手动收起）。
+        for (const section of SETTINGS_SCHEMA) {
+            if ((section.children?.length ?? 0) > 0) {
+                this.expandedParents.add(section.id);
+            }
+        }
+
         this.buildNav();
     }
 
@@ -174,33 +188,149 @@ class SettingsPanelImpl {
         this.onChange = onChange;
     }
 
-    /** 构建左侧分组导航。 */
+    /** 构建左侧分组导航（支持一层二级菜单）。 */
     private buildNav(): void {
         for (const section of SETTINGS_SCHEMA) {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'fms-nav-btn';
-            btn.innerHTML = `<span class="fms-nav-icon">${section.icon}</span><span>${section.label}</span>`;
-            btn.title = section.description ?? section.label;
-            btn.addEventListener('click', () => {
-                this.activeSection = section.id;
-                this.clearSearch();
-                this.syncNavActive();
-                this.buildContent();
-            });
-            this.navEl.appendChild(btn);
+            if ((section.children?.length ?? 0) === 0) {
+                // 普通叶子分组：和以前一样直接一个按钮
+                this.navEl.appendChild(this.buildNavButton(section, false));
+                continue;
+            }
+
+            // 父分组：按钮 + 缩进的子分组列表，整组包一层便于收起 / 展开
+            const group = document.createElement('div');
+            group.className = 'fms-nav-group';
+
+            const parentBtn = document.createElement('button');
+            parentBtn.type = 'button';
+            parentBtn.className = 'fms-nav-btn fms-nav-btn--parent';
+            parentBtn.dataset.parentId = section.id;
+            parentBtn.title = section.description ?? section.label;
+            parentBtn.innerHTML = `
+                <span class="fms-nav-icon">${section.icon}</span>
+                <span class="fms-nav-label">${section.label}</span>
+                <span class="fms-nav-caret" aria-hidden="true">▾</span>
+            `;
+            parentBtn.addEventListener('click', () => this.toggleParent(section));
+
+            const childrenWrap = document.createElement('div');
+            childrenWrap.className = 'fms-nav-children';
+            childrenWrap.dataset.childrenOf = section.id;
+            for (const child of section.children ?? []) {
+                childrenWrap.appendChild(this.buildNavButton(child, true));
+            }
+
+            group.appendChild(parentBtn);
+            group.appendChild(childrenWrap);
+            this.navEl.appendChild(group);
+        }
+        this.syncNavActive();
+    }
+
+    /** 创建单个分组按钮；child 为 true 时加缩进样式。 */
+    private buildNavButton(section: SettingSection, child: boolean): HTMLButtonElement {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `fms-nav-btn${child ? ' fms-nav-btn--child' : ''}`;
+        btn.dataset.sectionId = section.id;
+        btn.innerHTML = `<span class="fms-nav-icon">${section.icon}</span><span class="fms-nav-label">${section.label}</span>`;
+        btn.title = section.description ?? section.label;
+        btn.addEventListener('click', () => {
+            this.activeSection = section.id;
+            // 搜索态下点导航 = 退出搜索并看该分组
+            this.clearSearch();
+            this.expandAncestors(section.id);
+            this.syncNavActive();
+            this.buildContent();
+        });
+        return btn;
+    }
+
+    /** 父分组的全部叶子 id（用于判断当前选中项是否在某个父项下）。 */
+    private leafIdsOf(section: SettingSection): string[] {
+        const ids: string[] = [];
+        for (const child of section.children ?? []) {
+            if ((child.children?.length ?? 0) > 0) {
+                ids.push(...this.leafIdsOf(child));
+            } else {
+                ids.push(child.id);
+            }
+        }
+        return ids;
+    }
+
+    /** 展开某个叶子所属的父分组（搜索跳转、程序选中时用）。 */
+    private expandAncestors(sectionId: string): void {
+        for (const section of SETTINGS_SCHEMA) {
+            if ((section.children?.length ?? 0) === 0) continue;
+            if (this.leafIdsOf(section).includes(sectionId)) {
+                this.expandedParents.add(section.id);
+            }
         }
     }
 
-    /** 同步导航高亮。 */
+    /** 点击父分组：展开 / 收起；首次展开时顺手选中第一个子分组。 */
+    private toggleParent(section: SettingSection): void {
+        const wasSearching = this.query !== '';
+        const expanding = !this.expandedParents.has(section.id);
+        let contentChanged = false;
+        if (expanding) {
+            this.expandedParents.add(section.id);
+            // 当前内容不在这个父项下时，点一下就该有内容可看；
+            // 已在其中某个子分组时只展开，不打断用户当前所在位置。
+            const leafIds = this.leafIdsOf(section);
+            if (!leafIds.includes(this.activeSection) && leafIds.length > 0) {
+                this.activeSection = leafIds[0];
+                contentChanged = true;
+            }
+        } else {
+            this.expandedParents.delete(section.id);
+        }
+        // 点父项也是导航动作：搜索态下顺便退出搜索，回到分组视图
+        if (wasSearching) {
+            this.clearSearch();
+            contentChanged = true;
+        }
+        if (contentChanged) this.buildContent();
+        this.syncNavActive();
+    }
+
+    /** 同步导航高亮与展开态。 */
     private syncNavActive(): void {
-        const buttons = this.navEl.querySelectorAll('.fms-nav-btn');
-        SETTINGS_SCHEMA.forEach((section, index) => {
-            buttons[index].setAttribute(
+        // 叶子按钮：只有等于 activeSection 的那个高亮
+        for (const btn of this.navEl.querySelectorAll<HTMLElement>('[data-section-id]')) {
+            btn.setAttribute(
                 'data-active',
-                String(section.id === this.activeSection)
+                String(btn.dataset.sectionId === this.activeSection)
             );
-        });
+        }
+        // 父按钮：展开箭头方向；当前项在其下时给一点弱高亮，帮助定位层级
+        for (const btn of this.navEl.querySelectorAll<HTMLElement>('.fms-nav-btn--parent')) {
+            const id = btn.dataset.parentId ?? '';
+            const section = SETTINGS_SCHEMA.find((s) => s.id === id);
+            btn.setAttribute('data-expanded', String(this.expandedParents.has(id)));
+            btn.setAttribute(
+                'data-child-active',
+                String(section ? this.leafIdsOf(section).includes(this.activeSection) : false)
+            );
+        }
+        // 子分组容器：收起时整段隐藏
+        for (const wrap of this.navEl.querySelectorAll<HTMLElement>('.fms-nav-children')) {
+            const id = wrap.dataset.childrenOf ?? '';
+            wrap.setAttribute('data-expanded', String(this.expandedParents.has(id)));
+        }
+    }
+
+    /**
+     * 找到叶子分组所属的父分组名（没有父分组时 undefined）。
+     * 搜索匹配和结果 chip 的定位都基于叶子，父名只用来扩大匹配面。
+     */
+    private parentLabelOf(sectionId: string): string | undefined {
+        for (const section of SETTINGS_SCHEMA) {
+            if ((section.children?.length ?? 0) === 0) continue;
+            if (this.leafIdsOf(section).includes(sectionId)) return section.label;
+        }
+        return undefined;
     }
 
     /** 清空搜索词（不重建内容，调用方决定何时 buildContent）。 */
@@ -222,15 +352,19 @@ class SettingsPanelImpl {
             return;
         }
 
+        // 内容区只渲染叶子分组；activeSection 永远指向叶子 id
         const section =
-            SETTINGS_SCHEMA.find((s) => s.id === this.activeSection) ?? SETTINGS_SCHEMA[0];
+            SETTING_SECTIONS_FLAT.find((s) => s.id === this.activeSection) ??
+            SETTING_SECTIONS_FLAT[0];
         // 新手引导只放在第一个分组：首次打开面板就能看到，又不占其它分组的视野
         if (section.id === SETTINGS_SCHEMA[0].id) {
             const guide = this.buildGuide();
             if (guide) this.contentEl.appendChild(guide);
         }
         this.contentEl.appendChild(this.buildSectionHead(section));
-        for (const item of section.items) {
+        for (const item of section.items ?? []) {
+            // hidden 项只做持久化，界面由别处（如卡片拖宽）直接操作
+            if (item.hidden) continue;
             this.contentEl.appendChild(this.buildRow(item));
         }
     }
@@ -309,9 +443,19 @@ class SettingsPanelImpl {
     private buildSearchResults(): void {
         const query = this.query.toLowerCase();
         const matches: Array<{ section: SettingSection; item: SettingItem }> = [];
-        for (const section of SETTINGS_SCHEMA) {
-            for (const item of section.items) {
-                const haystack = [item.label, item.description, item.key, section.label]
+        // 搜索跨全部叶子分组；把父分组名也拼进匹配文本，
+        // 这样搜「思维导图」也能把其下四个子分组的项都带出来。
+        for (const section of SETTING_SECTIONS_FLAT) {
+            const parentLabel = this.parentLabelOf(section.id);
+            for (const item of section.items ?? []) {
+                if (item.hidden) continue;
+                const haystack = [
+                    item.label,
+                    item.description,
+                    item.key,
+                    section.label,
+                    parentLabel,
+                ]
                     .filter(Boolean)
                     .join('\n')
                     .toLowerCase();
@@ -482,6 +626,8 @@ class SettingsPanelImpl {
     private revealItem(sectionId: string, key: string): void {
         this.activeSection = sectionId;
         this.clearSearch();
+        // 目标叶子在收起的父分组里时先展开，否则用户看不到导航高亮
+        this.expandAncestors(sectionId);
         this.syncNavActive();
         this.buildContent();
         const row = this.contentEl.querySelector<HTMLElement>(

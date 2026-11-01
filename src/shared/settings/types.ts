@@ -52,12 +52,26 @@ export interface SettingItem {
     /** 文本输入占位提示。 */
     placeholder?: string;
     /**
+     * 不在设置面板里显示（仍写入 package.json / 参与默认值与持久化）。
+     *
+     * 用于「只在界面上直接操作、但需要记住值」的设置，
+     * 例如快速卡片的宽度：拖动卡片左边界调，面板里不再放滑杆。
+     */
+    hidden?: boolean;
+    /**
      * 滑块在某个特殊值时显示的文字（如 readableLineLength=0 显示「不限」）。
      */
     valueLabels?: Array<{ value: number; label: string }>;
 }
 
-/** 设置分组。 */
+/**
+ * 设置分组。
+ *
+ * 支持一层嵌套：带 `children` 的分组只作为左侧导航的「父项」（可展开 / 收起），
+ * 本身不放设置项；真正承载 `items` 的是它的子分组（叶子）。
+ * 这样「思维导图」这种项很多的分组可以再按语义拆分，而导航层级、搜索跳转
+ * 仍然以叶子分组为准 —— 面板的 activeSection 始终是叶子 id。
+ */
 export interface SettingSection {
     /** 分组标识。 */
     id: string;
@@ -70,6 +84,14 @@ export interface SettingSection {
      * 一句话讲清「这一组影响什么」，新手据此判断该去哪个分组找。
      */
     description?: string;
-    /** 组内设置项。 */
-    items: SettingItem[];
+    /**
+     * 组内设置项。
+     * 有 children 的父分组可以省略（或留空），此时它只负责导航归组。
+     */
+    items?: SettingItem[];
+    /**
+     * 子分组（仅一层）。
+     * 父分组本身不直接展示设置项，点击展开后在导航里缩进显示子分组。
+     */
+    children?: SettingSection[];
 }

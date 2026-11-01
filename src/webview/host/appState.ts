@@ -76,6 +76,9 @@ export function readMindmapSettings(): MindMapRuntimeSettings {
         // 性能监测浮层：只认三个合法值，其它（含旧 boolean 配置）一律关闭
         mindmapPerfMonitor:
             perfMonitor === 'minimal' || perfMonitor === 'full' ? perfMonitor : 'off',
+        // 快速卡片：开关 + 宽高（0 视为没读到，回退 schema 默认值）
+        quickCardEnabled: settingsState.getBoolean('quickCardEnabled'),
+        quickCardWidth: settingsState.getNumber('quickCardWidth') || 280,
     };
 }
 
@@ -190,6 +193,13 @@ export async function enterMindmapMode(): Promise<void> {
             // 迭代 N3：导图导出 → extension 存盘
             onExport: (payload) => {
                 ctx.vscode.postMessage({ type: 'saveMindmapExport', ...payload });
+            },
+            // 画布上改的设置（拖动快速卡片左边界 = quickCardWidth）：
+            // 先写本地 settingsState（下次 readMindmapSettings 拿得到），
+            // 再走设置面板同一条 UPDATE_SETTING 通道落盘
+            onPersistSetting: (key, value) => {
+                settingsState.set(key, value);
+                ctx.vscode.postMessage({ type: MESSAGE_TYPES.UPDATE_SETTING, key, value });
             },
         });
         ctx.mindmapApp.setTheme(ctx.currentTheme);

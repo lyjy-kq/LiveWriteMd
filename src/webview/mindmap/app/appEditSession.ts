@@ -8,6 +8,7 @@
 
 import type { MindMapApp } from '../mindmapApp.js';
 import { addChildNode, addSiblingNode } from '.././edit/add.js';
+import { NEW_NODE_TEXT } from '.././edit/shared.js';
 import { isMediaKind, renameNode } from '.././edit/rename.js';
 import { MapCanvas } from '.././engine/canvas.js';
 import type { MapNode } from '.././engine/model.js';
@@ -22,8 +23,16 @@ import { TEXT_NODE_KINDS, type EditSession, type SplitCapture } from '../mindmap
  * @param uid 节点 uid
  * @param x 触发点击的视口 X（键盘入口无坐标）
  * @param y 触发点击的视口 Y
+ * @param selectPlaceholder 新建节点时自动全选占位文字（「分支主题」），
+ *        这样直接打字就能替换掉它，不用先手动删
  */
-export function startEdit(app: MindMapApp, uid: string, x?: number, y?: number) : void {
+export function startEdit(
+    app: MindMapApp,
+    uid: string,
+    x?: number,
+    y?: number,
+    selectPlaceholder = false
+) : void {
     const node = app.canvas.getNode(uid);
     if (!node || node.kind === 'root') return;
     if (app.editSession?.uid === uid) {
@@ -124,6 +133,19 @@ export function startEdit(app: MindMapApp, uid: string, x?: number, y?: number) 
             }
         }
         display.focusAt(x, y);
+        // 新建节点的占位文字整体选中：接着敲字就是替换，而不是接在
+        // 「分支主题」后面。只认占位文字 —— 拆分到新节点时搬过来的
+        // 是用户自己的文字，不要动它的选区（focusAt 落在文末即可）。
+        // 选区长度用 getText()（不含媒体节点的哨兵换行），避免把
+        // 结构性的末尾换行一起选中。
+        if (selectPlaceholder) {
+            const text = display.getText();
+            if (text === NEW_NODE_TEXT) {
+                display.view.dispatch({
+                    selection: EditorSelection.single(0, text.length),
+                });
+            }
+        }
     });
 }
 
@@ -328,6 +350,9 @@ export function captureSplitSelection(app: MindMapApp) : SplitCapture | null {
     // 从中剪一段走只会得到一截坏语法。
     if (!session || !TEXT_NODE_KINDS.has(session.kind)) return null;
     if (session.display.destroyed) return null;
+    // 新建节点的占位文字是自动全选的，不是用户主动选的：
+    // 这时别弹「拆分」（把「分支主题」拆出去没有意义）
+    if (session.display.getText() === NEW_NODE_TEXT) return null;
     const sel = session.display.view.state.selection.main;
     if (sel.empty) return null;
     const text = session.display.view.state
