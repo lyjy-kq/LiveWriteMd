@@ -37,6 +37,7 @@ import {
     handleWebviewMessage as handleWebviewMessageImpl,
     getSavedOutlinePanelWidth,
 } from './providerMessages.js';
+import { applyFullText } from './documentWriteback.js';
 import { getThemeType } from './themeType.js';
 
 // mindmapPanelManager 等历史调用方从本模块取 getThemeType，保持 re-export 不变
@@ -538,11 +539,9 @@ export class LiveWriteMdEditorProvider implements vscode.CustomTextEditorProvide
         document: vscode.TextDocument,
         content: string
     ): Promise<boolean> {
-        const edit = new vscode.WorkspaceEdit();
-
-        // Replace the entire document content
-        edit.replace(document.uri, new vscode.Range(0, 0, document.lineCount, 0), content);
-
-        return vscode.workspace.applyEdit(edit);
+        // 整篇替换 + 版本号被钉死时的兜底重试，实现见 documentWriteback.ts。
+        // 外部改过文件后扩展宿主的文档版本号可能过期，普通 applyEdit 会被
+        // 整笔拒绝（has changed in the meantime），这里负责自愈。
+        return applyFullText(document.uri, content);
     }
 }

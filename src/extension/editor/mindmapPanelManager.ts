@@ -19,6 +19,7 @@ import { ConfigManager } from './configManager.js';
 import type { SettingValue } from '../../shared/settings/index.js';
 import { getMindmapPanelHtml } from './webviewContent.js';
 import { getThemeType } from './editorProvider.js';
+import { applyFullText } from './documentWriteback.js';
 import { saveMindmapExport } from '../export/mindmapExport.js';
 import { Logger } from '../logger.js';
 
@@ -170,14 +171,13 @@ export class MindmapPanelManager implements vscode.Disposable {
                 // 先记账再 applyEdit：随后的 onDidChangeTextDocument 据此跳过回推
                 entry.lastIncomingContent = message.content;
                 try {
-                    const document = await vscode.workspace.openTextDocument(entry.uri);
-                    const edit = new vscode.WorkspaceEdit();
-                    edit.replace(
-                        document.uri,
-                        new vscode.Range(0, 0, document.lineCount, 0),
-                        message.content
-                    );
-                    await vscode.workspace.applyEdit(edit);
+                    // 整篇替换 + 版本钉死时的兜底（见 documentWriteback.ts）
+                    if (!(await applyFullText(entry.uri, message.content))) {
+                        Logger.error(`Mindmap panel writeback rejected: ${entry.uri.fsPath}`);
+                        await vscode.window.showErrorMessage(
+                            'LiveWriteMD: 导图编辑写回文档失败，请重试。'
+                        );
+                    }
                 } catch (error) {
                     Logger.error(
                         `Mindmap panel writeback failed: ${entry.uri.fsPath}`,
@@ -199,13 +199,14 @@ export class MindmapPanelManager implements vscode.Disposable {
                 try {
                     const document = await vscode.workspace.openTextDocument(entry.uri);
                     if (document.getText() !== message.content) {
-                        const edit = new vscode.WorkspaceEdit();
-                        edit.replace(
-                            document.uri,
-                            new vscode.Range(0, 0, document.lineCount, 0),
-                            message.content
-                        );
-                        await vscode.workspace.applyEdit(edit);
+                        // 写回失败就**不能**继续 save()：那会把旧内容写盘
+                        if (!(await applyFullText(document.uri, message.content))) {
+                            Logger.error(`Mindmap panel save rejected: ${entry.uri.fsPath}`);
+                            await vscode.window.showErrorMessage(
+                                'LiveWriteMD: 导图保存失败，请重试。'
+                            );
+                            return;
+                        }
                     }
                     await document.save();
                 } catch (error) {
