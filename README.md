@@ -327,8 +327,8 @@ pnpm package:vsix     # 生成固定文件名的安装包 livewrite-md<版本>.v
 
 ## 🔗 仓库与反馈
 
-- GitHub: [lyjy-kq/livewrite-md-forvscode](https://github.com/lyjy-kq/livewrite-md-forvscode)
-- 问题与建议：[提交 Issue](https://github.com/lyjy-kq/livewrite-md-forvscode/issues)
+- GitHub: [lyjy-kq/LiveWriteMd](https://github.com/lyjy-kq/LiveWriteMd)
+- 问题与建议：[提交 Issue](https://github.com/lyjy-kq/LiveWriteMd/issues)
 - 宣传海报（A4，可直接打印或导出 PNG）：[assets/posters/](assets/posters/)
 
 如果 LiveWriteMD 让你的写作顺手了一点，欢迎在 GitHub 点一个 ⭐。

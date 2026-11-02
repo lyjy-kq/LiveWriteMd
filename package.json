@@ -2,17 +2,17 @@
   "name": "livewrite-md",
   "displayName": "LiveWriteMD",
   "description": "WYSIWYG Markdown editor for VS Code with Obsidian-style live preview. Tables, Mermaid diagrams, KaTeX math, code block syntax highlighting, and full IME support.",
-  "version": "0.0.27",
+  "version": "0.0.29",
   "publisher": "lyjy",
   "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
-    "url": "https://github.com/lyjy-kq/livewrite-md-forvscode"
+    "url": "https://github.com/lyjy-kq/LiveWriteMd"
   },
   "bugs": {
-    "url": "https://github.com/lyjy-kq/livewrite-md-forvscode/issues"
+    "url": "https://github.com/lyjy-kq/LiveWriteMd/issues"
   },
-  "homepage": "https://github.com/lyjy-kq/livewrite-md-forvscode#readme",
+  "homepage": "https://github.com/lyjy-kq/LiveWriteMd#readme",
   "engines": {
     "vscode": "^1.85.0"
   },
