@@ -24,6 +24,91 @@ import type { MindMapTreeNode, NodeLineRange } from '../types.js';
 
 
 /**
+ * 拼接多块行：块之间按需插入**恰好一个**空行。
+ *
+ * 直接 flat 拼块会丢掉块间空行：段落粘成一段、表格紧贴上一段就认不出；
+ * 而块自身的区间可能带着手写的首尾空行，直接拼又会叠出 3 行以上空行。
+ * 所以先裁掉每块的首尾空行，再统一补一个分隔空行。
+ *
+ * 只处理「块与块」：列表项和它的子块在树里本来就是同一块的行区间，
+ * 不会走到这里，因此不会把列表拆开。
+ *
+ * @param blocks 各块的行数组（按目标顺序）
+ * @param blankSeparated 块之间是否补空行（列表项之间不能补）
+ */
+function joinBlocks(blocks: string[][], blankSeparated: boolean): string[] {
+    const out: string[] = [];
+    for (const block of blocks) {
+        // 裁掉块首尾的空行：块间空行统一由本函数负责，避免叠加
+        let from = 0;
+        let to = block.length;
+        while (from < to && block[from].trim() === '') from += 1;
+        while (to > from && block[to - 1].trim() === '') to -= 1;
+        // 整块都是空行：直接跳过，别凭空留下孤立的空行
+        if (from >= to) continue;
+        if (out.length > 0 && blankSeparated) out.push('');
+        out.push(...block.slice(from, to));
+    }
+    return out;
+}
+
+
+/**
+ * 把插入点两侧紧挨着的连续空行各收成一个，返回修正后的插入点。
+ *
+ * `insertBlockLines` 只在相邻行**非空**时补空行：插入点周围本来就有的
+ * 多个空行会原样保留，插完就变成「两个空行」（3 个以上换行）。
+ * 这里只动紧挨插入点的空行，远处文档的排版不受影响。
+ *
+ * @param lines 可变的全文行数组
+ * @param at 计划插入的行位置
+ * @returns 删除多余空行后的插入位置
+ */
+function limitAdjacentBlankLines(lines: string[], at: number): number {
+    let pos = at;
+    // 前侧：保留紧挨插入点的 1 个空行，多余的删掉
+    let before = pos;
+    while (before > 0 && (lines[before - 1] ?? '').trim() === '') before -= 1;
+    if (pos - before > 1) {
+        lines.splice(before + 1, pos - before - 1);
+        pos = before + 1;
+    }
+    // 后侧：同理（后侧为空 / 非空时不处理）
+    let after = pos;
+    while (after < lines.length && (lines[after] ?? '').trim() === '') after += 1;
+    if (after - pos > 1) {
+        lines.splice(pos + 1, after - pos - 1);
+    }
+    return pos;
+}
+
+
+/**
+ * 取标题节点自身区间里「标题标记之后」的续行。
+ *
+ * 树节点不单独保存标题续行：treeBuilder 把紧挨标题的段落并进了
+ * `_selfLineRange`，而 `data.text` 只有标题文字本身。粘贴到列表时
+ * 必须把续行找回来，否则标题格子里按 Enter 写的正文会丢。
+ *
+ * setext 标题占两行（文字行 + `===`/`---` 下划线），两行都要跳过。
+ */
+function headingContinuationLines(selfLines: string[]): string[] {
+    if (selfLines.length === 0) return [];
+    const first = selfLines[0] ?? '';
+    let markupLines = 1;
+    // 非 ATX 才可能是 setext：第二行是纯下划线
+    if (
+        !/^\s*#{1,6}(?:\s|$)/.test(first) &&
+        selfLines.length > 1 &&
+        /^\s*(?:=+|-+)\s*$/.test(selfLines[1])
+    ) {
+        markupLines = 2;
+    }
+    return selfLines.slice(markupLines);
+}
+
+
+/**
  * §6.5 提取选中子树的纯 Markdown 文本（复制 / 剪切的剪贴板内容）。
  *
  * 规则：
@@ -64,6 +149,9 @@ export function extractSubtreeText(
     const blocks = kept.map((range) => {
         const block = lines.slice(range.from, range.to + 1);
         const nonEmpty = block.filter((line) => line.trim() !== '');
+        // 整块都是空行（理论上不会有，保险）：直接当空块丢掉，
+        // 否则 Math.min() 得到 Infinity，reindentLines 会做无意义的去缩进
+        if (nonEmpty.length === 0) return [];
         const indent = Math.min(...nonEmpty.map((line) => listIndentOf(line)));
         return indent > 0 ? reindentLines(block, -indent) : block;
     });
@@ -125,9 +213,22 @@ export function insertSubtreeFromText(
         return clipLines.slice(range.fromLine, range.toLine + 1);
     };
 
+    /** 取 clip 子节点**自身**的源码行块（不含子节点，标题续行靠它）。 */
+    const selfBlockOf = (node: MindMapTreeNode): string[] => {
+        const range = node.data._selfLineRange as NodeLineRange | undefined;
+        if (!range) return [];
+        return clipLines.slice(range.fromLine, range.toLine + 1);
+    };
+
     /** 把一块行插进 lines（走 insertBlockLines 的空行规约）。 */
     const applyInsert = (at: number, block: string[], blankSeparated: boolean): void => {
-        const next = insertBlockLines(lines, at, block, blankSeparated, lines.join('\n'));
+        // 空块直接跳过：insertBlockLines 仍会在空白分隔模式下补空行，
+        // 结果是在插入点凭空多出一行空白，把文档写脏
+        if (block.length === 0) return;
+        // 空行分隔时，先把插入点两侧原有的多余空行收成一个，
+        // 再让 insertBlockLines 补齐缺失的那一个（前后各恰好一行空白）
+        const pos = blankSeparated ? limitAdjacentBlankLines(lines, at) : at;
+        const next = insertBlockLines(lines, pos, block, blankSeparated, lines.join('\n'));
         lines.length = 0;
         lines.push(...next);
     };
@@ -144,12 +245,14 @@ export function insertSubtreeFromText(
         const bodyBlocks = clipChildren
             .filter((c) => c.data._kind !== 'heading')
             .map(blockOf);
-        for (const block of headBlocks) {
-            applyInsert(lines.length, block, true);
+        // 块与块之间统一一个空行（段落 / 表格 / 引用 / 列表都是不同块），
+        // 否则段落会粘成一段、表格紧贴上一段会失效
+        if (headBlocks.length > 0) {
+            applyInsert(lines.length, joinBlocks(headBlocks, true), true);
         }
         if (bodyBlocks.length > 0) {
             const at = firstHeading?.data._lineRange?.fromLine ?? lines.length;
-            applyInsert(at, bodyBlocks.flat(), true);
+            applyInsert(at, joinBlocks(bodyBlocks, true), true);
         }
         return { text: lines.join('\n') };
     }
@@ -180,11 +283,36 @@ export function insertSubtreeFromText(
             const pad = ' '.repeat(indent);
             const ck = node.data._kind;
             if (ck === 'heading' || ck === 'para') {
-                out.push(`${pad}- ${node.data.text}`);
+                // 列表项内容列 = marker 缩进 + "- " 宽度；续行必须缩到这里，
+                // 只缩第一行会让续行掉出列表项变成顶层段落（拆散列表）
+                const contentPad = `${pad}  `;
+                const textLines = node.data.text.split('\n');
+                // 段落的多行就在 data.text 里；标题的续行不在 text 里
+                // （treeBuilder 把紧挨标题的段落并进了 _selfLineRange），
+                // 所以标题还要从自身行区间把续行捞出来。
+                const continuation =
+                    ck === 'heading'
+                        ? headingContinuationLines(selfBlockOf(node)).concat(
+                              textLines.slice(1)
+                          )
+                        : textLines.slice(1);
+                // 只去行首缩进，行尾的两个空格是硬换行，要原样保留
+                const first = (textLines[0] ?? '').replace(/^[ \t]+/, '');
+                // 空标题 / 空段落只写一个光杆 marker，别留下尾随空格
+                out.push(first.trim() !== '' ? `${pad}- ${first}` : `${pad}-`);
+                // 续行逐行重挂到内容列：不能沿用 clip 原文的层级缩进，
+                // 否则一层层粘贴会越缩越深；同样保留行尾硬换行空格
+                for (const line of continuation) {
+                    if (line.trim() === '') continue;
+                    out.push(contentPad + line.replace(/^[ \t]+/, ''));
+                }
                 for (const child of node.children) emit(child, indent + 2);
                 return;
             }
-            // list / 媒体：原始行块重缩进到目标列（clip 已顶格，直接加 pad）
+            // list / 媒体：原始行块重缩进到目标列（clip 已顶格，直接加 pad）。
+            // 这里的 indent 已经是「父列表项的内容列」：媒体块必须落在
+            // marker 之后，写到 marker 列会被 CommonMark 当成脱出列表的
+            // 顶层块，把列表从中间拆成两段。
             for (const line of blockOf(node)) {
                 out.push(line.trim() === '' ? '' : pad + line);
             }
@@ -207,8 +335,10 @@ export function insertSubtreeFromText(
             );
             // shiftHeadingLevel 的语义是「level - delta」：delta 可负（降级）
             const delta = topLevel - childLevel;
-            const block = headingChildren.flatMap((c) =>
-                shiftHeadingLevel(blockOf(c), delta)
+            // 每个标题子树是独立的块：块之间要空一行，不能首尾直接粘上
+            const block = joinBlocks(
+                headingChildren.map((c) => shiftHeadingLevel(blockOf(c), delta)),
+                true
             );
             applyInsert(rangeOf(target).toLine + 1, block, true);
         }
@@ -222,7 +352,12 @@ export function insertSubtreeFromText(
                 lastNonHeading?.data._lineRange?.toLine ??
                 (target.data._selfLineRange as NodeLineRange | undefined)?.toLine ??
                 rangeOf(target).fromLine;
-            applyInsert(anchor + 1, bodyChildren.flatMap(blockOf), true);
+            // 正文块之间同样空行分隔（段落 / 表格 / 列表各是独立的块）
+            applyInsert(
+                anchor + 1,
+                joinBlocks(bodyChildren.map(blockOf), true),
+                true
+            );
         }
         return { text: lines.join('\n') };
     }
@@ -279,7 +414,9 @@ export function insertSiblingFromText(
     };
     /** 整块平移到目标缩进列（列表 / 媒体块用）。 */
     const reindentTo = (block: string[], indent: number): string[] => {
-        const from = listIndentOf(block[0] ?? '');
+        // 以第一个非空行判断源缩进：块首万一带空行也不会把判据打偏
+        const first = block.find((line) => line.trim() !== '') ?? '';
+        const from = listIndentOf(first);
         return from === indent ? block : reindentLines(block, indent - from);
     };
 
@@ -289,16 +426,26 @@ export function insertSiblingFromText(
     const blocks: string[][] = [];
 
     if (kind === 'list') {
+        const anchorMatch = /^(\s*)([-*+]|\d+[.)])(\s+)/.exec(anchorLine);
         const indent = listIndentOf(anchorLine);
+        // 媒体 / 引用等非列表块的对齐列 = 父列表项的**内容列**（marker 之后）。
+        // 用 marker 列会把它们写到列表项外面，把列表拆成两段。
+        // 锚点行解析不出列表形态时没有可靠的内容列，保持原缩进。
+        const contentIndent = anchorMatch ? listContentColumn(anchorLine) : null;
         // 标记沿用锚点（`-` / `*` / `1.` …）；有序列表不重排后续序号，
         // CommonMark 渲染时只看第一个数字，重建树也不依赖序号
-        const marker = /^(\s*)([-*+]|\d+[.)])(\s+)/.exec(anchorLine)?.[2] ?? '-';
+        const marker = anchorMatch?.[2] ?? '-';
         for (const child of children) {
             const block = blockOf(child);
-            if (child.data._kind === 'heading' || child.data._kind === 'para') {
+            const ck = child.data._kind;
+            if (ck === 'heading' || ck === 'para') {
                 blocks.push(transformHeadingBlockToList(block, indent, marker));
-            } else {
+            } else if (ck === 'list') {
+                // 列表块是真正的同级列表项：平移到锚点的 marker 列
                 blocks.push(reindentTo(block, indent));
+            } else {
+                // 媒体 / 引用没有列表形态：退化成锚点列表项的内容
+                blocks.push(contentIndent === null ? block : reindentTo(block, contentIndent));
             }
         }
     } else if (kind === 'heading') {
@@ -307,8 +454,13 @@ export function insertSiblingFromText(
             const block = blockOf(child);
             if (child.data._kind === 'heading') {
                 blocks.push(transformHeadingBlock(block, child.data._headingLevel ?? 1, level));
-            } else {
+            } else if (child.data._kind === 'para' || child.data._kind === 'list') {
                 blocks.push(transformListBlockToHeading(block, level));
+            } else {
+                // 媒体 / 引用没有标题形态：原样插入。以前这里也走
+                // transformListBlockToHeading，会把围栏首行写成 `# ``` `，
+                // 整个代码块就坏了。
+                blocks.push(block);
             }
         }
     } else {
@@ -319,12 +471,13 @@ export function insertSiblingFromText(
     const at = before ? range.fromLine : range.toLine + 1;
     // 列表项之间不能塞空行（会被拆成两段列表），其余块用空行隔开
     const blankSeparated = kind !== 'list';
-    const block: string[] = [];
-    blocks.forEach((linesOfBlock, i) => {
-        if (i > 0 && blankSeparated) block.push('');
-        block.push(...linesOfBlock);
-    });
-    return { text: insertBlockLines(lines, at, block, blankSeparated, markdown).join('\n') };
+    // 块自身可能带首尾空行，统一裁掉后按需补一个，避免叠出多个空行
+    const block = joinBlocks(blocks, blankSeparated);
+    // 没有可用块时原样返回：空块 + 空白分隔也会凭空插入空行
+    if (block.length === 0) return { text: markdown };
+    // 空白分隔时，插入点两侧原有的多余空行先收成一个
+    const pos = blankSeparated ? limitAdjacentBlankLines(lines, at) : at;
+    return { text: insertBlockLines(lines, pos, block, blankSeparated, markdown).join('\n') };
 }
 
 

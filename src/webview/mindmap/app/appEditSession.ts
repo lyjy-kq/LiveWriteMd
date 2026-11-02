@@ -299,6 +299,9 @@ export function commitEditSession(app: MindMapApp) : void {
  * 有没有改动都把手里的全文交给宿主立即落盘（onSave），不等 300ms 防抖。
  */
 export function forceWrite(app: MindMapApp) : void {
+    // 快速卡片编辑不是 editSession：它的文本还只在 mini-CM 里，
+    // 不先提交的话下面交给 onSave 的是卡片改动之前的全文。
+    app.quickCards?.flushEdit();
     if (app.editSession) app.commitEditSession();
     app.options.onSave?.(app.markdown);
 }

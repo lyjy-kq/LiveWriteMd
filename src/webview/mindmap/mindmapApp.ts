@@ -486,6 +486,10 @@ export class MindMapApp {
             // 选中卡片后拖到画布上：卡片内容插到落点节点下面，卡片随之删除
             onCardDropOnMap: (index, clientX, clientY) =>
                 this.dropCardOnMap(index, clientX, clientY),
+            // 卡片被选中 / 新建草稿：清掉画布上残留的节点选中。
+            // 卡片不是树节点，点它时画布收不到事件；不清的话接着按 Tab /
+            // Enter / F2 会去改「上一轮选中的节点」，而 Ctrl+C 又归卡片。
+            onActivate: () => this.clearSelection(),
         });
 
         window.addEventListener('keydown', this.handleWindowKeyDown, true);
@@ -638,7 +642,15 @@ export class MindMapApp {
             ).text;
         }
         if (withNodes === this.markdown) return;
-        const next = deleteQuickCard(withNodes, index);
+        // 插入正文可能改变卡片所在行、但不会改变卡片内容：按内容重新定位，
+        // 避免这次插入恰好落在卡片前面时，旧的序号删到另一张卡上。
+        const after = parseQuickCards(withNodes);
+        let target = index;
+        if (after[index]?.text !== card.text) {
+            target = after.findIndex((item) => item.text === card.text);
+            if (target < 0) return;
+        }
+        const next = deleteQuickCard(withNodes, target);
         if (next !== this.markdown) this.commit({ text: next });
     }
 

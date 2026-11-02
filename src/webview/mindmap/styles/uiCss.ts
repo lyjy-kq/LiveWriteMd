@@ -332,6 +332,18 @@ export const UI_CSS = `
     pointer-events: none;
 }
 
+/* 兜底：卡片多到摆放区放不下时，JS 给宿主写 data-scrollable 并加内联
+   overflow-y:auto。stack 改成跟随内容自然高度（不再按宿主高度裁），
+   宿主给一条窄滚动条即可。宿主仍保持 pointer-events:none：滚轮事件交给
+   JS 转发，别改成 auto，否则整条右侧栏会挡住画布。 */
+.lwm-qcards[data-scrollable="true"] {
+    overflow-y: auto;
+    scrollbar-width: thin;
+}
+.lwm-qcards[data-scrollable="true"] .lwm-qcards-stack {
+    height: auto;
+}
+
 /* 拖拽插入位置指示线：拖节点 / 拖卡片到侧边时，标出会插到第几张之间。
    挂在宿主上（不是 stack 里），position 相对宿主，top 由 JS 写 */
 .lwm-qcards-dropmark {
@@ -392,6 +404,22 @@ export const UI_CSS = `
     clip-path: inset(0 0 calc(100% - var(--lwm-qcard-visible, 100%)) 0);
 }
 
+/* 选中描边：节点用外圈 outline（见 canvasCss），但卡片栏宿主是
+   overflow:hidden，外圈描边会在卡片左右两侧被裁掉。卡片改用 inset
+   阴影画一圈焦点色（box-shadow 同样不参与盒模型，不影响摆放几何）。
+   顺带保留节点那套基础投影，避免选中瞬间投影消失闪一下。 */
+.lwm-qcard.lwm-node-selected {
+    outline: none;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18),
+        inset 0 0 0 2px var(--vscode-focusBorder, #007fd4);
+}
+/* 键盘焦点（JS 给卡片加 tabindex=0）：负 offset 把焦点环画在盒内，
+   避免被宿主 overflow:hidden 裁掉。编辑态由下面的 editing 规则统一清掉。 */
+.lwm-qcard:focus-visible {
+    outline: 2px solid var(--vscode-focusBorder, #007fd4);
+    outline-offset: -2px;
+}
+
 /* 展开：悬停的那一张 / 选中的 / 编辑中的，整张卡片向左滑出来。
    层次靠 z-index 递增（下面的卡片盖住上面的卡片）：展开的卡片不提层级，
    所以它下面的卡片收起后那条 4px 边框仍然画在它右边缘之上；它上面的卡片
@@ -399,9 +427,30 @@ export const UI_CSS = `
    高度在这里不裁：整张卡片滑出来。 */
 .lwm-qcard:hover,
 .lwm-qcard.lwm-node-selected,
-.lwm-qcard[data-editing="true"] {
+.lwm-qcard[data-editing="true"],
+.lwm-qcard[data-pinned="true"] {
     transform: translateX(0);
     clip-path: none;
+}
+/* 固定（右键菜单）：取消选中 / 鼠标移开也保持展开，方便对照着操作画布。
+   与 hover 展开同一套高度上限：越过缩略图顶部时卡片内部滚动。 */
+.lwm-qcard[data-pinned="true"] .lwm-qcard-body {
+    max-height: var(--lwm-qcard-max-h, none);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+/* 固定态的小圆点：不打扰正文，只提示「这张是钉住的，不是悬停展开」 */
+.lwm-qcard[data-pinned="true"]::after {
+    content: '';
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--vscode-focusBorder, #007fd4);
+    opacity: 0.75;
+    pointer-events: none;
 }
 /* 展开时如果会越过右下角缩略图，底部就停在缩略图顶部，内部可以滚动；
    放得下（max-height 大于自然高度）时和原来一样，不出现滚动 */
@@ -412,11 +461,20 @@ export const UI_CSS = `
     overflow-y: auto;
     overscroll-behavior: contain;
 }
-/* 编辑中不画任何描边：卡片已经展开（transform 归零），再套蓝框看起来
-   就是「编辑区边界」。选中态那条 outline 与这里同特异性，靠 UI_CSS
-   排在 CANVAS_CSS 之后生效 */
-.lwm-qcard[data-editing="true"] {
+/* 测量态：layoutStack 量卡片自然高度时会临时给宿主加 lwm-qcards-measuring，
+   必须解除上面的 max-height / overflow，否则 offsetHeight 会被封顶高度截断，
+   算出来的摆放位置全部偏小。 */
+.lwm-qcards-measuring .lwm-qcard-body {
+    max-height: none !important;
+    overflow: visible !important;
+}
+/* 编辑中不画任何描边 / 焦点环：卡片已经展开（transform 归零），再套蓝框
+   看起来就是「编辑区边界」。选中态改成了 inset 阴影，这里也要把它清掉，
+   只保留节点那套基础投影；:focus-visible 的特异性更高，一并列出。 */
+.lwm-qcard[data-editing="true"],
+.lwm-qcard[data-editing="true"]:focus-visible {
     outline: none;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
 }
 /* 草稿卡片（还没写回文档）：虚线提醒「还没落地」 */
 .lwm-qcard-draft {
@@ -449,7 +507,9 @@ export const UI_CSS = `
 }
 
 /* 左边界拖手：压在 4px 色带上，往左拖变宽、往右拖变窄（全局生效）。
-   卡片 overflow:hidden，所以从 0 开始画（负偏移会被裁掉） */
+   卡片 overflow:hidden，所以从 0 开始画（负偏移会被裁掉）。
+   默认透明且不接事件：收起态只剩左 4px 色条，常驻的拖手会把它整个盖住，
+   看起来像鼠标一碰就变宽。只有卡片真正展开时才显示。 */
 .lwm-qcard-resize {
     position: absolute;
     z-index: 2;
@@ -458,6 +518,17 @@ export const UI_CSS = `
     bottom: 0;
     width: 10px;
     cursor: ew-resize;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.16s ease-out;
+}
+/* 展开（hover / 选中 / 编辑）时显出拖手。编辑态另有 display:none
+   （见上面「编辑中不显示左边界拖手」），实际仍不会盖住正文。 */
+.lwm-qcard:hover .lwm-qcard-resize,
+.lwm-qcard.lwm-node-selected .lwm-qcard-resize,
+.lwm-qcard[data-editing="true"] .lwm-qcard-resize {
+    opacity: 1;
+    pointer-events: auto;
 }
 
 /* 加号：它就是一张「带加号的侧边卡片」——外框、收起 / 悬浮展开、
@@ -497,6 +568,19 @@ export const UI_CSS = `
         var(--lwm-node-tint) 22%,
         var(--vscode-editor-background, #1e1e1e)
     );
+}
+/* 加号颜色按主题分档：浅色沿用默认深蓝（#1e3a8a，在浅底上够醒目）；
+   深色底下深蓝太暗，换成浅蓝。--lwm-node-tint 同时驱动背景 wash、
+   描边、收起色条和图标 currentColor，只改变量就能整体对齐。
+   高对比度主题放在最后：VS Code 的高对比模式 body 上还带 vscode-dark /
+   vscode-light，靠源顺序让高对比色生效。 */
+body.vscode-dark .lwm-qcard.lwm-qcards-add {
+    --lwm-node-tint: #93c5fd;
+    color: var(--lwm-node-tint);
+}
+body.vscode-high-contrast .lwm-qcard.lwm-qcards-add {
+    --lwm-node-tint: var(--vscode-contrastActiveBorder, #ffffff);
+    color: var(--lwm-node-tint);
 }
 
 /* 复制提示词后的小浮条（挂在 body 上，右下角淡入淡出） */

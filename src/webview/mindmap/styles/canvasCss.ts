@@ -350,11 +350,13 @@ export const CANVAS_CSS = `
    以前选中只体现在工具条上，节点本身没有任何视觉反馈；框选多选之后
    必须能一眼看出哪些节点会被删掉，所以选中态直接画在节点外圈。
    用 outline 而不是 border：不参与盒模型，不会让节点尺寸/布局跳一下。 */
-.lwm-node.lwm-node-selected,
-.lwm-qcard.lwm-node-selected {
+.lwm-node.lwm-node-selected {
     outline: 2px solid var(--vscode-focusBorder, #007fd4);
     outline-offset: 2px;
 }
+/* 快速卡片不在这里画外圈 outline：卡片栏宿主是 overflow:hidden，
+   outline-offset 会让描边在卡片左右两侧被裁掉。卡片的选中环改到
+   uiCss 里用 inset 阴影实现（不参与盒模型，也不受裁剪影响）。 */
 /* 框选矩形（屏幕坐标层，见 MapCanvas.updateMarquee）。 */
 .lwm-marquee {
     position: absolute;
