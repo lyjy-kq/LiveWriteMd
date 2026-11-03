@@ -539,8 +539,19 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
                 view.contentDOM.removeEventListener('blur', blurHandler);
                 blurHandler = null;
             }
+            // 退出编辑时把选区挪回文末哨兵行：
+            // live 的「聚焦行内元素展开源码」是按选区算的，光标留在刚编辑
+            // 的那一行时，**粗体** / 链接等会一直停在文本态回不去渲染态。
+            // 和 resetSelection 同一口径（原来停在文末就不重复派发）。
+            const main = view.state.selection.main;
+            const end = view.state.doc.length;
+            const resetSelection =
+                main.empty && main.anchor === end
+                    ? undefined
+                    : { anchor: end };
             try {
                 view.dispatch({
+                    selection: resetSelection,
                     effects: [
                         editableComp.reconfigure(EditorView.editable.of(false)),
                         readOnlyComp.reconfigure(EditorState.readOnly.of(true)),
