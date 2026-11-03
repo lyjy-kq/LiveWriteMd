@@ -24,6 +24,7 @@ import {
     createNodeDisplay,
     type NodeDisplay,
 } from '../mindmap/miniCm.js';
+import { parseQuickCards } from '../mindmap/edit/staging.js';
 import { setMeasureRootOverride } from '../codemirror/extensions/livePreview/measure/textMeasure.js';
 import { tableRemeasureEffect } from '../codemirror/extensions/livePreview/state.js';
 import { settingsState } from '../settings/settingsState.js';
@@ -33,6 +34,7 @@ import { ensureSlidesCss } from './slidesStyles.js';
 import {
     bodyFontSize,
     findLogicalSlideByLine,
+    findNearestLogicalSlideByLine,
     flattenItems,
     parseDeck,
     plainHeading,
@@ -630,7 +632,11 @@ export class SlidesApp {
     /** 当前行（0-based）所在页；用于大纲点击。 */
     goToLine(line0: number): boolean {
         if (!this.deck || this.pages.length === 0) return false;
-        const logicalIndex = findLogicalSlideByLine(this.deck, line0);
+        // 卡片行（已从幻灯片里掩码掉）不属于任何逻辑页：落到上方最近一页，
+        // 别让「光标在卡片里进入 PPT / 点卡内标题」回到第 0 页。
+        const logicalIndex =
+            findLogicalSlideByLine(this.deck, line0) ??
+            findNearestLogicalSlideByLine(this.deck, line0);
         if (logicalIndex === null) return false;
         const index = this.findPageIndex(logicalIndex);
         if (index < 0) return false;
@@ -864,10 +870,12 @@ export class SlidesApp {
         }
     }
 
-    /** 首屏先测哪一页：锚点行所在的逻辑页 → 上次停留页 → 第一页。 */
+    /** 首屏先测哪一页：锚点行所在的逻辑页 → 最近的上方页 → 上次停留页 → 第一页。 */
     private resolveTargetSlide(deck: Deck, anchorLine: number | null): number {
         if (anchorLine !== null) {
-            const byLine = findLogicalSlideByLine(deck, anchorLine);
+            const byLine =
+                findLogicalSlideByLine(deck, anchorLine) ??
+                findNearestLogicalSlideByLine(deck, anchorLine);
             if (byLine !== null) return byLine;
         }
         const previous = this.pages[this.pageIndex]?.logicalIndex;
@@ -2344,6 +2352,20 @@ export class SlidesApp {
             wrap.classList.add('slide-block-static');
             return;
         }
+        // 片段与快速卡片行相交（松散列表 / HTML block 可以跨过卡片区）：
+        // 渲染源码来自掩码副本，卡片位置是空行；这种片段也必须只读 ——
+        // 一旦进入编辑，commitBlock 会按整段行区间替换原文，把卡片块删掉。
+        const cards = parseQuickCards(this.fullText);
+        if (
+            cards.some(
+                (card) =>
+                    block.fromLine <= card.toLine &&
+                    block.toLine >= card.fromLine
+            )
+        ) {
+            wrap.classList.add('slide-block-static');
+            return;
+        }
         wrap.addEventListener('click', (event) => {
             if (
                 !this.active ||
@@ -2795,6 +2817,10 @@ export class SlidesApp {
      */
     private onWheel(event: WheelEvent): void {
         if (!this.active || this.activeDisplay || this.rebuilding) return;
+        // 右侧快速卡片栏有自己的滚动（长卡片 / 固定卡片）：滚轮落在卡片上
+        // 不翻页，否则卡片内容还没滚完就先换了下一页。
+        const wheelTarget = event.target as Element | null;
+        if (wheelTarget?.closest?.('.lwm-qcards')) return;
         // 触控板横向双指：让浏览器自己处理，不翻页
         if (Math.abs(event.deltaX) > Math.abs(event.deltaY) * 1.2) return;
 

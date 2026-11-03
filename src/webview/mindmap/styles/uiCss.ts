@@ -343,6 +343,20 @@ export const UI_CSS = `
     right: 16px;
 }
 
+/* PPT 模式：卡片栏挂在 .slides-stage-wrap 里（工具栏下方，坐标系不受
+   舞台 scale 影响），right 用默认的 0；尺寸由舞台区矩形决定。
+   放映时 #slides 变成 fixed 全屏、舞台铺满，卡片栏与选中工具条都必须让位。 */
+#slides.slides-presenting .lwm-qcards,
+#slides.slides-presenting .slides-stage-wrap > .lwm-toolbar {
+    display: none !important;
+}
+
+/* PPT 浅色主题：卡片文字与 live 一样用纯黑。卡片栏在 #slides 内，
+   不是 #editor-pane 的直接子级，现有 live 规则命中不到。 */
+#editor-pane[data-lwm-theme="light"] #slides .lwm-qcards .lwm-qcard {
+    color: #000;
+}
+
 /* 拖卡片进正文时的落点指示线：位置由 JS 按指针所在行写 */
 .lwm-qcards-live-dropmark {
     position: absolute;

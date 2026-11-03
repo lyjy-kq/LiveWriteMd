@@ -690,13 +690,17 @@ function completeSubtree(
  * mini-CM（圆点、缩进、编号、编辑行为都与正文一致）。只有子树被分页 /
  * 分栏切开时，父节点才退化成「只渲染自身」，子节点随后单独成片段。
  * 嵌套片段会去掉公共缩进，靠 CSS 左内边距补回视觉层级。
+ *
+ * 切片必须用 deck.parseText（卡片行已清空、行数不变）：松散列表 / HTML
+ * block 可以跨过卡片行，用原文切会把卡片内容重新带回幻灯片。跨卡片行的
+ * 片段在 SlidesApp.attachEdit 里会被判成只读，避免回写删卡。
  */
 function buildFragments(
     items: SlideItem[],
-    fullText: string,
+    sourceText: string,
     fitByItem: Map<string, number>
 ): SlideBlock[] {
-    const lines = fullText.split('\n');
+    const lines = sourceText.split('\n');
     const out: SlideBlock[] = [];
     let i = 0;
 
@@ -903,14 +907,14 @@ export function paginateDeck(
                 const leftFrags = chunk.columns
                     ? buildFragments(
                           chunk.columns[0],
-                          deck.fullText,
+                          deck.parseText,
                           chunk.fitByItem
                       )
                     : [];
                 const rightFrags = chunk.columns
                     ? buildFragments(
                           chunk.columns[1],
-                          deck.fullText,
+                          deck.parseText,
                           chunk.fitByItem
                       )
                     : [];
@@ -918,7 +922,7 @@ export function paginateDeck(
                     ? [...leftFrags, ...rightFrags]
                     : buildFragments(
                           chunk.items,
-                          deck.fullText,
+                          deck.parseText,
                           chunk.fitByItem
                       );
                 const isFirst = firstPageOfSlide && pi === 0;

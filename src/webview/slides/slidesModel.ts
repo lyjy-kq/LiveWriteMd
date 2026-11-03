@@ -13,6 +13,7 @@
 import { GFM } from '@lezer/markdown';
 import type { SyntaxNode } from '@lezer/common';
 import { tunedMarkdownLanguage } from '../codemirror/extensions/markdownParser.js';
+import { maskQuickCardLines } from '../mindmap/edit/staging.js';
 
 export type BlockKind =
     | 'heading'
@@ -180,6 +181,15 @@ export interface SlidePage {
 
 export interface Deck {
     fullText: string;
+    /**
+     * 解析用副本：快速卡片行被清空后的全文（行数与 fullText 完全一致）。
+     *
+     * 卡片是右侧栏的旁注，不应该变成幻灯片。逐行清空卡片区（见
+     * maskQuickCardLines）既能把卡片从语法树里抹掉，又保持所有块的行号
+     * 不变，所以 fromLine/toLine、回写区间、大纲页码全部照旧。
+     * 需要原文的地方（commitBlock 回写、保存、卡片解析）仍用 fullText。
+     */
+    parseText: string;
     blocks: SlideBlock[];
     /** 所有正文节点（顶层；列表项带 children）。 */
     items: SlideItem[];
@@ -526,9 +536,13 @@ export function parseDeck(
     // CRLF 归一：Lezer 的表格识别对行尾 \r 敏感；后面所有行号/切片都按
     // 归一后的文本算。网页端保存时仍按原换行回写（行号不变）。
     const fullText = text.replace(/\r\n?/g, '\n');
-    const { endLine, meta } = parseFrontMatter(fullText);
-    const tree = mdParser.parse(fullText);
-    const starts = buildLineStarts(fullText);
+    // 快速卡片（<<< / >>> 块）是右侧栏的旁注，不是幻灯片正文：
+    // 解析用一份卡片行被清空的副本。maskQuickCardLines 行数不变，
+    // 所以块的 fromLine/toLine、回写区间与大纲页码口径全部不受影响。
+    const parseText = maskQuickCardLines(fullText);
+    const { endLine, meta } = parseFrontMatter(parseText);
+    const tree = mdParser.parse(parseText);
+    const starts = buildLineStarts(parseText);
     const blocks: SlideBlock[] = [];
 
     let node: SyntaxNode | null = tree.topNode.firstChild;
@@ -539,7 +553,7 @@ export function parseDeck(
             node = node.nextSibling;
             continue;
         }
-        const raw = fullText.slice(node.from, node.to).replace(/\n+$/, '');
+        const raw = parseText.slice(node.from, node.to).replace(/\n+$/, '');
         if (!raw.trim()) {
             node = node.nextSibling;
             continue;
@@ -564,7 +578,8 @@ export function parseDeck(
     //
     // 按行扫描会把代码块里的同形文本也扫进来，用块行区间过滤掉：
     // 真正的顶层指令不属于任何块。
-    const overrides = collectLayoutOverrides(fullText).filter(
+    // 必须扫解析副本：卡片里写的伪指令不能替幻灯片强制断页。
+    const overrides = collectLayoutOverrides(parseText).filter(
         (override) =>
             !blocks.some(
                 (block) =>
@@ -601,6 +616,7 @@ export function parseDeck(
 
     return {
         fullText,
+        parseText,
         blocks,
         items: logical.flatMap((slide) => slide.items),
         logical,
@@ -890,4 +906,27 @@ export function findLogicalSlideByLine(
         }
     }
     return null;
+}
+
+/**
+ * 最近的前一个逻辑页（0-based 行号）。
+ *
+ * 光标停在不属于任何块的行上时（典型：快速卡片区——卡片已被掩码出
+ * 幻灯片），`findLogicalSlideByLine` 会返回 null。这时应该落到「上方
+ * 最近的一页」，而不是回到第 0 页。行号在所有页之前时返回第一页。
+ */
+export function findNearestLogicalSlideByLine(
+    deck: Deck,
+    line: number
+): number | null {
+    let before: number | null = null;
+    for (const slide of deck.logical) {
+        const range = slideLineRange(slide);
+        if (!range) continue;
+        if (range.first <= line) before = slide.index;
+        // logical 按行序生成，后面的页只会更靠后，可以提前结束
+        else break;
+    }
+    if (before !== null) return before;
+    return deck.logical[0]?.index ?? null;
 }

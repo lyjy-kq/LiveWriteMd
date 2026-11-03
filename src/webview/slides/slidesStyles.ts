@@ -75,6 +75,9 @@ const SLIDES_CSS = `
 .slides-stage-wrap {
     flex: 1 1 auto;
     min-height: 0;
+    /* 快速卡片栏的定位上下文：栏挂在舞台区（工具栏下方），
+       不会压住顶部工具栏，也不会被 .slides-stage 的 scale 带走 */
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
