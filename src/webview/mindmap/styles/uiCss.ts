@@ -336,6 +336,25 @@ export const UI_CSS = `
     overflow: hidden;
 }
 
+/* live 模式：卡片栏挂在 #editor-pane 上（没有 #mindmap 画布）。
+   右侧让出正文自定义滚动条的宽度（14px），否则收起态只剩的那 4px
+   色条会被滚动条透明的轨道盖住，鼠标永远悬停不到、卡片展不开。 */
+#editor-pane > .lwm-qcards {
+    right: 16px;
+}
+
+/* 拖卡片进正文时的落点指示线：位置由 JS 按指针所在行写 */
+.lwm-qcards-live-dropmark {
+    position: absolute;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--vscode-focusBorder, #007fd4);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 65%, transparent);
+    pointer-events: none;
+    z-index: 30;
+    display: none;
+}
+
 /* 卡片堆叠区：整条右侧列都是摆放区（从视口顶部到右下角缩略图顶部，
    高度由 JS 写进宿主的 height）。
    卡片是**绝对定位**的，top 由 layoutStack 一次算好：用 flex 流式排列的话，

@@ -264,6 +264,13 @@ export const CANVAS_CSS = `
 #mindmap[data-lwm-theme="light"] .lwm-qcard {
     color: #000;
 }
+/* live 模式里的同一套卡片栏挂在 #editor-pane 上：属性名一致，
+   容器换成 pane（见 messageCallbacks 的 data-lwm-theme 写入）。
+   必须限定成 pane 的**直接子级**卡片栏：导图的卡片栏在 #mindmap 里，
+   不能被这条规则覆盖（导图有自己的主题设置）。 */
+#editor-pane[data-lwm-theme="light"] > .lwm-qcards .lwm-qcard {
+    color: #000;
+}
 /* 节点里的 CM 背景压透明，节点自己的底色才露得出来。
    快速卡片共用同一套外框视觉，同样要压掉（否则浅色主题下卡片是一块白底） */
 .lwm-node .cm-editor,

@@ -33,6 +33,10 @@ import {
     enterMindmapMode,
     enterSlidesMode,
     syncOutlineActiveLine,
+    destroyLiveQuickCards,
+    syncLiveQuickCardsVisibility,
+    refreshLiveQuickCards,
+    scheduleLiveQuickCardsRefresh,
 } from './appState.js';
 
 /**
@@ -92,6 +96,10 @@ export async function handleInit(
             'INFO',
             `Editor host prepared: id=${container.id}, childCount=${container.childElementCount}, documentUri=${documentUri}`
         );
+
+        // live 卡片栏绑在旧文档 / 旧编辑器上：先销毁（destroy 会把正在
+        // 编辑的卡片提交回旧 CM，所以必须赶在 ctx.editor.destroy() 之前）
+        destroyLiveQuickCards();
 
         // Destroy existing ctx.editor if any
         if (ctx.editor) {
@@ -154,6 +162,8 @@ export async function handleInit(
             // 路（setActiveLine），仍然是实时的。
             ctx.debouncedSetOutlineContent(newContent);
             ctx.debouncedSendContentChange(newContent);
+            // 正文里改了 `<<<` / `>>>` 卡片块：右侧卡片栏跟着重解析
+            scheduleLiveQuickCardsRefresh(newContent);
         });
 
         // Keep the outline aligned with the freshly loaded Markdown document
@@ -214,6 +224,14 @@ export async function handleInit(
             sendLog('INFO', `Default ctx.editor mode applied: ${mode}`);
         }
 
+        // live 卡片栏的浅色规则按容器属性命中（#mindmap 那套只覆盖导图）
+        document
+            .getElementById('editor-pane')
+            ?.setAttribute('data-lwm-theme', theme);
+
+        // 初始模式应用完：live 下补建卡片栏（导图 / 幻灯片 / 源码下保持隐藏）
+        syncLiveQuickCardsVisibility();
+
         sendLog('INFO', 'CodeMirror ctx.editor initialized successfully');
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -251,6 +269,8 @@ export function handleUpdate(content: string): void {
         ctx.mindmapApp?.setDocument(content, ctx.mindmapFileName);
         // 幻灯片同理：非激活时只记文本，激活时会触发解析与重排
         ctx.slidesApp?.setDocument(content, ctx.mindmapFileName);
+        // live 卡片栏：外部改文件后立刻重解析（编辑中的卡片会自行延后）
+        refreshLiveQuickCards(content);
         syncOutlineActiveLine();
         sendLog('DEBUG', 'UPDATE applied successfully');
         console.debug(`[LiveWriteMD] handleUpdate: setContent completed`);
@@ -278,6 +298,12 @@ export function handleThemeChange(theme: ThemeType): void {
     ctx.currentTheme = theme;
     ctx.mindmapApp?.setTheme(theme);
     ctx.slidesApp?.setEditorTheme(theme);
+    // live 卡片栏：容器上的主题属性 + 卡片里 mini-CM 的明暗主题
+    // （mini-CM 的主题创建时就烘进去了，必须强制重建）
+    document
+        .getElementById('editor-pane')
+        ?.setAttribute('data-lwm-theme', theme);
+    refreshLiveQuickCards(undefined, true);
 
     try {
         // Apply theme change using ThemeManager (for CSS classes)

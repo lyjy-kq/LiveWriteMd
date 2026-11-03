@@ -228,6 +228,14 @@ export class QuickCardRail {
     private dropShown: number | null = null;
     /** 卡片栏当前是否启用（关掉时只解析、不建 mini-CM）。 */
     private enabled = true;
+    /**
+     * 宿主是否处于「该显示卡片栏」的模式。
+     *
+     * 导图里宿主本身随 #mindmap 一起隐藏，用不到；live 模式把同一个
+     * 实例挂在 #editor-pane 上，切到导图 / 幻灯片 / 源码时要单独收起，
+     * 否则收起态的色条会浮在别的模式上面。
+     */
+    private hostVisible = true;
     /** 缩略图显隐会改变摆放区高度：监听 class 变化重排。 */
     private minimapObserver: MutationObserver | null = null;
     /** 合并同一帧里的多次重排请求（缩略图 class 可能连续变两次）。 */
@@ -545,23 +553,39 @@ export class QuickCardRail {
         }
     }
 
+    /**
+     * 宿主切换模式时同步可见性。
+     *
+     * live 模式把同一个实例挂在 #editor-pane 上：切到导图 / 幻灯片 / 源码时
+     * 容器还在 DOM 里，不主动收起来卡片会悬在别的模式画面上。
+     * false 时先落掉正在编辑的卡片（切模式 = 失焦提交），再隐藏。
+     */
+    public setHostVisible(visible: boolean): void {
+        if (this.destroyed || this.hostVisible === visible) return;
+        this.hostVisible = visible;
+        if (!visible) this.deactivate();
+        this.applySettings();
+    }
+
     /** 设置变化后重设开关与全局宽度（幂等，可反复调用）。 */
     public applySettings(): void {
         const settings = this.options.getSettings();
+        // 设置开关和宿主模式要同时成立才显示
+        const visible = settings.enabled && this.hostVisible;
         const wasEnabled = this.enabled;
         // 编辑中被关掉：先把这次编辑落掉，别把内容留在 DOM 里
-        if (!settings.enabled && this.editing) this.finishEdit();
-        this.enabled = settings.enabled;
-        this.host.style.display = settings.enabled ? '' : 'none';
+        if (!visible && this.editing) this.finishEdit();
+        this.enabled = visible;
+        this.host.style.display = visible ? '' : 'none';
         // 关掉卡片栏时工具条一起藏（它挂在容器上，不在 host 里）
-        if (!settings.enabled) this.toolbarEl.style.display = 'none';
+        if (!visible) this.toolbarEl.style.display = 'none';
         // 宽度全局一个值：拖动左边界改的就是它。拖动中别被设置回写打断。
         if (!this.resize) {
             this.currentWidth = this.clampWidth(settings.width);
             this.host.style.setProperty('--lwm-qcard-width', `${this.currentWidth}px`);
         }
         // 从关到开：关闭期间 refresh 只解析、没建 mini-CM，这里补建
-        if (settings.enabled && !wasEnabled) this.refresh(undefined, true);
+        if (visible && !wasEnabled) this.refresh(undefined, true);
     }
 
     /**

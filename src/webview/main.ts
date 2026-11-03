@@ -58,6 +58,7 @@ import {
     getInitialOutlineWidth,
     isInteractiveFocusTarget,
     readMindmapSettings,
+    syncLiveQuickCardsVisibility,
 } from './host/appState.js';
 import { handleInit, handleUpdate, handleThemeChange } from './host/messageCallbacks.js';
 import type { CodeMirrorEditor } from './codemirror/editor.js';
@@ -274,6 +275,8 @@ function initialize(): void {
             } else if (ctx.currentEditorMode === 'viewer') {
                 ctx.currentEditorMode = 'live';
             }
+            // 只读预演不属于 live：卡片栏跟着收起 / 恢复
+            syncLiveQuickCardsVisibility();
         }
         if (msg && msg.type === 'editorMode') {
             void applyEditorMode(msg.mode as EditorMode);
@@ -348,6 +351,8 @@ function initialize(): void {
             ctx.mindmapApp?.setSettings(readMindmapSettings());
             // 幻灯片主题 / 分页级别（settingsState 已在上面 replaceAll 更新）
             ctx.slidesApp?.applySettings();
+            // live 快速卡片：开关 / 宽度即时生效（关掉再打开会补建实例）
+            syncLiveQuickCardsVisibility();
             // 结构化设置（行号 / 换行等）重配置编辑器
             if (msg.settings && ctx.editor?.isReady()) {
                 ctx.editor.applySettings(msg.settings);

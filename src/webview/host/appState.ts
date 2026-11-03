@@ -9,12 +9,16 @@
 
 import { undo, redo } from '@codemirror/commands';
 import { codeLanguages } from '../codemirror/editor.js';
-import { tableRemeasureEffect } from '../codemirror/extensions/livePreview/state.js';
+import {
+    copyToClipboard,
+    tableRemeasureEffect,
+} from '../codemirror/extensions/livePreview/state.js';
 import { MESSAGE_TYPES } from '../../shared/messageTypes.js';
 // 只取类型：真正的实现改为进入对应模式时才动态 import（见下方 enter 函数）。
 // 静态 import 会把导图 / 幻灯片整套代码塞进入口 bundle，每个 md 文件首屏
 // 都要为「还没进入的模式」付编译成本。
 import type { MindMapApp } from '../mindmap/mindmapApp.js';
+import type { QuickCardRail } from '../mindmap/quickCardRail.js';
 import type { MindMapRuntimeSettings } from '../mindmap/types.js';
 import type { SlidesApp } from '../slides/slidesApp.js';
 import { settingsState } from '../settings/settingsState.js';
@@ -105,7 +109,7 @@ export function readMindmapSettings(): MindMapRuntimeSettings {
  */
 export function applyDocumentEdit(
     newFullText: string,
-    source: 'mindmap' | 'slides' = 'mindmap'
+    source: 'mindmap' | 'slides' | 'live' = 'mindmap'
 ): void {
     const view = ctx.editor?.getView();
     if (!view) {
@@ -176,6 +180,366 @@ export function applyMindmapUndoRedo(kind: 'undo' | 'redo'): void {
         ctx.mindmapApp?.setDocument(view.state.doc.toString(), ctx.mindmapFileName);
     }
 }
+
+// ==================================================================
+// live 模式快速卡片栏
+//
+// 导图里那条卡片栏（quickCardRail）本身不依赖画布：卡片内容直接读写
+// Markdown 的 `<<<` / `>>>` 块。这里把它原样挂到 #editor-pane 上，
+// 让 live 模式也能在右侧随手写卡片：
+// - 卡片提交 = applyDocumentEdit（最小差异 dispatch，进 CM 撤销栈）；
+// - 主编辑器打字 → 防抖刷新卡片；卡片提交 → 立即刷新，两边保持一致；
+// - 拖卡片进正文 = 在指针所在行插入卡片内容，并删除原卡片（一步撤销）。
+// ==================================================================
+
+/** live 模式卡片栏实例（只在 live 模式且设置开启时存在）。 */
+let liveQuickCards: QuickCardRail | null = null;
+/** 正在加载实现模块（动态 import 防并发重复创建）。 */
+let liveQuickCardsLoading: Promise<QuickCardRail | null> | null = null;
+/** 创建代次：INIT 销毁时 +1，丢弃还在加载中的旧实例。 */
+let liveQuickCardsGeneration = 0;
+/** 主编辑器打字时的刷新防抖（每键都重建 mini-CM 会把打字拖卡）。 */
+let liveCardsRefreshTimer = 0;
+/** 防抖期间攒下的最新全文。 */
+let liveCardsPendingMarkdown: string | null = null;
+/** 拖卡片进正文时的落点指示线（挂在 #editor-pane 上）。 */
+let liveDropMark: HTMLElement | null = null;
+/** 指示线当前画在哪一行（同一行不重复写 DOM）。 */
+let liveDropLine = -1;
+/** 窗口 / 大纲宽度变化 → 卡片栏重新计算摆放区高度。 */
+let liveCardsResizeObserver: ResizeObserver | null = null;
+
+/** 当前是否应该显示 live 卡片栏。 */
+function shouldShowLiveQuickCards(): boolean {
+    return (
+        ctx.currentEditorMode === 'live' &&
+        settingsState.getBoolean('quickCardEnabled') &&
+        !!ctx.editor?.isReady()
+    );
+}
+
+/** 创建（或复用）live 模式卡片栏。不可见 / 加载失败时返回 null。 */
+export async function ensureLiveQuickCards(): Promise<QuickCardRail | null> {
+    if (liveQuickCards) return liveQuickCards;
+    if (!shouldShowLiveQuickCards()) return null;
+    if (liveQuickCardsLoading) return liveQuickCardsLoading;
+    const pane = document.getElementById('editor-pane');
+    if (!pane) return null;
+
+    const generation = liveQuickCardsGeneration;
+    liveQuickCardsLoading = (async () => {
+        try {
+            // 卡片正文与导图节点共用同一套只读 mini-CM 与节点样式；
+            // 这两块只在真正需要卡片栏时才加载，不进入普通 live 首屏。
+            const [{ QuickCardRail }, { ensureMindMapCss }] = await Promise.all([
+                import('../mindmap/quickCardRail.js'),
+                import('../mindmap/styles/index.js'),
+            ]);
+            // 加载期间可能已切模式 / INIT 重建 / 关掉设置：放弃这次创建
+            if (
+                generation !== liveQuickCardsGeneration ||
+                !shouldShowLiveQuickCards()
+            ) {
+                return null;
+            }
+            ensureMindMapCss();
+
+            const rail = new QuickCardRail(pane, {
+                // 主编辑器的文档就是唯一数据源
+                getMarkdown: () => ctx.editor?.getContent() ?? '',
+                commit: (text) => {
+                    // 走与导图 / 幻灯片同一条回写路径：最小差异 dispatch +
+                    // 立即上报扩展侧，卡片改动同样进 CM 撤销栈
+                    applyDocumentEdit(text, 'live');
+                    // 卡片栏自己改的内容立即重画（和导图 setMarkdown 的
+                    // 时序一致），不用等主编辑器 onChange 的防抖
+                    liveQuickCards?.refresh(text);
+                },
+                getSettings: () => ({
+                    enabled: settingsState.getBoolean('quickCardEnabled'),
+                    width: settingsState.getNumber('quickCardWidth') || 280,
+                }),
+                getTheme: () => ctx.currentTheme,
+                codeLanguages,
+                getFileName: () => ctx.mindmapFileName,
+                onResize: (width) => {
+                    settingsState.set('quickCardWidth', width);
+                    ctx.vscode.postMessage({
+                        type: MESSAGE_TYPES.UPDATE_SETTING,
+                        key: 'quickCardWidth',
+                        value: width,
+                    });
+                },
+                // 复制 / 粘贴走扩展侧 relay（webview 原生剪贴板在 VS Code 里不稳）
+                copyText: async (text) => {
+                    try {
+                        await copyToClipboard(text);
+                        return true;
+                    } catch {
+                        try {
+                            await navigator.clipboard.writeText(text);
+                            return true;
+                        } catch {
+                            return false;
+                        }
+                    }
+                },
+                readText: async () => {
+                    try {
+                        return await navigator.clipboard.readText();
+                    } catch {
+                        return '';
+                    }
+                },
+                onCardDragPreview: (at) => {
+                    if (at) previewLiveCardDrop(at);
+                    else clearLiveCardDrop();
+                },
+                // 拖进正文：插入到指针所在行，并删掉原卡片
+                onCardDropOnMap: (index, clientX, clientY) => {
+                    void dropLiveCardOnEditor(index, clientX, clientY);
+                },
+            });
+            liveQuickCards = rail;
+            rail.setHostVisible(true);
+            rail.refresh();
+            // 窗口缩放 / 拖动大纲宽度都会改变摆放区高度：重新平铺或重叠
+            liveCardsResizeObserver?.disconnect();
+            liveCardsResizeObserver = new ResizeObserver(() =>
+                liveQuickCards?.relayout()
+            );
+            liveCardsResizeObserver.observe(pane);
+            return rail;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            sendLog('ERROR', `Live quick cards init failed: ${message}`);
+            return null;
+        } finally {
+            liveQuickCardsLoading = null;
+        }
+    })();
+    return liveQuickCardsLoading;
+}
+
+/** 销毁 live 卡片栏（INIT 换文档 / 退出编辑器时）。 */
+export function destroyLiveQuickCards(): void {
+    liveQuickCardsGeneration += 1;
+    liveQuickCardsLoading = null;
+    // destroy 里会提交正在编辑的卡片 → 经 applyDocumentEdit 走到
+    // onChange → 可能又排一个刷新定时器，所以定时器要在 destroy 之后再清
+    liveQuickCards?.destroy();
+    liveQuickCards = null;
+    liveCardsResizeObserver?.disconnect();
+    liveCardsResizeObserver = null;
+    window.clearTimeout(liveCardsRefreshTimer);
+    liveCardsRefreshTimer = 0;
+    liveCardsPendingMarkdown = null;
+    clearLiveCardDrop();
+    liveDropMark?.remove();
+    liveDropMark = null;
+}
+
+/**
+ * 文档 / 主题变化后立即刷新卡片栏。
+ *
+ * @param markdown 新全文；缺省取主编辑器当前内容
+ * @param force 换主题 / 换文档时强制重建（mini-CM 的明暗主题是创建时烘进去的）
+ */
+export function refreshLiveQuickCards(markdown?: string, force = false): void {
+    if (!liveQuickCards) return;
+    window.clearTimeout(liveCardsRefreshTimer);
+    liveCardsRefreshTimer = 0;
+    liveCardsPendingMarkdown = null;
+    liveQuickCards.refresh(markdown, force);
+}
+
+/** 主编辑器打字后的防抖刷新（180ms：卡片栏不是每次按键都肉眼可见在变）。 */
+export function scheduleLiveQuickCardsRefresh(markdown: string): void {
+    if (!liveQuickCards) return;
+    liveCardsPendingMarkdown = markdown;
+    if (liveCardsRefreshTimer) return;
+    liveCardsRefreshTimer = window.setTimeout(() => {
+        liveCardsRefreshTimer = 0;
+        const pending = liveCardsPendingMarkdown;
+        liveCardsPendingMarkdown = null;
+        liveQuickCards?.refresh(pending ?? undefined);
+    }, 180);
+}
+
+/**
+ * 模式 / 设置变化后同步卡片栏显隐。
+ *
+ * live 之外的模式（viewer / source / mindmap / slides）都要收起来：
+ * 实例挂在 #editor-pane 上，不随 #editor 一起 hidden。
+ */
+export function syncLiveQuickCardsVisibility(): void {
+    const visible = shouldShowLiveQuickCards();
+    if (!visible) {
+        liveQuickCards?.setHostVisible(false);
+        clearLiveCardDrop();
+        return;
+    }
+    if (!liveQuickCards) {
+        void ensureLiveQuickCards();
+        return;
+    }
+    liveQuickCards.setHostVisible(true);
+    liveQuickCards.applySettings();
+    // 模式切换期间主编辑器可能已被 UPDATE 换过文档：按当前文本重取一次
+    refreshLiveQuickCards();
+}
+
+/** 拖卡片进正文时的落点指示线：画在指针所在行的上边缘。 */
+function previewLiveCardDrop(at: { clientX: number; clientY: number }): void {
+    const pane = document.getElementById('editor-pane');
+    const view = ctx.editor?.getView();
+    if (!pane || !view) return;
+    const pos = view.posAtCoords({ x: at.clientX, y: at.clientY });
+    if (pos === null) {
+        clearLiveCardDrop();
+        return;
+    }
+    const line = view.state.doc.lineAt(pos);
+    // 同一行内移动：指示线不动，省掉拖动中的重复写样式
+    if (line.number === liveDropLine && liveDropMark?.isConnected) return;
+    const coords = view.coordsAtPos(line.from);
+    if (!coords) {
+        clearLiveCardDrop();
+        return;
+    }
+    let mark = liveDropMark;
+    if (!mark || !mark.isConnected) {
+        mark = document.createElement('div');
+        mark.className = 'lwm-qcards-live-dropmark';
+        pane.appendChild(mark);
+        liveDropMark = mark;
+    }
+    const paneRect = pane.getBoundingClientRect();
+    const contentRect = view.contentDOM.getBoundingClientRect();
+    const left = Math.max(0, contentRect.left - paneRect.left);
+    liveDropLine = line.number;
+    mark.style.display = 'block';
+    mark.style.left = `${Math.round(left)}px`;
+    mark.style.width = `${Math.round(
+        Math.max(0, Math.min(contentRect.width, paneRect.width - left))
+    )}px`;
+    mark.style.top = `${Math.round(coords.top - paneRect.top)}px`;
+}
+
+/** 撤掉落点指示线（拖动结束 / 指针离开正文）。 */
+function clearLiveCardDrop(): void {
+    liveDropLine = -1;
+    if (liveDropMark) liveDropMark.style.display = 'none';
+}
+
+/**
+ * 拖卡片进正文：把卡片内容插到指针所在行，并删除原卡片。
+ *
+ * 两次修改合成一份新全文，再走 applyDocumentEdit → 一步撤销。
+ * 指针不在正文上（落在大纲 / 编辑器外）时什么也不做 —— 不能把卡片删了
+ * 却没地方放内容。
+ */
+async function dropLiveCardOnEditor(
+    index: number,
+    clientX: number,
+    clientY: number
+): Promise<void> {
+    const view = ctx.editor?.getView();
+    if (!view) return;
+    const pos = view.posAtCoords({ x: clientX, y: clientY });
+    // 不在正文上：当作取消拖放
+    if (pos === null) return;
+
+    const markdown = view.state.doc.toString();
+    const lineIndex = view.state.doc.lineAt(pos).number - 1;
+    // 纯编辑函数与卡片栏同源（已经在卡片栏 chunk 里，这里直接取用）
+    const { parseQuickCards, deleteQuickCard } = await import(
+        '../mindmap/edit/staging.js'
+    );
+    // 等待加载期间文档可能被外部改过（INIT / UPDATE）：按最新文本重算
+    const current = ctx.editor?.getView();
+    if (!current || current.state.doc.toString() !== markdown) return;
+    const card = parseQuickCards(markdown)[index];
+    if (!card || !card.text.trim()) return;
+    // 落在卡片自己身上：原地放下，不删也不插
+    if (lineIndex >= card.fromLine && lineIndex <= card.toLine) return;
+
+    // 卡片删除会带走块本身 + 块上下多余的连续空行（deleteQuickCard 的
+    // 整理逻辑）。目标行在「受影响的空行段」之后时，要按实际删掉的行数
+    // 整体上移；落在空行段里则插到压剩下的那个空行位置。
+    const original = markdown.split('\n');
+    let blankAboveStart = card.fromLine;
+    while (blankAboveStart > 0 && original[blankAboveStart - 1]!.trim() === '') {
+        blankAboveStart -= 1;
+    }
+    let blankBelowEnd = card.toLine + 1;
+    while (blankBelowEnd < original.length && original[blankBelowEnd]!.trim() === '') {
+        blankBelowEnd += 1;
+    }
+    const keepBlank = blankAboveStart > 0 && blankBelowEnd < original.length ? 1 : 0;
+    const removedLines =
+        card.toLine - card.fromLine + 1 +
+        (card.fromLine - blankAboveStart) +
+        (blankBelowEnd - card.toLine - 1) -
+        keepBlank;
+    let targetLine: number;
+    if (lineIndex < blankAboveStart) targetLine = lineIndex;
+    else if (lineIndex >= blankBelowEnd) targetLine = lineIndex - removedLines;
+    // 卡片下方全是空行（直到文末）：删卡会把尾部空行一起收掉，直接落到文末
+    else if (blankBelowEnd >= original.length) targetLine = Number.MAX_SAFE_INTEGER;
+    else targetLine = blankAboveStart;
+
+    const without = deleteQuickCard(markdown, index);
+    const next = insertPlainBlock(without, targetLine, card.text);
+    if (next !== markdown) applyDocumentEdit(next, 'live');
+}
+
+/** 在指定行之前插入一段普通 Markdown（需要时两侧各补一个空行）。 */
+function insertPlainBlock(
+    markdown: string,
+    lineIndex: number,
+    content: string
+): string {
+    const lines = markdown.split('\n');
+    const at = Math.max(0, Math.min(lineIndex, lines.length));
+    const block = content.replace(/\r\n?/g, '\n').split('\n');
+    const out = lines.slice(0, at);
+    const previous = out[out.length - 1];
+    // 与上一段之间隔一个空行（贴文首 / 上一行本来为空就不补）
+    if (previous !== undefined && previous.trim() !== '') out.push('');
+    out.push(...block);
+    const rest = lines.slice(at);
+    const nextLine = rest[0];
+    if (nextLine !== undefined && nextLine.trim() !== '') out.push('');
+    out.push(...rest);
+    return out.join('\n');
+}
+
+/**
+ * live 模式卡片快捷键（window 捕获阶段）。
+ *
+ * - Ctrl/Cmd+S 且正在编辑卡片：先提交卡片再强制落盘（与导图 onSave 一致）；
+ *   没在编辑卡片时不拦截，交给 VS Code 正常保存；
+ * - Delete / Ctrl+C/X/V：卡片被选中时焦点往往还留在正文里（卡片
+ *   pointerdown 被 preventDefault），这里转发给卡片栏，和导图的分流一致。
+ */
+function onLiveQuickCardsKeyDown(event: KeyboardEvent): void {
+    if (!liveQuickCards) return;
+    if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+        if (event.key.toLowerCase() === 's' && liveQuickCards.debugState().editing) {
+            event.preventDefault();
+            event.stopPropagation();
+            liveQuickCards.flushEdit();
+            ctx.vscode.postMessage({
+                type: MESSAGE_TYPES.SAVE_DOCUMENT,
+                content: ctx.editor?.getContent() ?? '',
+            });
+            return;
+        }
+    }
+    liveQuickCards.handleKey(event);
+}
+window.addEventListener('keydown', onLiveQuickCardsKeyDown, true);
 
 /**
  * 进入导图模式：隐藏文本容器（CM 实例保留），惰性创建/复用导图应用。
@@ -366,11 +730,16 @@ export async function applyEditorMode(mode: EditorMode): Promise<void> {
     const previousMode = ctx.currentEditorMode;
     ctx.currentEditorMode = mode;
     if (mode === 'mindmap') {
+        // 卡片栏挂在 #editor-pane 上，不随 #editor 隐藏：先收起来
+        liveQuickCards?.setHostVisible(false);
+        clearLiveCardDrop();
         leaveSlidesMode();
         await enterMindmapMode();
         return;
     }
     if (mode === 'slides') {
+        liveQuickCards?.setHostVisible(false);
+        clearLiveCardDrop();
         leaveMindmapMode();
         await enterSlidesMode();
         return;
@@ -397,6 +766,12 @@ export async function applyEditorMode(mode: EditorMode): Promise<void> {
                 ctx.editor?.revealLine(line);
             });
         }
+    }
+    // 卡片栏只属于 live：进入 live 补建 / 显示，切到其它文本模式收起
+    if (mode === 'live') syncLiveQuickCardsVisibility();
+    else {
+        liveQuickCards?.setHostVisible(false);
+        clearLiveCardDrop();
     }
 }
 
