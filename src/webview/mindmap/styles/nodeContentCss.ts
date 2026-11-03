@@ -174,19 +174,19 @@ export const NODE_CONTENT_CSS = `
     line-height: 0;
 }
 .lwm-node-image:not(.lwm-node-editing) .cm-md-image-wrapper {
-    /* 宽度档位（25–200%）在导图里以节点上限 30em 为基准：
-       默认 75% → 22.5em。--cm-md-media-ratio 是 ImageWidget 写入的
-       无单位小数（0.75），这里才能用 calc 乘出长度。 */
+    /* 宽度档位（25–200%）在导图里以 30em 为 100%：
+       用 width 而不是 max-width —— max-width 只会限制大图，小图/小图表
+       点「+」永远长不大（用户反馈的「± 不生效」）。
+       --cm-md-media-ratio 是 ImageWidget 写入的无单位小数（0.75）。 */
+    width: calc(30em * var(--cm-md-media-ratio, 0.75));
     max-width: calc(30em * var(--cm-md-media-ratio, 0.75));
     /* 行高归零后按顶边对齐，避免 vertical-align: middle 的基线偏移 */
     vertical-align: top;
 }
 .lwm-node-image:not(.lwm-node-editing) .cm-md-image {
-    /* 宽度跟着 wrapper 的档位走；高度不再单独设上限，
-       由图片按自身宽高比等比缩放（否则超过 100% 后高被卡住，
-       观感就是「只变宽不变高」） */
+    /* 图片填满 wrapper：档位放大时图片本身跟着放大，而不是只换外框 */
+    width: 100%;
     max-width: 100%;
-    width: auto;
     height: auto;
     vertical-align: top;
 }
@@ -199,11 +199,20 @@ export const NODE_CONTENT_CSS = `
     max-height: none;
 }
 /* mermaid 节点：和图片同一套口径 —— 宽度档位用**绝对长度**消费。
-   百分比 max-width 在导图「max-content 测量 + 固定节点宽」的组合下
-   不参与尺寸计算，会出现「± 只改宽度、高度不变」的假象。
-   SVG 自己的 height:auto 会按实际比例跟着缩放。 */
+   用 width 而不是 max-width：max-width 只在图表自然宽度之上做限制，
+   点「+」放大时图表本身不会变大。 */
 .lwm-node-mermaid:not(.lwm-node-editing) .cm-md-mermaid-wrapper {
+    width: calc(30em * var(--cm-md-media-ratio, 0.75));
     max-width: calc(30em * var(--cm-md-media-ratio, 0.75));
+    box-sizing: border-box;
+}
+/* mermaid 渲染出来的 svg 自带 inline 的 max-width（值为自然宽度），
+   普通 CSS 规则压不过 inline style —— 不写 !important 的话，包裹层变宽后
+   图表仍然停在自然尺寸，看起来就是「只缩放外框、不缩放内部图形」。
+   注意：本文件是 CSS 模板字符串，注释里禁止出现反引号。 */
+.lwm-node-mermaid:not(.lwm-node-editing) .cm-md-mermaid-wrapper svg {
+    max-width: 100% !important;
+    height: auto;
 }
 /* 数学块节点：图可能很高，默认截断。
    mermaid 不在这里封顶 —— 宽度已经由 wrapper 的档位（30em × 比例）兜住，

@@ -221,17 +221,10 @@ export function scheduleGrowEditingNode(app: MindMapApp, session: EditSession) :
         if (app.editSession !== session) return;
         if (!TEXT_NODE_KINDS.has(session.kind) && session.kind !== 'code') return;
         const content = session.display.view.contentDOM;
-        let height = content.offsetHeight;
-        if (session.kind === 'code') {
-            // 代码块保留 20 行上限（与 .lwm-node-code 的 max-height 同口径）。
-            // 编辑态 CSS 解除了 max-height，不在这里封顶的话，一段几百行的
-            // 代码会把画布撑成一条长龙。超出部分仍在节点内上下滚动。
-            const style = getComputedStyle(content);
-            const lineHeight = Number.parseFloat(style.lineHeight) || 0;
-            const fontSize = Number.parseFloat(style.fontSize) || 14;
-            const cap = 20 * lineHeight + 1.4 * fontSize + 12;
-            if (cap > 0) height = Math.min(height, cap);
-        }
+        // 代码块编辑态**不再单独封顶 20 行**：限高是显示态的排版预算，
+        // 编辑时按源码真实高度撑开（超出部分由画布/节点滚动承载）。
+        // 退出编辑仍由 finishEditDisplay 用 baseHeight 收回显示态高度。
+        const height = content.offsetHeight;
         app.canvas.growNodeHeight(session.uid, height);
     });
 }

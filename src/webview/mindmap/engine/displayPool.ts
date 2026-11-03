@@ -195,6 +195,22 @@ export function createDisplay(c: MapCanvas, node: MapNode) : void {
             const current = nodeRef.current;
             if (!current.wrapper || c.editingUid === current.uid) return;
             if (current.display?.editing || current.display?.destroyed) return;
+            // 代码节点达到 max-height 上限后，节点尺寸已经封顶：
+            // 之后 CM 只是把视口外的行补渲染出来，不会改变节点宽高。
+            // 这时再排一次「挪进离屏测量层 → 量 → 挪回来」纯属浪费 ——
+            // 用户滚动代码节点时正好触发，会闪一下白并把 scrollTop 重置回顶部。
+            if (current.kind === 'code') {
+                const maxHeight = Number.parseFloat(
+                    getComputedStyle(current.wrapper).maxHeight
+                );
+                if (
+                    Number.isFinite(maxHeight) &&
+                    maxHeight > 0 &&
+                    current.wrapper.clientHeight >= maxHeight - 1
+                ) {
+                    return;
+                }
+            }
             c.settleUids.add(current.uid);
             c.scheduleMeasureSettle();
         },
@@ -258,6 +274,15 @@ export function measureNodes(c: MapCanvas, nodes: MapNode[]) : void {
         node: MapNode;
         wrapper: HTMLElement;
         mounted: boolean;
+        /**
+         * 挂载中的节点原来的纵向滚动位置。
+         *
+         * 代码节点（`.lwm-node-code { overflow:auto }`）自己就是滚动容器，
+         * 测量时把 wrapper 挪进离屏测量层会重置 scrollTop —— 用户滚到
+         * 折行处时后台恰好补量一次，就会「白屏 + 跳回顶部」。量完挂回去
+         * 必须把位置还回去。
+         */
+        scrollTop: number;
     }
     const pending: Pending[] = [];
     for (const node of nodes) {
@@ -267,6 +292,7 @@ export function measureNodes(c: MapCanvas, nodes: MapNode[]) : void {
             node,
             wrapper,
             mounted: wrapper.parentElement === c.nodeLayer,
+            scrollTop: wrapper.scrollTop,
         });
         // 量之前清掉写死的尺寸，让 max-width / line-clamp 自然生效
         wrapper.style.width = 'max-content';
@@ -354,6 +380,11 @@ export function measureNodes(c: MapCanvas, nodes: MapNode[]) : void {
         item.wrapper.style.height = `${item.node.height}px`;
         if (item.mounted) {
             c.nodeLayer.appendChild(item.wrapper);
+            // 还原滚动位置（见 Pending.scrollTop 注释）。挂回 DOM 后再写，
+            // 否则新元素还没有滚动范围，数值会被夹成 0。
+            if (item.scrollTop > 0) {
+                item.wrapper.scrollTop = item.scrollTop;
+            }
             c.positionNode(item.node);
         } else {
             item.wrapper.remove();

@@ -575,7 +575,12 @@ function extractListItemText(doc: string, paragraph: SyntaxNode): string {
 
 /** 去掉行内图片 markdown，用于判断一个段落是否「纯图片」。 */
 function stripInlineImages(text: string): string {
-    return text.replace(/!\[[^\]]*\]\([^)]*\)/g, '');
+    // 图片后面的 `{width=50%}` 是图片自己的宽度属性，不属于「段落里的其他文字」：
+    // 不剥掉的话，用户点一次 ± 写入宽度属性后，纯图片段落会被误判成
+    // 普通段落 —— 节点丢掉 image 类型，图片工具栏（放大/复制/缩放）随之隐藏。
+    return text
+        .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+        .replace(/\{width=\d+%\}/g, '');
 }
 
 /**
