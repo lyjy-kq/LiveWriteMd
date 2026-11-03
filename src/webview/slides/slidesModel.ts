@@ -844,7 +844,23 @@ export function layoutOf(
  * 尺度参照 Marp 官方主题（同样是 1280×720），但整体比正文收一档：
  * 投影时标题过大会吃掉正文空间，一页反而装不下几条要点。
  */
+/**
+ * 幻灯片正文基准字号（由 SlidesApp 按 live 编辑器当前字号注入）。
+ *
+ * 纯函数层不能直接读 DOM；SlidesApp 在每次解析 / 测量前调用
+ * setSlideBodyFontPx，把 live 的「编辑器字号 × fontScale」写进来。
+ * 为 null 时退回 deck 的设计字号（独立探针 / 纯函数测试用）。
+ */
+let slideBodyFontPx: number | null = null;
+
+/** 设置幻灯片正文基准字号；传 null 恢复 deck 设计字号。 */
+export function setSlideBodyFontPx(px: number | null): void {
+    slideBodyFontPx = px && px > 0 ? px : null;
+}
+
+/** 标题字号：跟 live 走时与正文同基准（标题的放大由 live 的 hN CSS 负责）。 */
 export function titleFontSize(level: number, slideLevel: number): number {
+    if (slideBodyFontPx !== null) return slideBodyFontPx;
     // 章节页 42；只有一级标题时 34；内容页标题 30
     if (level === 1) return slideLevel === 2 ? 42 : 34;
     return 30;
@@ -853,10 +869,11 @@ export function titleFontSize(level: number, slideLevel: number): number {
 /**
  * 正文块的基准字号。
  *
- * 正文整体比标题更接近「投影也要看得清」的尺度：标题收小、正文放大，
- * 一页的阅读重心落到内容上。放不下时交给渲染层的等比缩放兜底。
+ * 跟 live 走时所有块共用同一个基准（和 live 正文完全一致，标题 / 代码的
+ * 字号差异交给 live 的 CSS）；没有注入时退回 deck 的设计字号。
  */
 export function bodyFontSize(block: { kind: BlockKind; level?: number }): number {
+    if (slideBodyFontPx !== null) return slideBodyFontPx;
     switch (block.kind) {
         case 'heading':
             // 页内小标题分两档：H3 34，H4 及以下 28

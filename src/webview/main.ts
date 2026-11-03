@@ -292,6 +292,8 @@ function initialize(): void {
                     `Settings updated: lineNumbers=${msg.settings.lineNumbers}, wordWrap=${msg.settings.wordWrap}, readableLineLength=${msg.settings.readableLineLength}, fontScale=${msg.settings.fontScale}`
                 );
             }
+            // 幻灯片正文字号跟 live 走：编辑器重配后再读一次当前字号
+            ctx.slidesApp?.applySettings();
         }
         // 编辑器标题栏的“显示/隐藏大纲”按钮走这条消息，可见性状态仍由 Webview 持有。
         if (msg && msg.type === 'outlineToggle') {
@@ -352,14 +354,14 @@ function initialize(): void {
             syncPerfMonitor();
             // 导图运行时设置（主题 / 展开层级 / 尺寸等）
             ctx.mindmapApp?.setSettings(readMindmapSettings());
-            // 幻灯片主题 / 分页级别（settingsState 已在上面 replaceAll 更新）
-            ctx.slidesApp?.applySettings();
             // 快速卡片（live / 幻灯片）：开关 / 宽度即时生效（关掉再打开会补建实例）
             syncQuickCardsVisibility();
             // 结构化设置（行号 / 换行等）重配置编辑器
             if (msg.settings && ctx.editor?.isReady()) {
                 ctx.editor.applySettings(msg.settings);
             }
+            // 幻灯片：字号 / 缩放 / 字体族可能刚变化，读完 live 当前字号再重建
+            ctx.slidesApp?.applySettings();
             sendLog('INFO', 'Settings change applied');
         },
         onOpenSettings: () => {

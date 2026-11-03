@@ -124,6 +124,9 @@ export async function handleInit(
         ctx.editor = new CodeMirrorEditor(container);
         ctx.editor.setFontScaleChangeHandler((fontScale: number) => {
             ctx.messageSender.sendFontScaleChange(fontScale);
+            // 幻灯片正文基准字号跟 live 走（编辑器字号 × 缩放）：
+            // 缩放后立即重排，不用等设置回环。
+            ctx.slidesApp?.applySettings();
         });
         ctx.editor.onSelectionChange((lineNumber: number) => {
             ctx.outlinePanel?.setActiveLine(lineNumber);

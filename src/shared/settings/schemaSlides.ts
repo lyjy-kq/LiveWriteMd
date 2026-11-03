@@ -2,8 +2,9 @@
  * 设置 Schema · 幻灯片域分组。
  *
  * 只放 PPT 模式自己的少量选项：配色主题、按哪一级标题分页。
- * 版式的具体字号 / 间距是 deck 设计的一部分，不作为设置暴露；
- * 正文的字体族仍然沿用「编辑器」分组里的中英文字体设置。
+ * 版面的长宽 / 留白仍是 deck 设计；正文的字体族、字号与缩放沿用
+ * 「编辑器」分组里的设置，因此同一份 Markdown 在 live / 导图 / PPT
+ * 里的字宽与缩进基准一致。
  *
  * @module shared/settings/schemaSlides
  */
@@ -15,7 +16,7 @@ export const SLIDES_SECTIONS: SettingSection[] = [
         label: '幻灯片',
         icon: '🖥️',
         description:
-            'PPT 模式下同一份 Markdown 的配色与分页方式。正文排版仍沿用「编辑器」里的字体设置。',
+            'PPT 模式下同一份 Markdown 的配色与分页方式。正文的字体、字号与缩放沿用「编辑器」设置，三个模式使用同一套排版基准。',
         items: [
             {
                 key: 'slidesTheme',

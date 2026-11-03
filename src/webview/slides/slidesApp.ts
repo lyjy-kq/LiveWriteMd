@@ -42,6 +42,7 @@ import {
     flattenItems,
     parseDeck,
     plainHeading,
+    setSlideBodyFontPx,
     titleFontSize,
     type Deck,
     type LogicalSlide,
@@ -264,6 +265,8 @@ export class SlidesApp {
     private rebuildTimer: number | null = null;
     private pendingAnchorLine: number | null = null;
     private pendingText: string | null = null;
+    /** 上一次使用的 live 正文基准字号（px），用于检测字号/缩放变化。 */
+    private liveBodyFontPx = 0;
 
     /**
      * 已渲染的页面：key = pageAnchorId（逻辑页 + 段 + 首个块 id）。
@@ -435,6 +438,8 @@ export class SlidesApp {
         this.resizeObserver.observe(this.stageWrap);
 
         this.updateChrome();
+        // 正文基准字号跟 live 走：构造时就注入，后续每次解析再刷新
+        this.syncLiveBodyFont();
     }
 
     // =================================================================
@@ -446,6 +451,8 @@ export class SlidesApp {
      * 模式里做无谓的后台排版。
      */
     setDocument(text: string, title?: string): void {
+        // 解析 / 分页用的是 live 当前字号：每次换文档前同步一次
+        this.syncLiveBodyFont();
         if (title) this.title = title;
         if (this.fullText === text) {
             if (!this.deck) this.dirty = true;
@@ -620,13 +627,21 @@ export class SlidesApp {
         }
     }
 
-    /** 设置面板变化：主题 / 分页级别 / 字体族。 */
+    /** 设置面板变化：主题 / 分页级别 / 字体族 / live 字号缩放。 */
     applySettings(): void {
         const next = readSlidesSettings();
         const nextFontSignature = this.computeFontSignature();
+        // live 的正文字号（编辑器字号 × fontScale）也算结构变化：
+        // 行高、折行、分页全部要按新字号重算。
+        const nextLiveFontPx = this.readLiveBodyFontPx();
+        const liveFontChanged =
+            Math.abs(nextLiveFontPx - this.liveBodyFontPx) > 0.01;
+        this.liveBodyFontPx = nextLiveFontPx;
+        setSlideBodyFontPx(nextLiveFontPx);
         const structural =
             next.headingLevel !== this.settings.headingLevel ||
-            nextFontSignature !== this.fontSignature;
+            nextFontSignature !== this.fontSignature ||
+            liveFontChanged;
         // 边框装饰只改页面类名，不用重新测量；但缓存页要重建
         const frameChanged = next.frame !== this.settings.frame;
 
@@ -865,8 +880,39 @@ export class SlidesApp {
         return this.settings.theme;
     }
 
+    /**
+     * 读 live 编辑器当前的正文基准字号（编辑器字号 × fontScale）。
+     *
+     * #editor .cm-content 的计算字号就是 live 正文的真实字号，包含用户
+     * 字体设置与 Ctrl+滚轮缩放；取不到时退回 14px。
+     */
+    private readLiveBodyFontPx(): number {
+        const content = document.querySelector<HTMLElement>(
+            '#editor .cm-content'
+        );
+        if (content) {
+            const px = Number.parseFloat(getComputedStyle(content).fontSize);
+            if (Number.isFinite(px) && px > 0) return px;
+        }
+        return 14;
+    }
+
+    /**
+     * 把 live 的基准字号同步给纯函数层。
+     *
+     * bodyFontSize / titleFontSize 是纯函数（解析、分页、测量都会用），
+     * 由这里在每次解析前注入；字号跟 live 走之后，三个模式的正文
+     * 字号 / 缩进基准就是同一套设置。
+     */
+    private syncLiveBodyFont(): void {
+        this.liveBodyFontPx = this.readLiveBodyFontPx();
+        setSlideBodyFontPx(this.liveBodyFontPx);
+    }
+
     /** 解析 → 测当前页 → 分页 → 渲染；其余页在后台补测。 */
     private async rebuild(anchorLine: number | null): Promise<void> {
+        // 纯函数分页依赖的基准字号：每次重建前按 live 当前字号刷新
+        this.syncLiveBodyFont();
         const token = ++this.rebuildToken;
         this.cancelPump();
         // 重建期间别在空闲帧里建页，等新分页出来再由 renderPage 重新安排
