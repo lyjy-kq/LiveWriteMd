@@ -14,7 +14,7 @@ import { blockquoteLevelDecos, boldMarkDeco, codeMarkDeco, headingLineDecos, hid
 import { isInlineRenderable, isWithinActiveInline } from './inline/focusMarks.js';
 import { parseInlineImageTag } from './inline/inlineEngine.js';
 import { collectMathSourceRanges } from './math/mathCollect.js';
-import { createCodeBlockIndentStyle, getCodeBlockIndentInfo } from './measure/codeIndent.js';
+import { CODE_BLOCK_LINE_SEPARATOR_STYLE, createCodeBlockHangingIndentStyle, createCodeBlockIndentStyle, getCodeBlockIndentInfo } from './measure/codeIndent.js';
 import { extractFencedCodeContent, extractFencedCodeLanguage, isQuickCardCloseLine } from './measure/sourceParse.js';
 import type { MeasureEnv } from './measure/textMeasure.js';
 import { DEFAULT_MEDIA_WIDTH_PERCENT, measureTrailingWidthAttribute, parseMediaWidthPercent, splitTrailingWidthAttribute } from './mediaWidth.js';
@@ -648,10 +648,24 @@ export function applyTreeDecorations(
                                         ? state.tabSize * unitText.length
                                         : unitText.length;
                                 classes.push('cm-md-codeblock-indent');
-                                attributes.style = createCodeBlockIndentStyle(
-                                    indentColumns,
-                                    indentUnitColumns
-                                );
+                                // 续行缩进 = 本行源码缩进 + **一级**（indentUnit）。
+                                // 多出来的一级只做排版，不铺彩虹色带：
+                                // 色带仍然只覆盖真实的行首空白列（indentColumns）。
+                                const hangingColumns = indentColumns + indentUnitColumns;
+                                const styleParts = [
+                                    // 内容盒右移了 hangingColumns 列，色带坐标补偿回去
+                                    createCodeBlockIndentStyle(
+                                        indentColumns,
+                                        indentUnitColumns,
+                                        hangingColumns
+                                    ),
+                                ];
+                                const hanging = createCodeBlockHangingIndentStyle(hangingColumns);
+                                if (hanging) styleParts.push(hanging);
+                                // 源码行之间的细分隔线：折行片段归到同一行尾部，
+                                // 不会在片段之间画线
+                                styleParts.push(CODE_BLOCK_LINE_SEPARATOR_STYLE);
+                                attributes.style = styleParts.join('; ');
                             }
                             decos.push(
                                 Decoration.line({

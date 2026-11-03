@@ -90,7 +90,7 @@ import { isTableLikeBlock, splitRowText } from '../table/tableDetect.js';
 // 引用聚焦的悬挂缩进要叠在「正文与行号线距离」之上（.cm-line 的默认左内边距）
 import { settingsState } from '../../../../settings/settingsState.js';
 import { isSetextBeforeFence } from '../ranges.js';
-import { createCodeBlockIndentStyle, getCodeBlockIndentInfo } from '../measure/codeIndent.js';
+import { CODE_BLOCK_LINE_SEPARATOR_STYLE, createCodeBlockHangingIndentStyle, createCodeBlockIndentStyle, getCodeBlockIndentInfo } from '../measure/codeIndent.js';
 import { indentUnit } from '@codemirror/language';
 import { isForcedSourceRange } from '../state.js';
 import { inlineMathFocusSignature } from '../math/mathCollect.js';
@@ -718,10 +718,19 @@ export function collectFocusDecorations(
                             state.tabSize
                         ).columns;
                         classes.push('cm-md-codeblock-indent');
-                        attributes.style = createCodeBlockIndentStyle(
-                            indentColumns,
-                            indentUnitColumns
-                        );
+                        // 续行 = 源码缩进 + 一级；多出的一级不铺彩虹色带
+                        const hangingColumns = indentColumns + indentUnitColumns;
+                        const styleParts = [
+                            createCodeBlockIndentStyle(
+                                indentColumns,
+                                indentUnitColumns,
+                                hangingColumns
+                            ),
+                        ];
+                        const hanging = createCodeBlockHangingIndentStyle(hangingColumns);
+                        if (hanging) styleParts.push(hanging);
+                        styleParts.push(CODE_BLOCK_LINE_SEPARATOR_STYLE);
+                        attributes.style = styleParts.join('; ');
                     }
                     decos.push(
                         Decoration.line({

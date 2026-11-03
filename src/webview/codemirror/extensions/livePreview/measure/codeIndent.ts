@@ -78,9 +78,16 @@ export function getCodeBlockIndentInfo(lineText: string, tabSize = CODE_TAB_COLU
  *
  * @param columns - 行首空白的视觉列数（getCodeBlockIndentInfo 算出）
  * @param unitColumns - 一个缩进单位（indentUnit）占几列；色带按此宽度轮换
+ * @param hangingColumns - 该行启用了多少列的悬挂缩进（padding-left / text-indent
+ *        的补偿值）。折行时内容盒整体右移了这么多列，色带坐标要相应左移，
+ *        才能和第一行文字重新对齐；不折行时通常就是 columns 本身。
  * @returns 可直接写入 line decoration attributes.style 的样式字符串
  */
-export function createCodeBlockIndentStyle(columns: number, unitColumns: number): string {
+export function createCodeBlockIndentStyle(
+    columns: number,
+    unitColumns: number,
+    hangingColumns = 0
+): string {
     const backgroundColor = 'var(--vscode-textCodeBlock-background, rgba(128,128,128,0.08))';
     const palette = [
         'rgba(235, 131, 131, 0.18)',
@@ -119,7 +126,10 @@ export function createCodeBlockIndentStyle(columns: number, unitColumns: number)
 
         layers.push(`linear-gradient(${palette[i % palette.length]}, ${palette[i % palette.length]})`);
         // ch = 行字体里一列的宽度；小数列（widthCols 恒为整数，保留写法兜底）也准。
-        positions.push(`${startCols.toFixed(2)}ch 0`);
+        // 启用悬挂缩进时内容盒右移了 hangingColumns 列，色带坐标补偿回去，
+        // 否则色带会整体比第一行文字右偏一个缩进宽度。
+        const shift = startCols - hangingColumns;
+        positions.push(`${shift.toFixed(2)}ch 0`);
         sizes.push(`${widthCols.toFixed(2)}ch 100%`);
     }
 
@@ -137,4 +147,36 @@ export function createCodeBlockIndentStyle(columns: number, unitColumns: number)
         `background-size: ${sizes.join(', ')}`,
     ].join('; ');
 }
+
+/**
+ * 代码行「折行片段悬挂缩进」的内联样式。
+ *
+ * 代码块恢复折行后，一行代码会在任意列断开。默认续行从行盒左缘开始，
+ * 和下一行源码顶格排在一起，分不清是上一行折下来的还是新的一行。
+ * 这里按行首空白的列数做悬挂缩进：
+ * - `padding-left` 右移缩进列，续行从代码真正的缩进列开始；
+ * - `text-indent` 负回同样的列数，第一行仍从原位置开始（视觉零位移）。
+ *
+ * 用 ch 单位（等宽字体 1ch = 一列），与彩虹缩进色带同一套口径。
+ *
+ * @param columns - 行首空白的视觉列数；0 表示不缩进（返回空串）
+ * @returns 可拼进行装饰 attributes.style 的样式串
+ */
+export function createCodeBlockHangingIndentStyle(columns: number): string {
+    if (columns <= 0) return '';
+    return [
+        `padding-left: calc(var(--livewritemd-line-padding-left, 4px) + ${columns}ch)`,
+        `text-indent: -${columns}ch`,
+    ].join('; ');
+}
+
+/**
+ * 源码行之间的细分隔线（inset 阴影，不占布局）。
+ *
+ * 画在整行盒的底部：同一源码行的折行片段之间**不会**出现线，只有这一行
+ * 全部折完、到下一行源码时才有一条。左右两条线保持与 `.cm-md-codeblock`
+ * 原样式一致（inline box-shadow 会整体顶替类上的 box-shadow，必须照抄）。
+ */
+export const CODE_BLOCK_LINE_SEPARATOR_STYLE =
+    'box-shadow: inset 1px 0 0 var(--cm-codeblock-edge), inset -1px 0 0 var(--cm-codeblock-edge), inset 0 -1px 0 var(--cm-codeblock-edge)';
 
