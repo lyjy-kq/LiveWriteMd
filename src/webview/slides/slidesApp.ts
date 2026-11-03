@@ -26,6 +26,7 @@ import {
 } from '../mindmap/miniCm.js';
 import { parseQuickCards } from '../mindmap/edit/staging.js';
 import { setMeasureRootOverride } from '../codemirror/extensions/livePreview/measure/textMeasure.js';
+import { measureWhitespacePx } from '../codemirror/extensions/livePreview/measure/listIndent.js';
 import { tableRemeasureEffect } from '../codemirror/extensions/livePreview/state.js';
 import { settingsState } from '../settings/settingsState.js';
 import { sendLog } from '../host/logForward.js';
@@ -1492,6 +1493,36 @@ export class SlidesApp {
     // =================================================================
 
     /**
+     * 量出片段被 dedent 掉的那段行首空白有多宽（px）。
+     *
+     * 分页把列表链切开后，续页片段的首个条目仍带原始缩进；渲染前这段
+     * 空白被去掉（≥4 格会被当成缩进代码块），要靠左内边距补回来。
+     * 写死「每级 20px」在 28/30px 字号下会明显偏窄，同一层级换页后横向
+     * 跳；这里用和 live listIndentDecorations 同一套 canvas 口径，按块
+     * 的真实字号 / 字体族量。
+     *
+     * 字体族必须在 .slides-measure 里解析：块 wrap 还没挂进文档时
+     * getComputedStyle 拿不到可用的 font-family。
+     */
+    private measureFragmentIndent(indentText: string, font: number): number {
+        if (!indentText) return 0;
+        const probe = document.createElement('span');
+        probe.style.cssText =
+            'position:fixed;left:-30000px;top:0;visibility:hidden;white-space:pre';
+        probe.style.fontSize = `${font}px`;
+        probe.style.fontFamily =
+            'var(--livewritemd-editor-font-family, var(--vscode-editor-font-family, sans-serif))';
+        this.measureHost.appendChild(probe);
+        const family = getComputedStyle(probe).fontFamily || 'sans-serif';
+        probe.remove();
+        return measureWhitespacePx(indentText, {
+            size: font,
+            family,
+            weight: '400',
+        });
+    }
+
+    /**
      * 创建一个块显示。
      *
      * 所有块都带哨兵行：整篇文档只有一个块时，光标永远落在块内会禁用
@@ -1512,11 +1543,18 @@ export class SlidesApp {
             `${font}px`
         );
         // 嵌套节点（列表项的子内容）渲染时源码已去掉公共缩进，
-        // 用左内边距补回层级；测量与渲染共用这里，所以高度口径一致。
-        const depth = block.depth ?? 0;
-        const nodeIndent = depth > 1 ? (depth - 1) * NODE_INDENT_PX : 0;
+        // 用左内边距补回层级。按块的真实字体量出 indentText 的像素宽，
+        // 不用写死的「每级 20px」：28/30px 字号下会偏窄，换页后横向跳。
+        const indentText = block.indent ?? '';
+        const measuredIndent = this.measureFragmentIndent(indentText, font);
+        const nodeIndent =
+            measuredIndent > 0
+                ? measuredIndent
+                : block.depth && block.depth > 1
+                  ? (block.depth - 1) * NODE_INDENT_PX
+                  : 0;
         if (nodeIndent > 0) {
-            wrap.style.paddingLeft = `${nodeIndent}px`;
+            wrap.style.paddingLeft = `${nodeIndent.toFixed(2)}px`;
         }
         // 表格列宽不能去猜 zoom 后的 clientWidth（CSS zoom 下它和排版
         // 宽度不是一回事），直接把这一块的可用宽写进变量，测量与渲染
@@ -2060,12 +2098,13 @@ export class SlidesApp {
               : 'slide-body';
 
         const addBlock = (block: SlideBlock, column?: HTMLElement): void => {
+            // 半栏页的块按半栏宽分表格列；整页按内容宽
+            const blockWidth = column ? COLUMN_W : CONTENT_W;
             const { wrap, display } = this.createBlockDisplay(
                 block,
                 bodyFontSize(block),
                 '',
-                // 半栏页的块按半栏宽分表格列；整页按内容宽
-                column ? COLUMN_W : CONTENT_W
+                blockWidth
             );
             // 分栏用的合成块带 #L / #R 后缀，缩放比例记在原块 id 上
             const fit =

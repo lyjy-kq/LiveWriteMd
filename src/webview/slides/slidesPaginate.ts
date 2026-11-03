@@ -686,11 +686,16 @@ function completeSubtree(
 /**
  * 把一页的节点折成渲染片段。
  *
- * 同一父节点下、子树完整的连续兄弟合并成一个片段：整段列表仍然只有一个
- * mini-CM（圆点、缩进、编号、编辑行为都与正文一致）。只有子树被分页 /
- * 分栏切开时，父节点才退化成「只渲染自身」，子节点随后单独成片段。
- * 嵌套片段会去掉公共缩进，靠 CSS 左内边距补回视觉层级。
+ * 同一源码块里的连续内容合并成一个片段：同级兄弟在子树完整时整棵并进来；
+ * 子树被分页 / 分栏切开时，也把「这一页实际包含的那段子孙」继续并进当前
+ * 片段，而不是让父节点退化成一行、子节点各成一块。
  *
+ * 为什么必须这样：每个片段都是一个独立的 slide-block，自带 .slide-body 的
+ * 16px 块间距和 cm-content 的上下 padding。一条嵌套列表链如果被拆成一行
+ * 一个片段，视觉上就是「一行一个节点、间距巨大」，还很容易触发页面溢出；
+ * 合并后每页最多一个列表块，行距/缩进与 live 的同一份渲染完全一致。
+ *
+ * 嵌套片段会去掉公共缩进（dedentText），靠 CSS 左内边距补回视觉层级。
  * 切片必须用 deck.parseText（卡片行已清空、行数不变）：松散列表 / HTML
  * block 可以跨过卡片行，用原文切会把卡片内容重新带回幻灯片。跨卡片行的
  * 片段在 SlidesApp.attachEdit 里会被判成只读，避免回写删卡。
@@ -728,31 +733,48 @@ function buildFragments(
             continue;
         }
 
-        // 合并当前父节点下、子树完整的一段连续兄弟。
-        let end = i;
+        // 合并同一源码块里的连续内容（见函数头注释）：
+        // - 第一个节点无条件纳入；
+        // - 之后要么是它（或刚并入的兄弟）的子孙（按 pre-order 紧接），
+        //   要么是它的同级兄弟（同 parentId / depth）；
+        // - 兄弟的子树完整时整棵并进来，被切开时先并它自身，子孙在下几轮
+        //   按「后裔」继续并进来。
+        // allowedToLine = 已纳入根节点的最大子树末行：子孙的 fromLine 落在
+        // 这个范围内就属于当前片段；跨过它且不是同级兄弟，片段到此为止。
+        let end = i + 1;
         let last = first;
+        let allowedToLine = first.subtreeToLine;
+        let endLine = first.toLine;
         while (end < items.length) {
             const node = items[end];
-            if (node.synthetic) break;
-            if (
-                // 只有同一个源码块（同一条列表）里的节点才合并：
-                // 顶层段落 / 表格各是独立块，合并会把它们塞进同一个编辑器。
-                node.blockId !== first.blockId ||
-                node.parentId !== first.parentId ||
-                node.depth !== first.depth
-            ) {
-                break;
+            if (node.blockId !== first.blockId || node.synthetic) break;
+            const inside = node.fromLine <= allowedToLine;
+            const siblingOfFirst =
+                node.parentId === first.parentId && node.depth === first.depth;
+            if (!inside && !siblingOfFirst) break;
+            if (siblingOfFirst) {
+                const subtree = completeSubtree(items, end, node);
+                if (subtree) {
+                    last = subtree[subtree.length - 1];
+                    endLine = Math.max(endLine, node.subtreeToLine);
+                    end += subtree.length;
+                } else {
+                    // 兄弟的子树被页/栏切开：先并兄弟自身，后面的子孙
+                    // 会在下一轮按后裔继续并入
+                    last = node;
+                    endLine = Math.max(endLine, node.toLine);
+                    end += 1;
+                }
+                allowedToLine = Math.max(allowedToLine, node.subtreeToLine);
+                continue;
             }
-            const subtree = completeSubtree(items, end, node);
-            // 子树被页/栏切开：父节点只渲染自身，子节点随后处理
-            if (!subtree) break;
-            last = subtree[subtree.length - 1];
-            end += subtree.length;
+            // 子孙节点：只并入自身内容，它的子节点随后按 pre-order 继续
+            last = node;
+            endLine = Math.max(endLine, node.toLine);
+            allowedToLine = Math.max(allowedToLine, node.subtreeToLine);
+            end += 1;
         }
 
-        // 当前节点子树不完整：只渲染自身内容，下一轮处理它的子节点。
-        const selfOnly = end === i;
-        const endLine = selfOnly ? first.toLine : last.subtreeToLine;
         const raw = lines.slice(first.fromLine, endLine + 1).join('\n');
 
         const fragment: SlideBlock = {
@@ -773,7 +795,8 @@ function buildFragments(
             end - i === 1 ? fitByItem.get(first.id) : undefined;
         if (scale !== undefined) fitByItem.set(fragment.id, scale);
         out.push(fragment);
-        i = selfOnly ? i + 1 : end;
+        // 至少消费了 first 自己；end 是下一个未处理的下标
+        i = end;
     }
 
     return out;
