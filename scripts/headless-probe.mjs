@@ -111,6 +111,11 @@ async function main() {
             pageExceptions.push(
                 (d?.exception?.description ?? d?.text ?? '(unknown)').split('\n').slice(0, 6).join('\n')
             );
+        } else if (msg.method === 'Runtime.consoleAPICalled') {
+            const args = (msg.params?.args ?? [])
+                .map((a) => a.value ?? a.description ?? '')
+                .join(' ');
+            if (args) console.log('[console]', args);
         }
     };
     const send = (method, params = {}, sessionId = undefined) =>

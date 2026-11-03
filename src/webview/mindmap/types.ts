@@ -74,9 +74,6 @@ export interface MindMapTreeNode {
     children: MindMapTreeNode[];
 }
 
-/** 性能监测浮层档位：关闭 / 极简 / 完整。 */
-export type PerfMonitorMode = 'off' | 'minimal' | 'full';
-
 /** 导图相关设置（从 allSettings 里抽取）。 */
 export interface MindMapRuntimeSettings {
     /** 配色：auto 跟随编辑器明暗 / default 等具体主题名。 */
@@ -87,8 +84,8 @@ export interface MindMapRuntimeSettings {
     mindmapNodeMaxWidth: number;
     /** 文本节点最大行数，超出截断加省略号。 */
     mindmapNodeMaxLines: number;
-    /** 代码块节点最小宽度（列 = 等宽字符 ch；0 = 不设）。 */
-    mindmapCodeMinWidth: number;
+    /** 代码块节点最大宽度（列 = 等宽字符 ch；节点最窄 40 列）。 */
+    mindmapCodeWidth: number;
     /**
      * 手势期间是否放弃合成层提升（清晰度优先）。
      *
@@ -107,13 +104,6 @@ export interface MindMapRuntimeSettings {
      * 虚线箭头，从内链所在节点指向目标标题节点，点击箭头跳转聚焦目标。
      */
     mindmapInternalLinks: boolean;
-    /**
-     * 画布右上角的性能监测浮层（默认关闭）。
-     *
-     * - minimal：无边框，只显示帧率与堆内存；
-     * - full：另含实例数 / 换真队列 / 强制布局速率与尖峰记录。
-     */
-    mindmapPerfMonitor: PerfMonitorMode;
     /** 是否显示右边界快速卡片栏（默认开启）。 */
     quickCardEnabled: boolean;
     /** 快速卡片宽度（px）：全局生效，拖动卡片左边界调整并持久化。 */

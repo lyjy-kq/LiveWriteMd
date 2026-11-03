@@ -24,18 +24,7 @@ export const EDITOR_SECTIONS: SettingSection[] = [
                     { value: 'source', label: '源码（只看 Markdown 原文）' },
                     { value: 'viewer', label: '阅读（只读渲染视图）' },
                     { value: 'mindmap', label: '思维导图（画布式大纲）' },
-                ],
-            },
-            {
-                key: 'modeSwitcher',
-                label: '标题栏模式切换样式',
-                description:
-                    '选循环则标题栏只有一个按钮，点一下换到下一个模式；选按钮则直接列出其他几个模式。',
-                control: 'select',
-                default: 'cycle',
-                options: [
-                    { value: 'cycle', label: '循环（单按钮轮流切换）' },
-                    { value: 'buttons', label: '按钮（直达另外三种模式）' },
+                    { value: 'slides', label: '幻灯片（16:9 自动分页）' },
                 ],
             },
             {

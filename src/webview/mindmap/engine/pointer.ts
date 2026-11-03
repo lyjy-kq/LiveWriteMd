@@ -62,6 +62,52 @@ export function bindEvents(c: MapCanvas) : void {
 // 指针交互
 // ==================================================================
 
+/**
+ * 指针是否落在节点自己的原生滚动条上。
+ *
+ * 代码 / 表格节点用节点盒当滚动容器（`.lwm-node-code { overflow: auto }`），
+ * 滚轮和原生滚动条都能滚。滚动条上的按下必须交还给浏览器 —— 画布如果
+ * 照常建 node 指针，拖滚动条就会把节点一起拖走（滚和拖没法同时用）。
+ *
+ * 厚度用 `offsetWidth - clientWidth - 左右 border` 推出来；命中判定按
+ * `getBoundingClientRect` 与 `offsetWidth` 的比值换算（导图世界层有缩放）。
+ * 节点不可滚动时两块厚度都是 0，直接不命中。
+ *
+ * @param wrapper - 节点根元素（滚动容器）
+ * @param event - 指针按下事件
+ * @returns 落在右侧竖直滚动条或底部横向滚动条上时返回 true
+ */
+function isOnNodeScrollbar(wrapper: HTMLElement, event: PointerEvent): boolean {
+    const verticallyScrollable = wrapper.scrollHeight > wrapper.clientHeight;
+    const horizontallyScrollable = wrapper.scrollWidth > wrapper.clientWidth;
+    if (!verticallyScrollable && !horizontallyScrollable) return false;
+    const cs = getComputedStyle(wrapper);
+    const bl = Number.parseFloat(cs.borderLeftWidth) || 0;
+    const br = Number.parseFloat(cs.borderRightWidth) || 0;
+    const bt = Number.parseFloat(cs.borderTopWidth) || 0;
+    const bb = Number.parseFloat(cs.borderBottomWidth) || 0;
+    const barY = wrapper.offsetWidth - wrapper.clientWidth - bl - br;
+    const barX = wrapper.offsetHeight - wrapper.clientHeight - bt - bb;
+    const rect = wrapper.getBoundingClientRect();
+    const scaleX = wrapper.offsetWidth > 0 ? rect.width / wrapper.offsetWidth : 1;
+    const scaleY = wrapper.offsetHeight > 0 ? rect.height / wrapper.offsetHeight : 1;
+    // 竖直滚动条：右侧一条竖带
+    if (verticallyScrollable && barY > 1) {
+        const start = rect.right - (br + barY) * scaleX;
+        if (event.clientX >= start && event.clientY >= rect.top && event.clientY <= rect.bottom) {
+            return true;
+        }
+    }
+    // 横向滚动条：底部一条横带
+    if (horizontallyScrollable && barX > 1) {
+        const start = rect.bottom - (bb + barX) * scaleY;
+        if (event.clientY >= start && event.clientX >= rect.left && event.clientX <= rect.right) {
+            return true;
+        }
+    }
+    return false;
+}
+
 export function handlePointerDown(c: MapCanvas, event: PointerEvent) : void {
     if (!c.active || event.button === 2) return;
     const target = event.target as Element | null;
@@ -136,9 +182,18 @@ export function handlePointerDown(c: MapCanvas, event: PointerEvent) : void {
     // 编辑中的节点：CM 自己处理选字/光标（含拖动选择）
     if (inNode && uid === c.editingUid) return;
 
+    // 节点自己的滚动条：按下属于「拖滚动条」，不能启动节点拖动 / 框选，
+    // 否则拖滚动条会把节点一起拖走（滚动和拖动没法并行）。
+    // 不 preventDefault：原生滚动条要继续拿到这次手势。
+    if (inNode && isOnNodeScrollbar(wrapper!, event)) return;
+
     // Ctrl / Cmd + 按下：进入「框选或切换选中」手势。
     // 不抢占文字选择：落在 CM 正文里且没拖动时，交给上层当 Ctrl 点处理。
     if (event.ctrlKey || event.metaKey) {
+        // 先通知上层清掉上一次多选（框 + 节点选中态）：新一轮 Ctrl 手势
+        // 应该从空集合开始。放在这里而不是 pointerup，是因为「按下」
+        // 就是新一轮手势的开始，旧选中框不该再等到松手才消失。
+        c.options.onMultiGestureStart?.();
         c.pointer = {
             kind: 'marquee',
             pointerId: event.pointerId,

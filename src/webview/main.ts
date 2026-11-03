@@ -31,6 +31,11 @@ import { EditorContextMenu, type EditorMode } from './editing/editorContextMenu.
 import { settingsState } from './settings/settingsState.js';
 import { settingsPanel } from './settings/settingsPanel.js';
 import {
+    setPerfSnapshotProvider,
+    syncPerfMonitor,
+} from './perf/perfMonitor.js';
+import { buildEditorPerfSnapshot } from './perf/editorSnapshot.js';
+import {
     handleImageSaved,
     handleImageSaveError,
 } from './editing/imageDropHandler.js';
@@ -135,6 +140,12 @@ function initialize(): void {
         `Webview initializing: readyState=${document.readyState}, hasEditor=${Boolean(document.getElementById('editor'))}`
     );
 
+    // 全局性能监测：提供者只读 ctx，切模式后下一次刷新自动换指标；
+    // 此时 settingsState 还是 schema 默认值（off），INIT 应用完 allSettings
+    // 后会再 sync 一次真正挂上。
+    setPerfSnapshotProvider(buildEditorPerfSnapshot);
+    syncPerfMonitor();
+
     // 右侧大纲面板直接复用 HTML 里准备好的壳子，只负责渲染和交互。
     const panelEl = document.getElementById('outline-pane');
     const contentEl = document.getElementById('outline-content');
@@ -154,6 +165,14 @@ function initialize(): void {
                 if (ctx.currentEditorMode === 'mindmap' && ctx.mindmapApp) {
                     if (ctx.mindmapApp.selectNodeAtLine(line - 1)) return;
                 }
+                // 幻灯片模式：跳到包含该行的物理页（行号同样 1-based → 0-based）
+                if (
+                    ctx.currentEditorMode === 'slides' &&
+                    ctx.slidesApp &&
+                    ctx.slidesApp.goToLine(line - 1)
+                ) {
+                    return;
+                }
                 ctx.editor?.scrollToLine(line);
             },
             isEditable: () => ctx.editor?.isEditable() ?? false,
@@ -171,7 +190,7 @@ function initialize(): void {
             // 导图设置在本 webview 立即生效，不等扩展侧回环：
             // UPDATE_SETTING → 写配置 → onDidChangeConfiguration → 再广播回来，
             // 隔着两次 IPC，拖滑杆时节点要滞后一拍才变（用户看到的就是
-            // 「代码块最小宽度改了没反应，再动一下才生效」）。
+            // 「代码块宽度改了没反应，再动一下才生效」）。
             // settingsState 已在面板 commit 时更新过，这里直接重测重排。
             // quickCard* 也是导图运行时设置（卡片栏开关），
             // 只匹配 mindmap 前缀会让「快速卡片」分组拖滑杆没反应。
@@ -180,6 +199,15 @@ function initialize(): void {
                 ctx.mindmapApp
             ) {
                 ctx.mindmapApp.setSettings(readMindmapSettings());
+            }
+            // 幻灯片设置（deck 主题 / 自动分页标题级别）同样本地立即生效：
+            // settingsState 在面板 commit 时已经写入，applySettings 会清缓存重排
+            if (key.startsWith('slides') && ctx.slidesApp) {
+                ctx.slidesApp.applySettings();
+            }
+            // 性能监测是全局浮层：本地改完立刻挂 / 摘，不等扩展侧回环
+            if (key === 'perfMonitor') {
+                syncPerfMonitor();
             }
         });
         sendLog('INFO', 'Outline panel initialized');
@@ -280,6 +308,7 @@ function initialize(): void {
                     docLines: view?.state.doc.lines ?? 0,
                     mode: ctx.currentEditorMode,
                     mapStats: ctx.mindmapApp ? ctx.mindmapApp.debugStats() : null,
+                    slidesStats: ctx.slidesApp ? ctx.slidesApp.debugStats() : null,
                 }),
             });
         }
@@ -313,8 +342,12 @@ function initialize(): void {
         onSettingsChange: (msg) => {
             // 完整设置 → CSS 变量 / 运行时读取
             if (msg.allSettings) settingsState.replaceAll(msg.allSettings);
-            // 导图运行时设置（主题 / 展开层级 / 尺寸 / 性能监测等）
+            // 全局性能监测浮层：档位可能被外部设置 / 迁移改变
+            syncPerfMonitor();
+            // 导图运行时设置（主题 / 展开层级 / 尺寸等）
             ctx.mindmapApp?.setSettings(readMindmapSettings());
+            // 幻灯片主题 / 分页级别（settingsState 已在上面 replaceAll 更新）
+            ctx.slidesApp?.applySettings();
             // 结构化设置（行号 / 换行等）重配置编辑器
             if (msg.settings && ctx.editor?.isReady()) {
                 ctx.editor.applySettings(msg.settings);
@@ -342,6 +375,12 @@ function initialize(): void {
     //
     window.addEventListener('focus', () => {
         sendLog('DEBUG', 'Window focus event received');
+        // 幻灯片模式下主编辑器是隐藏的（#editor hidden），别把焦点抢过去，
+        // 否则页面内的块编辑器会立刻失焦、提交刚点开的编辑
+        if (ctx.currentEditorMode === 'slides') {
+            sendLog('DEBUG', 'Editor focus restore skipped in slides mode');
+            return;
+        }
         if (isInteractiveFocusTarget(document.activeElement)) {
             sendLog('DEBUG', 'Editor focus restore skipped for interactive element');
             return;

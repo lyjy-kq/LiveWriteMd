@@ -61,6 +61,23 @@ export function handleNodeClick(app: MindMapApp, node: MapNode, event: MouseEven
 
 
 /**
+ * Ctrl / Cmd 多选手势开始（画布上按下鼠标那一刻）。
+ *
+ * 一次新的多选手势应该从空集合开始：把上一次多选留下的选择框和节点选中态
+ * 一起清掉，用户才分得清哪些是这一轮刚选的。
+ *
+ * 同时消费掉「单独按 Ctrl 清空」的待办标记 —— 这次 Ctrl 已经用在鼠标
+ * 手势上了，松手时不能再清一遍刚选好的东西。
+ */
+export function beginMultiGesture(app: MindMapApp) : void {
+    app.ctrlClearArmed = false;
+    if (app.multiSelected.size > 0) {
+        app.clearSelection();
+    }
+}
+
+
+/**
  * Ctrl 点：把一个节点加入 / 移出多选集合。
  *
  * 集合为空时回落到普通单选，避免「取消最后一个多选后什么都点不了」。

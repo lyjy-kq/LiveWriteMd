@@ -186,6 +186,18 @@ export function createDisplay(c: MapCanvas, node: MapNode) : void {
         // 显示态按钮（mermaid 宽度、表格加行/列）改了本地文档后，
         // 立刻交给上层回写源文档
         onDisplayChange: (text) => c.options.onDisplayEdit?.(nodeRef.current, text),
+        // mini-CM 首帧之后的几何变化（表格列宽重算 → 格子折行 → 行数变多、
+        // 字体/异步 widget 排版）：节点盒子的尺寸是一次量完写死的，这里把
+        // 节点重新排进补量队列，否则多出来的内容会被节点 CSS 的
+        // `overflow: hidden` 裁掉（导图里表格最后一行只露半行）。
+        // 编辑中的节点跳过：那边由 growNodeHeight 按输入实时撑高。
+        onLayoutChange: () => {
+            const current = nodeRef.current;
+            if (!current.wrapper || c.editingUid === current.uid) return;
+            if (current.display?.editing || current.display?.destroyed) return;
+            c.settleUids.add(current.uid);
+            c.scheduleMeasureSettle();
+        },
     });
     c.createdTotal += 1;
     wrapper.replaceChildren(display.container);
@@ -211,6 +223,8 @@ export function setPlaceholder(c: MapCanvas, node: MapNode, doc?: string) : void
     const text = doc ?? c.options.computeDoc(node).doc;
     const el = document.createElement('div');
     el.className = 'lwm-node-display lwm-node-placeholder';
+    // 代码块占位也按「不折行」排，否则换真前后宽度/高度会跳一下。
+    if (node.kind === 'code') el.classList.add('lwm-node-placeholder-code');
     el.textContent = text;
     wrapper.replaceChildren(el);
     node.display = null;

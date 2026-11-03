@@ -154,6 +154,9 @@ export function availableTableWidth(): number {
  *        上限，见 mindmapStyles）当预算 —— 列宽收缩 / 格子换行逻辑与
  *        live 模式完全同一套，只是宽度来源不同。getComputedStyle 返回
  *        的是变换前的排版像素，不受画布世界层的缩放影响，直接可用。
+ *        快速卡片（`.lwm-qcard`）同理：卡片正文也是 mini-CM，但卡片不在
+ *        `.lwm-node` 里、宽度也远小于节点上限，所以单独按卡片宽度算预算
+ *        （见下面 qcard 分支）。
  * @returns 正文文字区宽度；视图还没挂进 DOM（量不到）时返回 0
  */
 export function availableWidth(view?: EditorView): number {
@@ -173,6 +176,59 @@ export function availableWidth(view?: EditorView): number {
               ? Number.parseFloat(raw)
               : NaN;
         return Number.isFinite(px) && px > 0 ? px : 0;
+    }
+
+    // 快速卡片语境（快速卡片栏 .lwm-qcard）：卡片正文也是只读 mini-CM，
+    // 但它挂在右侧卡片栏里，不在 .lwm-node 里，也吃不到 .lwm-canvas 上的
+    // --lwm-table-max-width —— 会落到下面的主编辑器路径量到 0，列宽不收缩，
+    // 整张表按自然宽排成「每格一行」，超出卡片的部分被裁掉。
+    // 预算直接取卡片宽度（--lwm-qcard-width 由 QuickCardRail.applySettings
+    // 写在 .lwm-qcards 上，随继承链到卡片；拖动左边界实时更新），再扣掉
+    // 卡片左右边框和正文内边距 —— 卡片的 .cm-content 内边距被压成 0、
+    // 表格行也没有额外 padding（见 uiCss / stylesBlock），减完就是文字区宽。
+    // 宽度变化时 mini-CM 自己的 tableResizePlugin 会观察到 .cm-scroller
+    // 变宽/变窄并重新分配列宽，和节点完全同一条路径。
+    const cardEl = view?.dom.closest('.lwm-qcard');
+    if (cardEl) {
+        const cs = getComputedStyle(cardEl as HTMLElement);
+        const raw = cs.getPropertyValue('--lwm-qcard-width').trim();
+        // 变量没写时按 uiCss 里 .lwm-qcards 的默认宽度兜底；
+        // 不读 clientWidth：表格装饰在 EditorView.update 期间构建，
+        // 读布局会被 CM 判成「Reading the editor layout isn't allowed during an update」
+        const cardWidth = Number.parseFloat(raw) || 280;
+        const border =
+            (Number.parseFloat(cs.borderLeftWidth) || 0) +
+            (Number.parseFloat(cs.borderRightWidth) || 0);
+        const padding =
+            (Number.parseFloat(cs.paddingLeft) || 0) +
+            (Number.parseFloat(cs.paddingRight) || 0);
+        const inner = cardWidth - border - padding;
+        return inner > 0 ? inner : 0;
+    }
+
+    // 幻灯片语境：块编辑器挂在 .slide-page / .slides-measure 里，主编辑器
+    // 是隐藏的，读它的宽度会让表格按正文宽度分配列宽，然后整张表撑出
+    // 幻灯片（再被整体缩小，字就变得很小）。
+    //
+    // 可用宽取「块在未缩放时的设计宽」。CSS zoom 下 clientWidth 是局部
+    // 坐标（实测 zoom 0.793 时 clientWidth 1433），乘回 zoom 才是排版
+    // 宽度 1136；不补偿的话，fitPageElement 缩放一次，表格就按放大后的
+    // 宽度重新分列，下一次 fit 又缩一次，来回震荡且字越来越小。
+    if (view && view.dom.closest('.slide-page, .slides-measure')) {
+        // 幻灯片创建块时会把可用宽写进 --lwm-table-max-width（整页 1136 /
+        // 半栏 552，已扣嵌套缩进）；测量与渲染共用同一个数最稳。
+        const block = view.dom.closest('.slide-block') as HTMLElement | null;
+        if (block) {
+            const raw = getComputedStyle(block)
+                .getPropertyValue('--lwm-table-max-width')
+                .trim();
+            const px = Number.parseFloat(raw);
+            if (Number.isFinite(px) && px > 0) return px;
+        }
+        // 没有变量就不收缩。**不要**在这里读 clientWidth / offsetWidth：
+        // 表格装饰是在 EditorView.update 期间构建的，读布局会被 CM 判成
+        // 「Reading the editor layout isn't allowed during an update」。
+        return 0;
     }
 
     const scroller = document.querySelector('#editor .cm-scroller');

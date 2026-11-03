@@ -77,6 +77,9 @@ export class MermaidWidget extends WidgetType {
         wrapper.className = 'cm-md-mermaid-wrapper';
         // 宽度通过 CSS 变量下发，和图片保持同一套消费方式。
         wrapper.style.setProperty('--cm-md-media-width', `${this.widthPercent}%`);
+        // 无单位小数：导图 mermaid 节点要用它把档位换算成「节点上限 × 比例」
+        // （calc 里不能用百分比当乘数）。正文 / 幻灯片不消费这个变量。
+        wrapper.style.setProperty('--cm-md-media-ratio', String(this.widthPercent / 100));
         const contentHost = document.createElement('div');
         contentHost.className = 'cm-md-mermaid-content';
         wrapper.appendChild(contentHost);

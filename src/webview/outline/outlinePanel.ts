@@ -123,6 +123,12 @@ export class OutlinePanel {
     /** 褰撳墠楂樹寒琛屽彿銆?*/
     public activeLine = 1;
 
+    /**
+     * 行号右侧的标注提供者（幻灯片模式用来显示 P8 / P8,9）。
+     * 返回空串时回退成行号；null = 普通文本模式，直接显示行号。
+     */
+    private metaProvider: ((line: number) => string) | null = null;
+
     /** 鏄惁姝ｅ湪鎷栨嫿鍒嗛殧鏉°€?*/
     public dragging = false;
 
@@ -490,6 +496,37 @@ export class OutlinePanel {
 
         this.nodes = this.parseHeadings(content);
         this.render();
+    }
+
+    /**
+     * 设置行号右侧的标注来源（幻灯片模式 → 页码）。
+     *
+     * @param provider - 传入行号（1-based）返回标注；null 恢复显示行号
+     * @returns void
+     */
+    public setMetaProvider(provider: ((line: number) => string) | null): void {
+        this.metaProvider = provider;
+        this.render();
+    }
+
+    /**
+     * 用当前标注来源重新渲染（分页变化后页码会整体后移）。
+     *
+     * @returns void
+     */
+    public refresh(): void {
+        this.render();
+    }
+
+    /**
+     * 标题行右侧显示的内容：有自定义标注用标注，否则回退成行号。
+     *
+     * @param line - 标题所在行（1-based）
+     * @returns 展示文本
+     */
+    public metaLabel(line: number): string {
+        const custom = this.metaProvider?.(line);
+        return custom && custom.length > 0 ? custom : String(line);
     }
 
     /**

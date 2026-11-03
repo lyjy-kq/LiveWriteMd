@@ -5,7 +5,7 @@
  */
 
 import { collectDetailsDecorations, isRenderableHtmlBlock } from './collectBlocks.js';
-import { addImageLineDecoration, isWidgetBackedNode } from './collectInline.js';
+import { addImageLineDecoration, isImageOnOwnLine, isWidgetBackedNode } from './collectInline.js';
 import { HeadingAnchor, headingAnchorsOf } from './collectLinks.js';
 import { collectListIndentDecorations } from './listIndentDecorations.js';
 import { updateImageTitleInSource, updateImageWidthInSource, updateMermaidTitleInSource, updateMermaidWidthInSource } from './sourceWriteback.js';
@@ -15,7 +15,7 @@ import { isInlineRenderable, isWithinActiveInline } from './inline/focusMarks.js
 import { parseInlineImageTag } from './inline/inlineEngine.js';
 import { collectMathSourceRanges } from './math/mathCollect.js';
 import { createCodeBlockIndentStyle, getCodeBlockIndentInfo } from './measure/codeIndent.js';
-import { extractFencedCodeContent, extractFencedCodeLanguage } from './measure/sourceParse.js';
+import { extractFencedCodeContent, extractFencedCodeLanguage, isQuickCardCloseLine } from './measure/sourceParse.js';
 import type { MeasureEnv } from './measure/textMeasure.js';
 import { DEFAULT_MEDIA_WIDTH_PERCENT, measureTrailingWidthAttribute, parseMediaWidthPercent, splitTrailingWidthAttribute } from './mediaWidth.js';
 import { isSetextBeforeFence } from './ranges.js';
@@ -192,7 +192,7 @@ export function applyTreeDecorations(
 ): void {
     // 本范围内所有公式源码区间：下面 enter 用它屏蔽其他修饰。
     // 两遍（block 整篇 / inline 窗口）各算一次，与 range 对齐。
-    const mathSourceRanges = collectMathSourceRanges(state, range);
+    const mathSourceRanges = collectMathSourceRanges(state, range, tree);
 
     // 内链断链判定用的标题锚点：懒算，只在真的遇到 `#` 内链时才遍历一次树
     // （断链判定需要全文档标题；导图节点的 mini-CM 是节点级小文档，见
@@ -349,6 +349,10 @@ export function applyTreeDecorations(
                 }
 
                 case 'QuoteMark': {
+                    // 快速卡片结束围栏（单独的 `>>>` 行）按普通文字原样显示：
+                    // 三个 `>` 不压 0 宽，否则整行会变成一个空的引用行，
+                    // 用户就看不到卡片的结束标记了（`<<<` 行本来也是可见的）。
+                    if (isQuickCardCloseLine(state.doc.lineAt(from).text)) break;
                     // Hide > mark and trailing space
                     const after = state.doc.sliceString(to, to + 1);
                     const hideEnd = after === ' ' ? to + 1 : to;
@@ -484,6 +488,11 @@ export function applyTreeDecorations(
                     for (let ln = startLine.number; ln <= endLine.number; ln++) {
                         const line = state.doc.line(ln);
                         if (line.text.trim() === '') continue;
+                        // 快速卡片结束围栏（单独的 `>>>` 行）不是引用：
+                        // 不套引用样式，让它和 `<<<` 行一样按普通文字显示。
+                        // 这里 `continue` 而不是 break：万一同一个引用块里还有别的行，
+                        // 照常处理（卡片围栏只占自己这一行）。
+                        if (isQuickCardCloseLine(line.text)) continue;
                         // Count > marks to determine nesting level
                         const gtMatches = line.text.match(/^(\s*>)+/);
                         const level = gtMatches ? (gtMatches[0].match(/>/g) || []).length : 1;
@@ -864,6 +873,11 @@ export function applyTreeDecorations(
                         parseMediaWidthPercent(rawImageText) ?? DEFAULT_MEDIA_WIDTH_PERCENT;
 
                     if (imgUrl || altText) {
+                        // 行内还夹着别的文字时保持 Markdown 源码，不渲染成图片 widget：
+                        // ImageWidget 是「独占一行」的交互（整行居中 + 右下角操作胶囊），
+                        // 混在正文里会把段落推开、按钮还会压住旁边的文字。
+                        // 这里 return false 连子节点一起跳过，URL 也不会被涂成链接色。
+                        if (!isImageOnOwnLine(state, from, imageTo)) return false;
                         addImageLineDecoration(state, decos, from, imageTo);
                         decos.push(
                             Decoration.replace({

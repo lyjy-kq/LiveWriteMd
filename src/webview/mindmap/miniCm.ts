@@ -91,6 +91,17 @@ export interface NodeDisplayOptions {
      * 接出去走 renameNode → 源文档；否则下一次 setData 就被覆盖。
      */
     onDisplayChange?: (text: string) => void;
+    /**
+     * 显示态内容「几何」变了（行高/折行/宽高变化）时回调。
+     *
+     * 节点的宽高是引擎一次量完写死的，而 mini-CM 的排版在首帧之后还可能变：
+     * - 表格的列宽分配要等视图挂进文档后才读得到 `--lwm-table-max-width`，
+     *   挂上之后格子重新折行、行数变多，整张表比首次测量时高出一截；
+     * - 字体加载完成、图片/公式/mermaid 完成异步排版。
+     * 不回调上层，节点盒子就停在旧高度，超出部分被 `overflow: hidden`
+     * 裁掉（导图里表现为表格最后一行只露半行）。上层收到后补量即可。
+     */
+    onLayoutChange?: () => void;
 }
 
 /** 节点显示会话。 */
@@ -160,6 +171,14 @@ export interface NodeDisplay {
     contentHeight: () => number;
     /** 聚焦并把光标放到视口坐标处；无坐标则放文末。 */
     focusAt: (x?: number, y?: number) => void;
+    /**
+     * 聚焦并把光标放到指定文档偏移。
+     *
+     * 用于「页面被 CSS zoom 缩放后点击」的场景：posAtCoords 拿到的是
+     * 客户端坐标，缩放后会被当成未缩放坐标换算，偏出固定倍率。调用方
+     * 先用浏览器原生命中测试算出偏移，再用这个方法落光标。
+     */
+    focusAtPos: (pos: number) => void;
 }
 
 /**
@@ -206,6 +225,7 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
         // 只读显示：不可编辑（选区仍然可用，行内展开靠的就是选区）
         editableComp.of(EditorView.editable.of(false)),
         readOnlyComp.of(EditorState.readOnly.of(true)),
+        // 全部节点按正文口径折行（长代码行也折行，不再横向滚动）
         EditorView.lineWrapping,
         markdown({
             base: tunedMarkdownLanguage,
@@ -236,11 +256,18 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
         // 显示态文档变化 → 交给上层回写 markdown。
         // 编辑会话里 docChanged 不归这里管（blur/Esc 会提交），所以先判 editing。
         EditorView.updateListener.of((update) => {
-            if (!update.docChanged || editing || destroyed) return;
-            const text = update.state.doc.toString();
-            options.onDisplayChange?.(
-                sentinel && text.endsWith('\n') ? text.slice(0, -1) : text
-            );
+            if (destroyed) return;
+            if (update.docChanged && !editing) {
+                const text = update.state.doc.toString();
+                options.onDisplayChange?.(
+                    sentinel && text.endsWith('\n') ? text.slice(0, -1) : text
+                );
+            }
+            // 几何变化：首帧之后表格列宽/字体/异步 widget 才定稿时，内容高度
+            // 会和创建瞬间量到的不同。交给上层补量一次，否则节点盒子的写死
+            // 高度会把多出来的行裁掉（导图里表格「最后一行显示不全」）。
+            // 编辑会话中高度由 growNodeHeight 按输入实时撑，不走这里。
+            if (update.geometryChanged && !editing) options.onLayoutChange?.();
         }),
         // 与文本模式渲染一致的**显示态** live 扩展包（无编辑交互插件：
         // 几十实例同屏时的监听器/测量钩子大头都在这里省掉）。
@@ -284,14 +311,42 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
         extensions.push(sentinelLineField);
     }
 
+    // —— 临时诊断：分别计时 state 构建（解析/扩展初始化）与 view 挂载 ——
+    const tState0 = performance.now();
+    const state = EditorState.create({
+        doc: rawDoc,
+        selection: { anchor: selectionAnchor },
+        extensions,
+    });
+    const tState1 = performance.now();
     const view = new EditorView({
         parent: container,
-        state: EditorState.create({
-            doc: rawDoc,
-            selection: { anchor: selectionAnchor },
-            extensions,
-        }),
+        state,
     });
+    const tView1 = performance.now();
+    {
+        const holder = window as unknown as {
+            __nodeDisplayStats?: {
+                count: number;
+                stateMs: number;
+                viewMs: number;
+                maxStateMs: number;
+                maxViewMs: number;
+            };
+        };
+        const stats = (holder.__nodeDisplayStats ??= {
+            count: 0,
+            stateMs: 0,
+            viewMs: 0,
+            maxStateMs: 0,
+            maxViewMs: 0,
+        });
+        stats.count += 1;
+        stats.stateMs += tState1 - tState0;
+        stats.viewMs += tView1 - tState1;
+        stats.maxStateMs = Math.max(stats.maxStateMs, tState1 - tState0);
+        stats.maxViewMs = Math.max(stats.maxViewMs, tView1 - tState1);
+    }
 
     // —— 翻转状态 ——（editing / destroyed 已在扩展之前声明，监听器要用）
     let blurHandler: (() => void) | null = null;
@@ -503,6 +558,21 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
             // 无坐标（F2 / 工具条入口）→ 光标放文末；不全选
             view.dispatch({
                 selection: { anchor: pos ?? view.state.doc.length },
+            });
+        },
+        focusAtPos: (pos: number): void => {
+            if (!editing || destroyed) return;
+            const clamped = Math.max(
+                0,
+                Math.min(pos, view.state.doc.length)
+            );
+            view.focus();
+            // 刻意不带 scrollIntoView：光标就落在用户点到的位置，
+            // 本来就在视野里。CM 的 scrollIntoView 会沿祖先链一路滚，
+            // 在幻灯片里可能把 overflow 的页面元素本身滚走 ——
+            // 内容一动，「点的位置」和看到的光标就错开了。
+            view.dispatch({
+                selection: { anchor: clamped },
             });
         },
     };

@@ -7,6 +7,8 @@
  * @module extension/editor/webviewStyles
  */
 
+import { PERF_HUD_CSS } from '../../shared/perfHudStyles.js';
+
 // =============================================================================
 // CSS Styles (Inline)
 // =============================================================================
@@ -71,6 +73,16 @@ body {
     overflow: hidden;
 }
 #mindmap[hidden] {
+    display: none !important;
+}
+
+/* 幻灯片容器：与 #editor / #mindmap 互斥，slides 模式下由 webview 切换 hidden */
+#slides {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+}
+#slides[hidden] {
     display: none !important;
 }
 
@@ -535,5 +547,8 @@ body {
     animation: spin 0.8s linear infinite;
     color: var(--vscode-focusBorder, #007acc);
 }
+
+/* 全局性能监测浮层（所有模式共用，挂在 body 上） */
+${PERF_HUD_CSS}
 `;
 }

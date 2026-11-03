@@ -22,7 +22,7 @@ import { tags, type Tag } from '@lezer/highlight';
 /**
  * 一条 token 颜色定义。
  */
-interface TokenColorDef {
+export interface TokenColorDef {
     /** CSS 变量名后缀：`--lwm-tok-<name>`。 */
     name: string;
     /** CM HighlightStyle 用的 lezer tag（可带 definition/function 修饰）。 */
@@ -41,7 +41,7 @@ interface TokenColorDef {
  * 色值沿用原 decorations.ts 的深/浅两份 HighlightStyle；同色的合并成一条
  * （如 null/self 与 bool 同色，共用 --lwm-tok-bool）。
  */
-const TOKEN_COLOR_DEFS: TokenColorDef[] = [
+export const TOKEN_COLOR_DEFS: TokenColorDef[] = [
     {
         name: 'keyword',
         tag: tags.keyword,

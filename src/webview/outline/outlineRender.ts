@@ -92,7 +92,9 @@ export function renderNodes(panel: OutlinePanel, nodes: OutlineNode[], activeNod
                         >${toggleIcon}</span>
                         ${indentGuides}
                         <span class="outline-label">${panel.escapeHtml(node.text)}</span>
-                        <span class="outline-meta">${node.line}</span>
+                        <span class="outline-meta">${panel.escapeHtml(
+                            panel.metaLabel(node.line)
+                        )}</span>
                     </div>
                     ${childrenHtml}
                 </div>

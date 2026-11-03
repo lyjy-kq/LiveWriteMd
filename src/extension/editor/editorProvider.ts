@@ -69,7 +69,7 @@ export class LiveWriteMdEditorProvider implements vscode.CustomTextEditorProvide
     /** Currently active webview panel info */
     public activePanelInfo: { panel: vscode.WebviewPanel; docUri: string } | null = null;
 
-    /** Editor mode per document: 'live' | 'viewer' | 'source' | 'mindmap' */
+    /** Editor mode per document: 'live' | 'viewer' | 'source' | 'mindmap' | 'slides' */
     public editorModeMap = new Map<string, string>();
 
     /**
@@ -101,9 +101,9 @@ export class LiveWriteMdEditorProvider implements vscode.CustomTextEditorProvide
         commands.toggleMindmapMode(this);
     }
 
-    /** 文本模式三态循环（实现见 providerCommands）。 */
-    public cycleTextMode(): void {
-        commands.cycleTextMode(this);
+    /** 幻灯片模式 ⇄ 实时模式互切（实现见 providerCommands）。 */
+    public toggleSlidesMode(): void {
+        commands.toggleSlidesMode(this);
     }
 
     /** 获取当前激活文档 uri（实现见 providerCommands）。 */

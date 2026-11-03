@@ -29,6 +29,8 @@
     可选。用扩展开发宿主或已安装的 VS Code 打开某个 Markdown 文件 / 目录，
     例如 -File .\README.md，省得自己再去点文件。
     debug 模式不传时默认打开 $DefaultDebugFolder（见脚本里的常量）。
+    debug 模式打开目录时会先生成一个单文件夹 .code-workspace
+    （.vscode/dev-host.code-workspace）再打开，原因见 debug 分支里的注释。
 
 .PARAMETER Port
     debug 模式下的扩展宿主调试端口（Node inspector），默认 9229。
@@ -528,19 +530,39 @@ switch ($Mode) {
         if (-not $File -and (Test-Path -LiteralPath $DefaultDebugFolder)) {
             $File = $DefaultDebugFolder
         }
-        # 用 --folder-uri / --file-uri 而不是位置参数：开发宿主窗口在
-        # openExtensionDevelopmentHostWindow 里会显式读这两个选项，比位置参数
+        # 用 --file-uri 而不是位置参数：开发宿主窗口在
+        # openExtensionDevelopmentHostWindow 里会显式读这个选项，比位置参数
         # 更不容易被 CLI 的转发 / 子命令解析吃掉。位置参数一旦丢了，VS Code
         # 会退回「恢复上一次开发宿主的窗口」，表现成「F5 打开的是上次那个
         # 文件（甚至已删除的 test.md），不是 -File 指定的目录」。
+        #
+        # 目录不能直接用 --folder-uri 打开：VS Code 启动开发宿主前会先把
+        # 「已经在别的窗口里打开」的文件夹从参数里过滤掉（main.js 里
+        # openExtensionDevelopmentHostWindow 的 Mo() 过滤，按 URI 精确匹配），
+        # 过滤完参数就空了，于是开出一个空的「欢迎」窗口。验收用的 work 目录
+        # 通常一直开在日常窗口里，所以 --folder-uri 每次都会被吃掉 —— 这正是
+        # 「F5 后窗口开了、但没有打开目录」的根因。
+        # 绕法：把目录包成单文件夹 .code-workspace，再以文件方式打开。没有任何
+        # 窗口以这个工作区文件为 configPath，不会被过滤；开发宿主会带着目录打开，
+        # 之后 F5 若是 reload 旧宿主，工作区也会原样保留。
         if ($File) {
             $resolved = Resolve-ExistingPath -Path $File
-            $uri = ([System.Uri]$resolved).AbsoluteUri
             if (Test-Path -LiteralPath $resolved -PathType Container) {
-                $devArgs += @('--folder-uri', $uri)
-            } else {
-                $devArgs += @('--file-uri', $uri)
+                $workspaceFile = Join-Path $repoRoot '.vscode\dev-host.code-workspace'
+                # 路径用正斜杠，免去 JSON 反斜杠转义；VS Code 认正斜杠。
+                # 无 BOM UTF-8：和仓库里其它 JSON 的读法保持一致。
+                $folderPath = $resolved -replace '\\', '/'
+                $json = "{`n    `"folders`": [`n        { `"path`": `"$folderPath`" }`n    ]`n}`n"
+                [System.IO.File]::WriteAllText(
+                    $workspaceFile,
+                    $json,
+                    (New-Object System.Text.UTF8Encoding($false))
+                )
+                Write-Host "==> 开发宿主工作区：$workspaceFile（目录 $resolved）" -ForegroundColor DarkGray
+                $resolved = $workspaceFile
             }
+            $uri = ([System.Uri]$resolved).AbsoluteUri
+            $devArgs += @('--file-uri', $uri)
         }
 
         Write-Host "调试端口：$Port" -ForegroundColor Yellow

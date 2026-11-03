@@ -88,8 +88,13 @@ export function startEdit(
             : undefined,
         // 回车换行 / 自动折行让内容变高时撑高盒子。
         onDocChanged: () => app.scheduleGrowEditingNode(session),
-        // 选中一段文字 → 工具条出现「拆分到子节点」；塌回光标 → 收起来
-        onSelectionChange: () => app.refreshSplitButton(),
+        // 选中一段文字 → 工具条出现「拆分到子节点」；塌回光标 → 收起来。
+        // 代码块还要顺带撑高：光标移进 / 移出围栏区域时，露出的源码行数
+        // 会变（首尾围栏露出来就多两行），盒子不跟就会裁掉最后一行。
+        onSelectionChange: () => {
+            app.refreshSplitButton();
+            if (session.kind === 'code') app.scheduleGrowEditingNode(session);
+        },
     });
     // 等一帧让 CM 完成重配与布局，再按点击坐标落光标（不全选）。
     // 这一帧里会话可能已经被提交/重建（外部 UPDATE、整树 setData），
@@ -100,8 +105,14 @@ export function startEdit(
         // 编辑态显示的是 Markdown 源码，通常比渲染结果宽得多
         // （LaTeX、`<img src="...">`、表格管道行尤其明显）。
         // 进编辑这一帧按源码自然宽度重算一次，**只撑宽不缩窄**
-        // （宽度不得低于显示时的宽度）；**高度保持不变**，
-        // 装不下的部分在编辑区箱内纵向滚动（见 mindmapStyles）。
+        // （宽度不得低于显示时的宽度）；高度默认保持不变，装不下的部分
+        // 在编辑区箱内纵向滚动（见 mindmapStyles）——代码块例外，见下面
+        // 的撑高逻辑。
+        //
+        // 代码块也参与撑宽：显示态的 40~100 列宽度上限只是「节点摆进
+        // 画布」的排版预算，编辑时还按它裁就会让长行只能左右滚 ——
+        // 用户反馈「是不是哪里强制了宽度」。`.lwm-node-editing` 已经
+        // 把 max-width 放开成 none，这里按源码实际宽度撑开即可。
         //
         // 但必须有上限（仿 live：源码再长也不该改变排版宽度，
         // 超长的行折行显示）：
@@ -133,6 +144,14 @@ export function startEdit(
             }
         }
         display.focusAt(x, y);
+        // 代码块编辑态会多出首尾两行围栏（显示态把它们藏起来了）。
+        // 盒子不跟着长高就会裁掉最后一行、右侧还多出一条竖向滚动条
+        // （用户反馈的「三行的高度只显示两行」）。进编辑这一帧按
+        // 编辑内容的真实高度撑高；文本没改就退出时，finishEditDisplay
+        // 会用进编辑前的基准高度收回去。
+        if (session.kind === 'code') {
+            app.scheduleGrowEditingNode(session);
+        }
         // 新建节点的占位文字整体选中：接着敲字就是替换，而不是接在
         // 「分支主题」后面。只认占位文字 —— 拆分到新节点时搬过来的
         // 是用户自己的文字，不要动它的选区（focusAt 落在文末即可）。
@@ -185,15 +204,35 @@ export function measureEditingSourceWidth(app: MindMapApp, display: NonNullable<
  *
  * 段落里按回车新增一行、列表项太长自动折行，都会让 mini-CM 的内容
  * 高于节点盒子；不撑高的话编辑态的内部滚动会把新行裁掉，看起来
- * 像「回车没反应」。媒体节点（代码/表格/公式）不参与，保持盒内滚动。
+ * 像「回车没反应」。
+ *
+ * 代码块也参与：编辑态会露出首尾两行围栏，且换行会让源码变长；
+ * 不撑高就会裁掉最后一行并冒出竖向滚动条。其余媒体（表格 / 公式 /
+ * mermaid / 图片）仍保持盒内滚动。
+ *
+ * 高度必须取**布局像素**（offsetHeight）：导图外层是 transform 缩放，
+ * contentHeight() 用的 getBoundingClientRect 会被画布缩放系数放大 /
+ * 缩小，撑出来的高度就不对了。
  */
 export function scheduleGrowEditingNode(app: MindMapApp, session: EditSession) : void {
     if (app.growFrame !== null) return;
     app.growFrame = requestAnimationFrame(() => {
         app.growFrame = null;
         if (app.editSession !== session) return;
-        if (!TEXT_NODE_KINDS.has(session.kind)) return;
-        app.canvas.growNodeHeight(session.uid, session.display.contentHeight());
+        if (!TEXT_NODE_KINDS.has(session.kind) && session.kind !== 'code') return;
+        const content = session.display.view.contentDOM;
+        let height = content.offsetHeight;
+        if (session.kind === 'code') {
+            // 代码块保留 20 行上限（与 .lwm-node-code 的 max-height 同口径）。
+            // 编辑态 CSS 解除了 max-height，不在这里封顶的话，一段几百行的
+            // 代码会把画布撑成一条长龙。超出部分仍在节点内上下滚动。
+            const style = getComputedStyle(content);
+            const lineHeight = Number.parseFloat(style.lineHeight) || 0;
+            const fontSize = Number.parseFloat(style.fontSize) || 14;
+            const cap = 20 * lineHeight + 1.4 * fontSize + 12;
+            if (cap > 0) height = Math.min(height, cap);
+        }
+        app.canvas.growNodeHeight(session.uid, height);
     });
 }
 

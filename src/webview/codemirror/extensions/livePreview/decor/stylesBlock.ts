@@ -307,6 +307,10 @@ export const BLOCK_STYLES = {
         // Mermaid 图同样默认 75% 宽并居中；它是块级 widget，直接靠 auto margin 居中即可。
         '.cm-md-mermaid-wrapper': {
             position: 'relative',
+            // 上下各 12px 透明 border 是**占位**（配合 backgroundClip: padding-box
+            // 把底色裁到 padding-box），给右下角操作胶囊留出视觉留白。
+            // 千万别把这里改成普通的 `border: 1px solid ...`：那会把这两条
+            // 12px 透明边顶掉，整块矮 24px、图上下贴边，操作按钮也会压到图上。
             borderTop: '12px solid transparent',
             borderBottom: '12px solid transparent',
             backgroundClip: 'padding-box',
@@ -316,8 +320,17 @@ export const BLOCK_STYLES = {
             textAlign: 'center',
             overflow: 'auto',
             minHeight: '200px',
-            maxWidth: 'var(--cm-md-media-width, 75%)',
+            // 档位允许超过 100%（给导图用）；正文列宽是天花板，
+            // 实时 / 阅读模式里用 min(100%, …) 压回 100%。
+            maxWidth: 'min(100%, var(--cm-md-media-width, 75%))',
             margin: '0 auto',
+            // 外框：公式块 / 表格都有 1px 边线，mermaid 不能例外。
+            // 用 inset 阴影而不是 border —— 理由同上：不占布局，线正好落在
+            // 可见底色的边缘（padding-box），三种渲染场景（正文、导图节点、
+            // 幻灯片）都吃这一条，颜色跟着当前前景色自动适配深浅主题。
+            '--cm-md-mermaid-edge':
+                'var(--livewritemd-mermaid-border-color, color-mix(in srgb, currentColor 18%, transparent))',
+            boxShadow: 'inset 0 0 0 1px var(--cm-md-mermaid-edge)',
         },
         '.cm-md-mermaid-content': {
             position: 'relative',

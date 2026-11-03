@@ -85,6 +85,14 @@ export interface MapCanvasOptions {
     onNodeDoubleClick(node: MapNode, event: MouseEvent): void;
     /** 点击画布空白。 */
     onCanvasClick(): void;
+    /**
+     * Ctrl / Cmd 按下、开始一轮多选手势（框选或 Ctrl 点选）时调用。
+     *
+     * 上层负责清掉**上一次**多选留下的框和节点选中态：一次新的 Ctrl 手势
+     * 应该从空集合开始，否则旧的选中框会一直挂在那里，用户分不清哪些
+     * 是这一轮选的。
+     */
+    onMultiGestureStart?(): void;
     /** 展开按钮被点击（expanded = 新状态；recursive = Ctrl 点整棵子树）。 */
     onExpandChange(uid: string, expanded: boolean, recursive: boolean): void;
     /** 拖动结束且落点合法。 */

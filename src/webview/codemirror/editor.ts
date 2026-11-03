@@ -573,6 +573,25 @@ export class CodeMirrorEditor {
     }
 
     /**
+     * 只滚动、不改选区、不抢焦点。
+     *
+     * 三个文本模式（实时 / 阅读 / 源码）互切时用：切换会重配装饰，
+     * 行高和折行都变了，浏览器保留的 scrollTop 会把光标挤出视口。
+     * 这里把光标所在行滚回视野中央，让「切模式后还在原地」。
+     *
+     * @param lineNumber - 目标行号，从 1 开始
+     */
+    revealLine(lineNumber: number): void {
+        if (!this.view) return;
+        if (!Number.isFinite(lineNumber) || lineNumber < 1) return;
+        const line = Math.min(this.view.state.doc.lines, Math.floor(lineNumber));
+        const target = this.view.state.doc.line(line);
+        this.view.dispatch({
+            effects: EditorView.scrollIntoView(target.from, { y: 'center' }),
+        });
+    }
+
+    /**
      * Sets the editor's editable state.
      *
      * When set to false, the editor becomes read-only (viewer mode).

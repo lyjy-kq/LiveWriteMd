@@ -15,6 +15,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import { getInlineStyles } from './webviewStyles.js';
+import { PERF_HUD_CSS } from '../../shared/perfHudStyles.js';
 
 /**
  * webview bundle 的缓存破坏参数。
@@ -242,6 +243,7 @@ ${styles}
             </div>
             <div id="editor"></div>
             <div id="mindmap" hidden></div>
+            <div id="slides" hidden></div>
         </div>
         <div id="outline-resizer" role="separator" aria-orientation="vertical" aria-label="Resize outline panel"></div>
         <aside id="outline-pane" aria-label="Markdown outline">
@@ -294,6 +296,8 @@ export function getMindmapPanelHtml(
         }
         /* mindmapStyles.ts 里的 #mindmap 规则为 absolute inset:0，这里提供定位上下文 */
         body { position: relative; }
+        /* 全局性能监测浮层：独立面板也要能用，和主 webview 共用同一段样式 */
+${PERF_HUD_CSS}
     </style>
 </head>
 <body>

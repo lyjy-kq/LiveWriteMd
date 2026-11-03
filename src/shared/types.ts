@@ -50,12 +50,12 @@ export interface LiveWriteMdEditorSettings {
 export type ThemeType = 'light' | 'dark';
 
 /**
- * 编辑器模式：实时预览 / 只读阅读 / 源码 / 思维导图。
+ * 编辑器模式：实时预览 / 只读阅读 / 源码 / 思维导图 / 幻灯片。
  *
- * 四种模式并列；mindmap 模式下 webview 隐藏 CodeMirror、显示导图容器，
- * 但 CodeMirror 实例不销毁（撤销栈 / 光标 / 滚动位置保留）。
+ * 五种模式并列；mindmap / slides 模式下 webview 隐藏 CodeMirror、显示各自
+ * 的容器，但 CodeMirror 实例不销毁（撤销栈 / 光标 / 滚动位置保留）。
  */
-export type EditorMode = 'live' | 'viewer' | 'source' | 'mindmap';
+export type EditorMode = 'live' | 'viewer' | 'source' | 'mindmap' | 'slides';
 
 /**
  * 初始化消息。
@@ -243,6 +243,20 @@ export interface UpdateSettingMessage extends BaseMessage {
 }
 
 /**
+ * 幻灯片放映全屏请求（Webview -> 扩展）。
+ *
+ * VS Code webview 的 iframe 没有 allowfullscreen，requestFullscreen 多半
+ * 会被拒绝；这时由扩展宿主执行 workbench.action.toggleFullScreen，把窗口
+ * 切到物理全屏（等价于用户按 F11）。
+ */
+export interface SlidesFullscreenMessage extends BaseMessage {
+    /** 消息类型。 */
+    type: 'slidesFullscreen';
+    /** true = 进入窗口全屏，false = 退出窗口全屏。 */
+    on: boolean;
+}
+
+/**
  * Webview -> 扩展 的消息联合类型。
  */
 export type WebviewToExtensionMessage =
@@ -255,6 +269,7 @@ export type WebviewToExtensionMessage =
     | FontScaleChangeMessage
     | EditorActionMessage
     | UpdateSettingMessage
+    | SlidesFullscreenMessage
     | SaveImageMessage;
 
 // =============================================================================

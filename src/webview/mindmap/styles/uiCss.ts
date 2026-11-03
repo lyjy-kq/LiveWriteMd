@@ -221,6 +221,26 @@ export const UI_CSS = `
     overflow-y: auto !important;
     max-height: 100%;
 }
+/* 编辑态：滚动容器从节点盒换成了 .cm-scroller（节点盒 overflow:hidden）。
+   但 .lwm-node 的通用规则把子树里的原生滚动条全隐藏了 —— 编辑一段长代码时
+   完全看不到「还能上下滚」，像内容被截断。这里把编辑态 scroller 的
+   滚动条放出来（显示态节点盒自己的滚动条不受影响）。
+   注意：本文件是 CSS 模板字符串，注释里禁止出现反引号。 */
+.lwm-node.lwm-node-editing .cm-scroller {
+    scrollbar-width: thin !important;
+}
+.lwm-node.lwm-node-editing .cm-scroller::-webkit-scrollbar {
+    display: block !important;
+    width: 10px !important;
+    height: 10px !important;
+}
+.lwm-node.lwm-node-editing .cm-scroller::-webkit-scrollbar-thumb {
+    background: rgba(128, 128, 128, 0.5);
+    border-radius: 5px;
+}
+.lwm-node.lwm-node-editing .cm-scroller::-webkit-scrollbar-corner {
+    background: transparent;
+}
 /* 数学块编辑态：源码区只露两行（$$ 行与公式行），其余箱内滚动。
    高度不重算，仍沿用显示态节点盒子的高度，只是把可视窗口收紧。 */
 .lwm-node-math.lwm-node-editing .cm-scroller {

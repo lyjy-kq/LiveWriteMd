@@ -149,6 +149,14 @@ export const MESSAGE_TYPES = {
      */
     UPDATE_SETTING: 'updateSetting',
 
+    /**
+     * 幻灯片放映全屏消息类型（Webview -> 扩展）。
+     *
+     * 浏览器全屏被 webview 沙箱拒绝时，Webview 请求扩展侧切换 VS Code
+     * 窗口全屏（F11），让放映铺满物理屏幕而不是只铺满 webview。
+     */
+    SLIDES_FULLSCREEN: 'slidesFullscreen',
+
     // ========================================================================
     // 图片保存消息类型
     // ========================================================================

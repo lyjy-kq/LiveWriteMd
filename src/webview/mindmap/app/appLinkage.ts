@@ -1,5 +1,5 @@
 /**
- * MindMapApp 协作模块（从 mindmapApp.ts 拆出）：大纲联动 / 内链同步 / 搜索高亮 / perfHud。
+ * MindMapApp 协作模块（从 mindmapApp.ts 拆出）：大纲联动 / 内链同步 / 搜索高亮。
  *
  * 全部是原 MindMapApp 方法，this 换成第一参数 app；跨模块调用走 app 上的薄包装方法。
  *
@@ -8,7 +8,6 @@
 
 import type { MindMapApp } from '../mindmapApp.js';
 import { extractInternalLinkTargets, matchHeadingIndex } from '../../../shared/link/internalLink.js';
-import { PerfHud } from '.././perfHud.js';
 import type { MindMapTreeNode, NodeLineRange } from '.././types.js';
 
 
@@ -172,34 +171,6 @@ export function resolveInternalLinkUid(app: MindMapApp, target: string) : string
 export function handleInternalLinkNavigate(app: MindMapApp, uid: string) : void {
     app.selectAndCenterUid(uid);
     app.canvas.flashNode(uid);
-}
-
-
-// ==================================================================
-// 性能监控浮层
-// ==================================================================
-
-/** 按设置挂 / 摘 / 切换性能监测浮层（幂等）。 */
-export function syncPerfHud(app: MindMapApp) : void {
-    const mode = app.settings.mindmapPerfMonitor;
-    if (mode === 'off') {
-        if (app.perfHud) {
-            app.perfHud.destroy();
-            app.perfHud = null;
-        }
-        return;
-    }
-    // 档位没变就保留现有实例：反复 setSettings 不重建 rAF 采样
-    if (app.perfHud?.mode === mode) return;
-    app.perfHud?.destroy();
-    app.perfHud = new PerfHud(
-        app.container,
-        () => ({
-            ...app.canvas.debugState(),
-            docKB: Math.round(app.markdown.length / 1024),
-        }),
-        mode
-    );
 }
 
 

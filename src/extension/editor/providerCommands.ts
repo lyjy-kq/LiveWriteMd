@@ -28,7 +28,7 @@ export const EDITOR_MODE_STORAGE_PREFIX = 'liveWriteMd.editorMode.';
  * Sets the editor mode for the active LiveWriteMD editor.
  * Cycles through: live 鈫?viewer 鈫?source 鈫?live
  *
- * @param mode - The target mode ('live' | 'viewer' | 'source' | 'mindmap')
+ * @param mode - The target mode ('live' | 'viewer' | 'source' | 'mindmap' | 'slides')
  */
 export function setEditorMode(provider: LiveWriteMdEditorProvider, mode: EditorMode): void  {
     if (!provider.activePanelInfo) return;
@@ -50,13 +50,13 @@ export function setEditorMode(provider: LiveWriteMdEditorProvider, mode: EditorM
 }
 
 /**
- * 标题栏单按钮循环切换：live -> viewer -> source -> mindmap -> live。
+ * 标题栏单按钮循环切换：live -> viewer -> source -> slides -> mindmap -> live。
  *
  * @returns void
  */
 export function cycleEditorMode(provider: LiveWriteMdEditorProvider): void  {
     if (!provider.activePanelInfo) return;
-    const order: EditorMode[] = ['live', 'viewer', 'source', 'mindmap'];
+    const order: EditorMode[] = ['live', 'viewer', 'source', 'slides', 'mindmap'];
     const current = (provider.editorModeMap.get(provider.activePanelInfo.docUri) ??
         'live') as EditorMode;
     const next = order[(order.indexOf(current) + 1) % order.length];
@@ -79,21 +79,17 @@ export function toggleMindmapMode(provider: LiveWriteMdEditorProvider): void  {
 }
 
 /**
- * 标题栏按钮 B：文本模式三态循环 live -> viewer -> source -> live。
+ * 标题栏按钮：幻灯片模式 ⇄ 实时模式互切。
  *
- * 导图模式下不可用（package.json 里用 when 子句禁用），这里仍兜底：
- * 处于导图模式时不动。
+ * 从其它任何模式（含导图）进入幻灯片；当前已在幻灯片时回到实时模式。
  *
  * @returns void
  */
-export function cycleTextMode(provider: LiveWriteMdEditorProvider): void  {
+export function toggleSlidesMode(provider: LiveWriteMdEditorProvider): void {
     if (!provider.activePanelInfo) return;
-    const order: EditorMode[] = ['live', 'viewer', 'source'];
     const current = (provider.editorModeMap.get(provider.activePanelInfo.docUri) ??
         'live') as EditorMode;
-    if (current === 'mindmap') return;
-    const next = order[(order.indexOf(current) + 1) % order.length];
-    provider.setEditorMode(next);
+    provider.setEditorMode(current === 'slides' ? 'live' : 'slides');
 }
 
 /**
@@ -149,7 +145,7 @@ export function showMemoryUsage(provider: LiveWriteMdEditorProvider): void  {
  * 顺带把扩展宿主自己的 RSS 加进去：webview 堆只是占用的一部分，
  * 任务管理器里看到的进程内存大头往往在扩展宿主一侧。
  */
-export async function presentMemoryStats(provider: LiveWriteMdEditorProvider, stats: Record<string, unknown>): Promise<void>  {
+export async function presentMemoryStats(stats: Record<string, unknown>): Promise<void>  {
     const hostMB = Math.round(process.memoryUsage().rss / 1048576);
     const caches = (stats.caches ?? {}) as Record<string, number>;
     const map = (stats.map ?? null) as Record<string, unknown> | null;
@@ -203,9 +199,12 @@ export function openSettings(provider: LiveWriteMdEditorProvider): void  {
  * 枚举在扩展宿主做（webview 拿不到系统字体），失败时返回空数组，
  * 此时不发消息，面板继续用 schema 里的常用字体兜底。
  *
+ * 注意：字体枚举会 spawn PowerShell（Windows 上要 1~2 秒），所以**只在
+ * 设置面板真正打开时调用**，不要放到 READY 握手或文件打开路径上。
+ *
  * @param panel 目标 webview 面板
  */
-export function sendSystemFonts(provider: LiveWriteMdEditorProvider, panel: vscode.WebviewPanel): void  {
+export function sendSystemFonts(panel: vscode.WebviewPanel): void {
     void getSystemFonts().then((fonts) => {
         if (fonts.length === 0) return;
         void panel.webview.postMessage({

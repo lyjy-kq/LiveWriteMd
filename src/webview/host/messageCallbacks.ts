@@ -17,6 +17,7 @@ import {
     createImagePasteHandler,
 } from '../editing/imageDropHandler.js';
 import { settingsState } from '../settings/settingsState.js';
+import { syncPerfMonitor } from '../perf/perfMonitor.js';
 import type { ThemeType, LiveWriteMdEditorSettings } from '../../shared/types.js';
 import type { SearchHistoryState } from '../../shared/searchHistory.js';
 import type { SettingValue } from '../../shared/settings/index.js';
@@ -27,8 +28,10 @@ import { updateBootStatus, hideBootStatus } from './bootStatus.js';
 import {
     getOrCreateEditorHost,
     getMindmapHost,
+    getSlidesHost,
     fileNameFromUri,
     enterMindmapMode,
+    enterSlidesMode,
     syncOutlineActiveLine,
 } from './appState.js';
 
@@ -56,6 +59,11 @@ export async function handleInit(
     updateBootStatus('已收到 INIT，正在创建 CodeMirror 编辑器。');
     sendLog('INFO', `INIT received: contentLength=${content.length}, theme=${theme}`);
 
+    // 把状态文字先交给浏览器绘制一帧，再开始后面一整段同步装配
+    //（重建编辑器、解析文档、建大纲）。不 yield 的话主线程会连续被占住，
+    // 用户看到的仍是上一帧的「正在等待扩展侧 INIT」，像卡住一样。
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
     ctx.currentTheme = theme;
     ctx.mindmapFileName = fileNameFromUri(documentUri);
 
@@ -70,6 +78,8 @@ export async function handleInit(
         // 在创建编辑器前，把全部设置（颜色 / 个性化项）写入 settingsState，
         // CSS 变量先就位，首屏即按用户设置渲染、不闪。
         settingsState.replaceAll(allSettings ?? {});
+        // 性能监测是全局浮层，不依赖编辑器实例，设置一到就挂上
+        syncPerfMonitor();
 
         // Make sure the right-side outline starts at the saved width.
         if (Number.isFinite(outlineWidth ?? NaN)) {
@@ -93,6 +103,11 @@ export async function handleInit(
         ctx.mindmapApp?.destroy();
         ctx.mindmapApp = null;
         getMindmapHost().hidden = true;
+        // 幻灯片实例也一样：INIT 时会换文档，旧实例里的测量缓存/块编辑器
+        // 都指向旧文档，直接销毁重建最干净
+        ctx.slidesApp?.destroy();
+        ctx.slidesApp = null;
+        getSlidesHost().hidden = true;
         getOrCreateEditorHost().hidden = false;
 
         // Create new CodeMirror ctx.editor
@@ -188,6 +203,11 @@ export async function handleInit(
             await enterMindmapMode();
             ctx.currentEditorMode = 'mindmap';
             sendLog('INFO', 'Default ctx.editor mode applied: mindmap');
+        } else if (mode === 'slides') {
+            // 幻灯片不是 CM 的三种文本模式之一，不能传给 setMode
+            await enterSlidesMode();
+            ctx.currentEditorMode = 'slides';
+            sendLog('INFO', 'Default ctx.editor mode applied: slides');
         } else if (mode && mode !== 'live') {
             ctx.editor.setMode(mode);
             ctx.currentEditorMode = mode;
@@ -229,6 +249,8 @@ export function handleUpdate(content: string): void {
         ctx.outlinePanel?.setContent(content);
         // 外部变更同步给导图（导图自身回写不会触发 UPDATE，无环）
         ctx.mindmapApp?.setDocument(content, ctx.mindmapFileName);
+        // 幻灯片同理：非激活时只记文本，激活时会触发解析与重排
+        ctx.slidesApp?.setDocument(content, ctx.mindmapFileName);
         syncOutlineActiveLine();
         sendLog('DEBUG', 'UPDATE applied successfully');
         console.debug(`[LiveWriteMD] handleUpdate: setContent completed`);
@@ -255,6 +277,7 @@ export function handleThemeChange(theme: ThemeType): void {
     sendLog('DEBUG', `THEME_CHANGE received: theme=${theme}`);
     ctx.currentTheme = theme;
     ctx.mindmapApp?.setTheme(theme);
+    ctx.slidesApp?.setEditorTheme(theme);
 
     try {
         // Apply theme change using ThemeManager (for CSS classes)

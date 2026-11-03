@@ -95,10 +95,18 @@ function toProperty(item) {
     return property;
 }
 
-// 生成全部 properties（key 带 liveWriteMd 前缀由 configuration section 提供，这里用裸 key）
+// 生成全部 properties。
+//
+// 注意：contributes.configuration 只是一个「配置块」（title + properties），
+// VS Code 不会替 properties 自动补配置段前缀，property 的 key 必须写完整 ID
+// （形如 liveWriteMd.fontScale）。旧版脚本生成的是裸 key（fontScale），
+// 导致扩展侧用 workspace.getConfiguration('liveWriteMd').update('fontScale')
+// 写设置时命中未注册的 liveWriteMd.fontScale，VS Code 静默拒绝落盘，
+// 表现为「设置面板里改了，重启后恢复默认」。
+const CONFIG_PREFIX = 'liveWriteMd.';
 const generated = {};
 for (const item of schema.ALL_SETTING_ITEMS) {
-    generated[item.key] = toProperty(item);
+    generated[CONFIG_PREFIX + item.key] = toProperty(item);
 }
 
 // 读 package.json，更新 contributes.configuration
@@ -109,11 +117,17 @@ if (!configuration) {
     throw new Error('package.json 缺少 contributes.configuration');
 }
 
-// 保留 schema 之外可能存在的额外 key（理论上所有 key 都在 schema 里）
+// schema 是唯一数据源：整体替换 properties。
+// 这样既能丢掉旧版脚本留下的无前缀裸键，也能清掉已经从 schema 删除的过期项。
 const existingProps = configuration.properties ?? {};
-configuration.properties = { ...existingProps, ...generated };
+const removed = Object.keys(existingProps).filter((key) => !(key in generated));
+configuration.properties = generated;
 
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
 
 const count = Object.keys(generated).length;
 console.log(`LiveWriteMD configuration 已同步：${count} 项设置写入 package.json`);
+if (removed.length > 0) {
+    console.log(`已移除 ${removed.length} 个过期 / 无前缀配置项：`);
+    for (const key of removed) console.log(`  - ${key}`);
+}

@@ -31,6 +31,7 @@ import type { SettingItem, SettingSection, SettingValue } from './types.js';
 import { EDITOR_SECTIONS } from './schemaEditor.js';
 import { CONTENT_SECTIONS } from './schemaContent.js';
 import { MINDMAP_SECTIONS } from './schemaMindmap.js';
+import { SLIDES_SECTIONS } from './schemaSlides.js';
 
 // 类型从这里统一出口，外部只需 import 本文件
 export type {
@@ -46,6 +47,7 @@ export const SETTINGS_SCHEMA: SettingSection[] = [
     ...EDITOR_SECTIONS,
     ...CONTENT_SECTIONS,
     ...MINDMAP_SECTIONS,
+    ...SLIDES_SECTIONS,
 ];
 
 /**

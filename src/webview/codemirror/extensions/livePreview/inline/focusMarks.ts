@@ -74,7 +74,7 @@ import {
     srcMarkActiveDeco,
     srcMarkDeco,
 } from '../decor/decorations.js';
-import { extractFencedCodeContent, extractFencedCodeLanguage } from '../measure/sourceParse.js';
+import { extractFencedCodeContent, extractFencedCodeLanguage, isQuickCardCloseLine } from '../measure/sourceParse.js';
 import {
     computeOpenScales,
     describeOpenElement,
@@ -90,6 +90,8 @@ import { isTableLikeBlock, splitRowText } from '../table/tableDetect.js';
 // 引用聚焦的悬挂缩进要叠在「正文与行号线距离」之上（.cm-line 的默认左内边距）
 import { settingsState } from '../../../../settings/settingsState.js';
 import { isSetextBeforeFence } from '../ranges.js';
+import { createCodeBlockIndentStyle, getCodeBlockIndentInfo } from '../measure/codeIndent.js';
+import { indentUnit } from '@codemirror/language';
 import { isForcedSourceRange } from '../state.js';
 import { inlineMathFocusSignature } from '../math/mathCollect.js';
 import { CodeBlockCopyWidget } from '../widgets/simpleWidgets.js';
@@ -639,6 +641,9 @@ export function collectFocusDecorations(
                     for (let ln = startLine.number; ln <= endLine.number; ln++) {
                         const line = state.doc.line(ln);
                         if (line.text.trim() === '') continue;
+                        // 快速卡片结束围栏（单独的 `>>>` 行）不是引用：
+                        // 聚焦时也不用挂引用手势（悬挂缩进），保持普通文字。
+                        if (isQuickCardCloseLine(line.text)) continue;
                         // 行首的 > 标记串（含其间空白；嵌套引用有多个）。
                         // 宽度按字符数算（等宽字体 1 字符 = 1ch；Tab 罕见，按 1 算）
                         const marksRun = line.text.match(/^[ \t]*(?:>[ \t]*)+/);
@@ -674,21 +679,57 @@ export function collectFocusDecorations(
                 return false;
             }
 
-            // ---- 代码块：进文本模式，整块的底色/边框/缩进导引线一起撤掉 ----
+            // ---- 代码块：进文本模式，但**保留整块外壳（底色 / 边线 / 圆角）** ----
             if (name === 'FencedCode') {
                 // Mermaid 在渲染态是整块图形 widget，编辑态保持纯文本更好改
                 if (extractFencedCodeLanguage(node, state) === 'mermaid') return false;
 
-                // 这里**故意不挂** `cm-md-codeblock*` 那几行装饰：那是渲染态的外壳
-                // （底色、左右边框、圆角、行首 0.9em 的内边距、缩进导引线）。
-                // 光标一进代码块，整块就是「纯文本 + 围栏」——用户要的是
-                // 「点哪儿都整块变成文本模式，并且没有背景色」，留着底色会让
-                // 「进去了」这件事只能靠左边两个 ``` 看出来，尤其是块很长的时候。
+                // 这里要补 `cm-md-codeblock*` 那几行装饰：主遍历碰到与聚焦块
+                // 重叠的 FencedCode 会整棵跳过，所以渲染态的行装饰不会产生。
                 //
-                // 主角是主遍历：它碰到与聚焦块重叠的 FencedCode 会整棵跳过，
-                // 所以渲染态那套行装饰在这里**本来就不会产生**。此处只要不补，
-                // 整块自然就是干净的正文。
+                // 以前是故意不补的（「点进去就变纯文本、没有背景色」），现在按
+                // 用户要求统一：三个模式里进入编辑后代码块背景 / 边线保持不变，
+                // 只有围栏 ``` 与语言名露出来。类名组合与主遍历
+                // （treeDecorations 的 FencedCode 分支）严格一致，避免进出编辑时
+                // 背景、圆角、缩进色带闪一下。
                 const startLine = state.doc.lineAt(from);
+                const endLine = state.doc.lineAt(to);
+                // 缩进色带的单位宽度：默认 indentUnit = 2 空格；
+                // 配成 Tab 时一个单位宽 = tabSize。
+                const unitText = state.facet(indentUnit);
+                const indentUnitColumns =
+                    unitText.charCodeAt(0) === 9
+                        ? state.tabSize * unitText.length
+                        : unitText.length;
+                for (let ln = startLine.number; ln <= endLine.number; ln++) {
+                    const line = state.doc.line(ln);
+                    const classes = ['cm-md-codeblock'];
+                    const attributes: Record<string, string> = {};
+                    if (ln === startLine.number) {
+                        classes.push('cm-md-codeblock-first');
+                    }
+                    if (ln === endLine.number) {
+                        classes.push('cm-md-codeblock-last');
+                    }
+                    if (ln > startLine.number && ln < endLine.number) {
+                        // 首/末行是围栏 ``` 行，不铺缩进色带
+                        const indentColumns = getCodeBlockIndentInfo(
+                            line.text,
+                            state.tabSize
+                        ).columns;
+                        classes.push('cm-md-codeblock-indent');
+                        attributes.style = createCodeBlockIndentStyle(
+                            indentColumns,
+                            indentUnitColumns
+                        );
+                    }
+                    decos.push(
+                        Decoration.line({
+                            class: classes.join(' '),
+                            attributes,
+                        }).range(line.from)
+                    );
+                }
 
                 // 复制按钮：渲染态由 plugin.ts 的主遍历挂上，这里必须补一个一样的。
                 // 两条路是互斥的（主遍历跳过聚焦块、这里只管聚焦块），不会挂重；

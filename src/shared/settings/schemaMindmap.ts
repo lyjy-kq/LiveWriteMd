@@ -108,14 +108,14 @@ export const MINDMAP_SECTIONS: SettingSection[] = [
                         unit: '行',
                     },
                     {
-                        key: 'mindmapCodeMinWidth',
-                        label: '代码块最小宽度',
+                        key: 'mindmapCodeWidth',
+                        label: '代码块宽度',
                         description:
-                            '代码块节点的最小宽度（1 列 = 1 个等宽字符宽），避免短代码的节点过窄；0 = 不设最小宽度。',
+                            '代码块节点的最大宽度（1 列 = 1 个等宽字符宽）；节点最窄 40 列。长行不换行，超出后在节点内左右滚动。',
                         control: 'slider',
-                        default: 10,
-                        min: 0,
-                        max: 60,
+                        default: 60,
+                        min: 40,
+                        max: 100,
                         step: 1,
                         unit: '列',
                     },
@@ -125,7 +125,7 @@ export const MINDMAP_SECTIONS: SettingSection[] = [
                 id: 'mindmap-interaction',
                 label: '交互与性能',
                 icon: '⚡',
-                description: '内链箭头、手势期间的清晰度取舍和性能监测。',
+                description: '内链箭头和手势期间的清晰度取舍。',
                 items: [
                     {
                         key: 'mindmapInternalLinks',
@@ -145,19 +145,6 @@ export const MINDMAP_SECTIONS: SettingSection[] = [
                             '开启（默认）时，拖动和滚轮缩放期间不提升合成层，文字在运动中也按当前比例重新栅格化、保留次像素抗锯齿；关闭后手势期间临时提升合成层换帧率，运动中的文字是缓存位图（略灰）。实测 60~74 个可见节点时两者帧间隔相同。',
                         control: 'toggle',
                         default: true,
-                    },
-                    {
-                        key: 'mindmapPerfMonitor',
-                        label: '性能监测',
-                        description:
-                            '在画布右上角实时显示性能数据。极简版无边框，只显示帧率与堆内存；完整版另含实例数 / 换真队列 / 强制布局速率，并记录帧率跳变与长任务现场（可一键复制成 JSON）。默认关闭。',
-                        control: 'select',
-                        default: 'off',
-                        options: [
-                            { value: 'off', label: '关闭' },
-                            { value: 'minimal', label: '极简（帧率 + 内存）' },
-                            { value: 'full', label: '完整（详细指标）' },
-                        ],
                     },
                 ],
             },
@@ -250,6 +237,21 @@ export const MINDMAP_SECTIONS: SettingSection[] = [
                 description: '详细日志输出到「输出」面板的 LiveWriteMD 通道。',
                 control: 'toggle',
                 default: false,
+            },
+            {
+                // 全局性能监测：从导图模式抽出来，所有模式共用同一个浮层。
+                // off / minimal / full 三档，full 才装长任务观察器与 gBCR 包装。
+                key: 'perfMonitor',
+                label: '性能监测',
+                description:
+                    '在窗口右上角实时显示当前打开文件的性能数据，实时 / 源码 / 阅读 / 导图 / 幻灯片所有模式通用。极简版只有帧率与堆内存；完整版另含 DOM、文档大小、当前模式专属指标（导图节点、幻灯片页数、文本视口行数）与强制布局速率，并记录帧率跳变和长任务现场（可一键复制成 JSON）。默认关闭。',
+                control: 'select',
+                default: 'off',
+                options: [
+                    { value: 'off', label: '关闭' },
+                    { value: 'minimal', label: '极简（帧率 + 内存）' },
+                    { value: 'full', label: '完整（详细指标）' },
+                ],
             },
         ],
     },

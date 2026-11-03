@@ -20,6 +20,10 @@ import { isMediaKind } from '.././edit/rename.js';
 export function handleWindowKeyDown(app: MindMapApp, event: KeyboardEvent): void {
     if (!app.active) return;
     const key = event.key.toLowerCase();
+    const isModifierKey = event.key === 'Control' || event.key === 'Meta';
+    // 按住 Ctrl 期间只要按了别的键（Ctrl+C / Ctrl+V / Ctrl+F …），
+    // 这次 Ctrl 就不能再算「单独按下」，也就不会在松手时清空多选。
+    if (!isModifierKey) app.ctrlClearArmed = false;
     // Ctrl/Cmd+S：强制写回 + 保存。
     // 必须排在「编辑会话里直接 return」之前 —— 编辑中按保存正是最常见的
     // 用法；否则按键会落到 VS Code 的默认保存上，而 mini-CM 里还没提交的
@@ -41,6 +45,15 @@ export function handleWindowKeyDown(app: MindMapApp, event: KeyboardEvent): void
     // 侧边卡片选中时，复制 / 剪切 / 粘贴归卡片栏（作用于这张卡片），
     // 不能再落到导图树的子树剪贴上
     if (app.quickCards?.handleKey(event)) return;
+
+    // 单独按下 Ctrl / Cmd：多选手势的起点（真正的清空在 keyup，见
+    // handleWindowKeyUp）。按住期间一旦按了别的键，上面的作废逻辑会取消它，
+    // 或者在画布上开始多选手势时被 beginMultiGesture 消费 —— 所以
+    // Ctrl+C / Ctrl+V 这些快捷键不会被误清。
+    if (isModifierKey && !event.repeat) {
+        app.ctrlClearArmed = true;
+        return;
+    }
 
     if ((event.ctrlKey || event.metaKey) && !event.altKey) {
         if (key === 'f') {
@@ -126,6 +139,25 @@ export function handleWindowKeyDown(app: MindMapApp, event: KeyboardEvent): void
         app.deleteSelected();
     }
 };
+
+
+/**
+ * 松开 Ctrl / Cmd：如果是「单独按了一下 Ctrl」（按住期间没有按别的键、
+ * 也没有在画布上开始多选手势），就把上一次多选清掉。
+ *
+ * 用 keyup 而不是 keydown 判定，是为了不误伤 Ctrl+C / Ctrl+V / Ctrl+F
+ * 这些组合键：组合键里的其它键一按下就把 ctrlClearArmed 取消了。
+ */
+export function handleWindowKeyUp(app: MindMapApp, event: KeyboardEvent): void {
+    if (!app.active) return;
+    if (event.key !== 'Control' && event.key !== 'Meta') return;
+    if (!app.ctrlClearArmed) return;
+    app.ctrlClearArmed = false;
+    // 没有多选时不动普通单选：点一下 Ctrl 不该把当前选中的节点也弄没。
+    if (app.multiSelected.size > 0) {
+        app.clearSelection();
+    }
+}
 
 
 /** 空文档提示浮层。 */

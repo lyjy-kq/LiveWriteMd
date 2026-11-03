@@ -11,6 +11,10 @@
 
 import { MindMapApp } from './mindmap/mindmapApp.js';
 import { settingsState } from './settings/settingsState.js';
+import {
+    setPerfSnapshotProvider,
+    syncPerfMonitor,
+} from './perf/perfMonitor.js';
 import { MESSAGE_TYPES } from '../shared/messageTypes.js';
 import { getDefaultSettings, type SettingValue } from '../shared/settings/index.js';
 import type { MindMapRuntimeSettings } from './mindmap/types.js';
@@ -47,22 +51,18 @@ function readMindmapSettings(
     const defaults = getDefaultSettings();
     const pick = (key: string): SettingValue => all?.[key] ?? defaults[key];
     const expandLevel = Number(pick('mindmapDefaultExpandLevel'));
-    const codeMinWidth = Number(pick('mindmapCodeMinWidth'));
-    const perfMonitor = String(pick('mindmapPerfMonitor') || 'off');
+    const codeWidth = Number(pick('mindmapCodeWidth'));
     return {
         mindmapTheme: String(pick('mindmapTheme') || 'auto'),
         mindmapDefaultExpandLevel: Number.isFinite(expandLevel) ? expandLevel : 2,
         // 顺带补齐尺寸类设置（此前面板只取三项，靠 CSS 回落兜底）
         mindmapNodeMaxWidth: Number(pick('mindmapNodeMaxWidth')) || 20,
         mindmapNodeMaxLines: Number(pick('mindmapNodeMaxLines')) || 3,
-        mindmapCodeMinWidth: Number.isFinite(codeMinWidth) ? codeMinWidth : 10,
+        mindmapCodeWidth: Number.isFinite(codeWidth) ? codeWidth : 60,
         // 手势期清晰度优先：默认关闭
         mindmapGestureCrisp: Boolean(pick('mindmapGestureCrisp')),
         // 内链箭头层：默认开启
         mindmapInternalLinks: Boolean(pick('mindmapInternalLinks')),
-        // 性能监测浮层：只认三个合法值，其它一律关闭
-        mindmapPerfMonitor:
-            perfMonitor === 'minimal' || perfMonitor === 'full' ? perfMonitor : 'off',
         // 快速卡片：开关 + 宽高（0 视为没读到，回退 schema 默认值）
         quickCardEnabled: Boolean(pick('quickCardEnabled')),
         quickCardWidth: Number(pick('quickCardWidth')) || 280,
@@ -101,6 +101,22 @@ let app: MindMapApp | null = null;
 let currentTheme: ThemeType = 'dark';
 /** 当前文件名（虚拟根文本）。 */
 let currentFileName = '';
+/** 当前全文：性能浮层要报「行 / KB」，面板没有 CM 只能自己留一份。 */
+let currentContent = '';
+
+// 独立面板也是「一个打开的文件」：把导图指标 + 文档大小交给全局性能浮层。
+setPerfSnapshotProvider(() => {
+    const lines = currentContent ? currentContent.split('\n').length : 0;
+    const kb = Math.round(currentContent.length / 102.4) / 10;
+    const base = `导图 · 行 ${lines} · ${kb}KB`;
+    const stats = app?.debugStats();
+    if (!stats) return { line: base, raw: { mode: 'mindmap', lines } };
+    return {
+        line: `${base} · 节点 ${stats.nodes}/${stats.mounted} · 队列 ${stats.queue}`,
+        raw: { mode: 'mindmap', lines, ...stats },
+        createdTotal: Number(stats.createdTotal) || 0,
+    };
+});
 
 /**
  * 惰性创建导图应用。面板没有 CM 实例，onEdit 直接发 CONTENT_CHANGE。
@@ -150,9 +166,12 @@ window.addEventListener('message', (event: MessageEvent) => {
         if (msg.type === MESSAGE_TYPES.INIT) {
             currentTheme = msg.theme ?? 'dark';
             currentFileName = fileNameFromUri(String(msg.documentUri ?? ''));
+            currentContent = String(msg.content ?? '');
             // 面板没有主编辑器那套初始化，字体 / 颜色等 CSS 变量要自己落到
             // :root，否则「英文字体 / 中文字体」等设置在这个独立窗口里不生效。
             settingsState.replaceAll(msg.allSettings ?? {});
+            // 全局性能浮层：设置一到就挂上（off 时什么都不做）
+            syncPerfMonitor();
             const instance = ensureApp();
             if (!instance) return;
             instance.setSettings(readMindmapSettings(msg.allSettings));
@@ -160,7 +179,8 @@ window.addEventListener('message', (event: MessageEvent) => {
             // 面板 webview 在后台创建时容器尺寸可能为 0，就绪并激活后再 fit 一次
             void instance.whenReady().then(() => instance.setActive(true));
         } else if (msg.type === MESSAGE_TYPES.UPDATE) {
-            app?.setDocument(String(msg.content ?? ''), currentFileName);
+            currentContent = String(msg.content ?? '');
+            app?.setDocument(currentContent, currentFileName);
         } else if (msg.type === MESSAGE_TYPES.THEME_CHANGE) {
             if (msg.theme) {
                 currentTheme = msg.theme;
@@ -168,6 +188,7 @@ window.addEventListener('message', (event: MessageEvent) => {
             }
         } else if (msg.type === MESSAGE_TYPES.SETTINGS_CHANGE) {
             if (msg.allSettings) settingsState.replaceAll(msg.allSettings);
+            syncPerfMonitor();
             app?.setSettings(readMindmapSettings(msg.allSettings));
         }
     } catch (error) {

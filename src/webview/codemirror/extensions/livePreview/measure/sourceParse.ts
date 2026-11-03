@@ -23,6 +23,29 @@ export function escapeHtml(text: string): string {
 // 本文件顶部 re-export 的 renderInlineMarkdown 即旧正则实现的直接替代。
 
 /**
+ * 判断一整行是不是「快速卡片」的结束围栏（单独的 `>>>` 行）。
+ *
+ * 背景：快速卡片的存储格式是 `<<<` / `>>>` 两个独立行（见
+ * webview/mindmap/edit/staging.ts），设计上在 live 模式里它们只是普通文字。
+ * 但 CommonMark 会把行首的 `>>>` 解析成**三级引用**，于是 live 预览会：
+ * - 把三个 `>` 当 QuoteMark 压 0 宽；
+ * - 再给这一行套上 `.cm-md-blockquote-3`（3.6em 缩进 + 两条引用竖线），
+ *   看起来像个空的三级引用块，而不是卡片的结束标记。
+ *
+ * 所以 live 预览在「引用 / 引用标记」两个分支里都要先按本函数放行，
+ * 让这一行保持普通文字原样（与 `<<<` 行的显示一致）。
+ *
+ * 判定刻意与 staging.ts 的格式约束对齐：`>>>` 必须从第 0 列开始，
+ * 行尾只允许空白；`>>>>`、`>>> 文字` 这些仍然是正常的引用。
+ *
+ * @param lineText - 单行文本（不含换行符）
+ * @returns 是快速卡片结束围栏时返回 true
+ */
+export function isQuickCardCloseLine(lineText: string): boolean {
+    return /^>>>[ \t]*$/.test(lineText);
+}
+
+/**
  * `<font>` 允许映射到 DOM 的安全 CSS 属性白名单。
  */
 const SAFE_FONT_STYLE_PROPERTIES = new Set([
@@ -297,6 +320,10 @@ export function extractFencedCodeLanguage(node: SyntaxNode, state: EditorState):
 
 /**
  * Extract content text from a fenced code block node (excluding opening/closing fences).
+ *
+ * 与 VS Code 的 code block 口径一致：开围栏的缩进（列表项里的 2/4/7 格）
+ * 只是「把围栏挂进列表」的结构缩进，不属于代码本身；复制或交给 Mermaid
+ * 时按 CommonMark 的规则逐行去掉这段前缀，最多去掉开围栏那么宽。
  */
 export function extractFencedCodeContent(node: SyntaxNode, state: EditorState): string | null {
     const startLine = state.doc.lineAt(node.from);
@@ -305,6 +332,13 @@ export function extractFencedCodeContent(node: SyntaxNode, state: EditorState): 
     const contentStart = state.doc.line(startLine.number + 1).from;
     const contentEnd = state.doc.line(endLine.number).from;
     if (contentStart >= contentEnd) return null;
-    return state.doc.sliceString(contentStart, contentEnd).trimEnd();
+
+    const indent = /^[ \t]*/.exec(startLine.text)?.[0] ?? '';
+    const raw = state.doc.sliceString(contentStart, contentEnd).trimEnd();
+    if (!indent) return raw;
+    return raw
+        .split('\n')
+        .map((line) => (line.startsWith(indent) ? line.slice(indent.length) : line))
+        .join('\n');
 }
 

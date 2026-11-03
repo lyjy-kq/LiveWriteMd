@@ -33,7 +33,6 @@ import type { NodeDisplay } from './miniCm.js';
 import { QuickCardRail } from './quickCardRail.js';
 import { MindmapSearchBar } from './searchBar.js';
 import { ensureMindMapCss } from './styles/index.js';
-import { PerfHud } from './perfHud.js';
 import { buildMindMapTree } from './treeBuilder.js';
 import {
     MapCanvas,
@@ -95,14 +94,12 @@ const DEFAULT_RUNTIME_SETTINGS: MindMapRuntimeSettings = {
     mindmapDefaultExpandLevel: 2,
     mindmapNodeMaxWidth: 20,
     mindmapNodeMaxLines: 3,
-    mindmapCodeMinWidth: 10,
+    mindmapCodeWidth: 60,
     // 手势期清晰度优先：默认开启。实测平移帧间隔与提升模式一致、
     // 滚轮缩放反而少了 41ms 的建层尖峰，所以默认不提升。
     mindmapGestureCrisp: true,
     // 内链箭头层：默认开启
     mindmapInternalLinks: true,
-    // 性能监测浮层：默认关闭（开了才有采样开销）
-    mindmapPerfMonitor: 'off',
     // 快速卡片：默认显示；宽度全局生效（拖动卡片左边界调，拖完持久化）
     quickCardEnabled: true,
     quickCardWidth: 280,
@@ -110,7 +107,8 @@ const DEFAULT_RUNTIME_SETTINGS: MindMapRuntimeSettings = {
 
 /**
  * 文本节点：编辑中内容变高（回车换行 / 长行折行）时要把单元格撑高。
- * 代码、表格、公式等媒体节点不在此列 —— 它们编辑时保持盒内滚动。
+ * 表格、公式等媒体节点不在此列 —— 它们编辑时保持盒内滚动；
+ * 代码块另外在 appEditSession 里单独放行（编辑态要多露两行围栏）。
  */
 export const TEXT_NODE_KINDS = new Set<MindMapNodeKind>(['heading', 'list', 'para', 'quote']);
 
@@ -203,8 +201,6 @@ export class MindMapApp {
      * 和节点操作共用同一条 undo / 同步链路。
      */
     public quickCards: QuickCardRail | null = null;
-    /** 性能监控浮层（设置开启时非 null）。 */
-    public perfHud: PerfHud | null = null;
 
     /** 当前文档全文与按行缓存（computeDoc 高频调用，避免反复 split）。 */
     public markdown = '';
@@ -292,6 +288,14 @@ export class MindMapApp {
      * 置为最后命中的一个，工具条仍可用。
      */
     public multiSelected = new Set<string>();
+    /**
+     * 「单独按下 Ctrl / Cmd」的待办标记。
+     *
+     * keydown 时置位，松手（keyup）时如果还在，就把上一次多选清掉；
+     * 按住期间按了别的键（Ctrl+C 等）或在画布上开始了多选手势，都会
+     * 先把它消费掉，避免误清当前选择。见 appKeys / appSelection。
+     */
+    public ctrlClearArmed = false;
     /** 多选删除的「再按一次确认」状态（复用 4 秒自动复位）。 */
     public pendingDeleteMulti = false;
     /** 右键菜单。 */
@@ -417,6 +421,8 @@ export class MindMapApp {
             onNodeDoubleClick: (node, event) =>
                 this.startEdit(node.uid, event.clientX, event.clientY),
             onCanvasClick: () => this.clearSelection(),
+            // Ctrl / Cmd 按下开始新一轮多选手势：先清掉上一次的选中框和节点选中态
+            onMultiGestureStart: () => this.beginMultiGesture(),
             onExpandChange: (uid, expanded, recursive) =>
                 this.handleExpandChange(uid, expanded, recursive),
             onDrop: (payload) => this.handleDrop(payload),
@@ -448,8 +454,6 @@ export class MindMapApp {
 
         this.applyNodeSizeVars();
         // 视口虚拟化恒开（画布内的默认值），不再提供开关
-        // 性能监测浮层：按初始设置挂/摘
-        this.syncPerfHud();
         this.createToolbar();
         this.createMultiToolbar();
         this.createContextMenu();
@@ -493,6 +497,8 @@ export class MindMapApp {
         });
 
         window.addEventListener('keydown', this.handleWindowKeyDown, true);
+        // 松开 Ctrl / Cmd：单独按一下 Ctrl 时清掉上一次多选（见 handleWindowKeyUp）
+        window.addEventListener('keyup', this.handleWindowKeyUp, true);
         // 双击手势收尾（必须在容器捕获阶段，抢在画布 nodeLayer 的 dblclick 前）
         this.container.addEventListener('dblclick', this.onContainerDoubleClick, true);
         // 编辑会话的兜底提交钩子（blur 之外的几条遗漏路径，见各字段注释）
@@ -512,6 +518,8 @@ export class MindMapApp {
     // appSelection
     public handleNodeClick(node: MapNode, event: MouseEvent) : void { return appSelection.handleNodeClick(this, node, event); }
     public toggleMultiSelection(uid: string) : void { return appSelection.toggleMultiSelection(this, uid); }
+    /** Ctrl 手势开始：清掉上一次多选（框 + 节点选中态）。 */
+    public beginMultiGesture() : void { return appSelection.beginMultiGesture(this); }
     public applyMarqueeSelection(uids: string[]) : void { return appSelection.applyMarqueeSelection(this, uids); }
     public selectNode(uid: string) : void { return appSelection.selectNode(this, uid); }
     public outlineLineOf(uid: string) : number | null { return appSelection.outlineLineOf(this, uid); }
@@ -569,7 +577,6 @@ export class MindMapApp {
     public syncInternalLinks() : void { return appLinkage.syncInternalLinks(this); }
     public resolveInternalLinkUid(target: string) : string | null { return appLinkage.resolveInternalLinkUid(this, target); }
     public handleInternalLinkNavigate(uid: string) : void { return appLinkage.handleInternalLinkNavigate(this, uid); }
-    public syncPerfHud() : void { return appLinkage.syncPerfHud(this); }
     public applySearchHighlight(uids: string[], currentUid: string | null) : void { return appLinkage.applySearchHighlight(this, uids, currentUid); }
     public findNodeUidAtLine(line0: number) : string | null { return appLinkage.findNodeUidAtLine(this, line0); }
     // appDragDrop
@@ -703,6 +710,7 @@ export class MindMapApp {
     public async handleExport(format: 'png' | 'svg' | 'pdf') : Promise<void> { return appMenus.handleExport(this, format); }
     // appKeys
     public handleWindowKeyDown = (event: KeyboardEvent): void => { appKeys.handleWindowKeyDown(this, event); };
+    public handleWindowKeyUp = (event: KeyboardEvent): void => { appKeys.handleWindowKeyUp(this, event); };
     public toggleEmptyHint(empty: boolean) : void { return appKeys.toggleEmptyHint(this, empty); }
 
 
@@ -801,16 +809,10 @@ export class MindMapApp {
             this.syncInternalLinks();
         }
 
-        // 性能监测浮层：开关 / 档位切换即挂、摘或重建（HUD 内部是 rAF +
-        // 500ms 定时器，关闭时整个销毁，不留后台采样）
-        if (previous.mindmapPerfMonitor !== this.settings.mindmapPerfMonitor) {
-            this.syncPerfHud();
-        }
-
         const sizeChanged =
             previous.mindmapNodeMaxWidth !== this.settings.mindmapNodeMaxWidth ||
             previous.mindmapNodeMaxLines !== this.settings.mindmapNodeMaxLines ||
-            previous.mindmapCodeMinWidth !== this.settings.mindmapCodeMinWidth;
+            previous.mindmapCodeWidth !== this.settings.mindmapCodeWidth;
         if (sizeChanged) this.applyNodeSizeVars();
         const expandChanged =
             previous.mindmapDefaultExpandLevel !== this.settings.mindmapDefaultExpandLevel;
@@ -869,8 +871,8 @@ export class MindMapApp {
             String(this.settings.mindmapNodeMaxLines)
         );
         this.container.style.setProperty(
-            '--lwm-code-min-width',
-            `${this.settings.mindmapCodeMinWidth}ch`
+            '--lwm-code-width',
+            `${this.settings.mindmapCodeWidth}ch`
         );
     }
 
@@ -920,6 +922,7 @@ export class MindMapApp {
     /** 销毁实例。 */
     destroy(): void {
         window.removeEventListener('keydown', this.handleWindowKeyDown, true);
+        window.removeEventListener('keyup', this.handleWindowKeyUp, true);
         this.container.removeEventListener('dblclick', this.onContainerDoubleClick, true);
         document.removeEventListener('pointerdown', this.onDocumentPointerDown, true);
         document.removeEventListener('visibilitychange', this.onVisibilityChange);
@@ -928,9 +931,6 @@ export class MindMapApp {
         document.removeEventListener('keydown', this.onDocumentKeyDown);
         window.removeEventListener('blur', this.onWindowBlur);
         this.searchBar.close();
-        // 性能监控浮层：停采样、恢复 gBCR 包装
-        this.perfHud?.destroy();
-        this.perfHud = null;
         if (this.toolbarTimer) clearInterval(this.toolbarTimer);
         if (this.pendingDeleteTimer !== null) clearTimeout(this.pendingDeleteTimer);
         this.pendingDeleteTimer = null;

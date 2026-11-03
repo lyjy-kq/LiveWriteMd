@@ -30,6 +30,8 @@ export function collectMemoryStats(opts: {
     mode: string;
     /** 导图内部计数（不在导图模式时传 null）；字段见 MapCanvas.debugState */
     mapStats: Record<string, unknown> | null;
+    /** 幻灯片内部计数（未创建实例时传 null）；字段见 SlidesApp.debugStats */
+    slidesStats?: Record<string, unknown> | null;
 }): Record<string, unknown> {
     // performance.memory 是 Chromium 专有 API：VS Code 的 webview 恰好是
     // Chromium，直接可用；其它宿主（理论上）没有就报 -1
@@ -49,6 +51,8 @@ export function collectMemoryStats(opts: {
         mode: opts.mode,
         // —— 导图（仅导图模式有值）——
         map: opts.mapStats,
+        // —— 幻灯片（实例创建过就有值）——
+        slides: opts.slidesStats ?? null,
         // —— 各模块缓存条目数（无限增长的缓存是历史泄漏重灾区）——
         caches: {
             mermaidSvg: mermaidSvgCache.size,

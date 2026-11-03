@@ -19,7 +19,7 @@
 import { Decoration } from '@codemirror/view';
 import type { EditorState } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
-import type { Tree } from '@lezer/common';
+import type { SyntaxNode, Tree } from '@lezer/common';
 import { hiddenSourceDeco } from '../decor/decorations.js';
 import { windowLines } from '../ranges.js';
 import { isForcedSourceRange } from '../state.js';
@@ -52,6 +52,31 @@ const CODE_NODE_NAMES = new Set([
  */
 function isCodeNodeName(name: string): boolean {
     return CODE_NODE_NAMES.has(name);
+}
+
+/**
+ * 这个位置是否落在代码区域里（行内代码 / 围栏代码 / 缩进代码）。
+ *
+ * **必须沿 parent 链往上走**，不能只看 `resolveInner` 的最内层节点：
+ * 围栏后面写了已知语言（```ts / ```js …）时，代码内容交给嵌套语言解析器，
+ * 最内层返回的是 JS 的 `TemplateString` / `VariableName` 之类，名字根本不在
+ * CODE_NODE_NAMES 里。于是代码里的模板字符串 `${source.id}-${seed}-${index}`
+ * 会被行内公式正则当成 `$…$`，压 0 宽「屏蔽」掉（实测症状就是这样）。
+ *
+ * 往上走能碰到嵌套解析挂载点外面的 FencedCode / CodeText，就能正确判定。
+ *
+ * @param tree - 当前语法树
+ * @param pos - 文档位置
+ * @returns 属于代码区域时返回 true
+ */
+function isInsideCodePosition(tree: Tree, pos: number): boolean {
+    let node: SyntaxNode | null = tree.resolveInner(pos, 1);
+    // 嵌套语言层数不会太深，16 层足够兜底（同时防止异常树死循环）
+    for (let depth = 0; node && depth < 16; depth += 1) {
+        if (isCodeNodeName(node.type.name)) return true;
+        node = node.parent;
+    }
+    return false;
 }
 
 /**
@@ -116,7 +141,7 @@ export function pairDollarLines(state: EditorState, tree?: Tree): Map<number, nu
         // 真正公式的开头「抢走」，那一组就再也不渲染了。
         // 代码块节点从第一个非空白字符开始，所以按缩进之后的位置查。
         const lead = line.text.length - line.text.trimStart().length;
-        if (isCodeNodeName(syntax().resolveInner(line.from + lead, 1).type.name)) continue;
+        if (isInsideCodePosition(syntax(), line.from + lead)) continue;
 
         const role = classifyDollarLine(text);
         // 不含定界符 / 定界符自己成对（`$$x$$`）：和跨行配对无关
@@ -216,9 +241,11 @@ export function collectMathDecorations(
     /**
      * 这个位置是不是落在代码里（行内代码 / 围栏代码都算）。
      * 代码里的美元符号是代码，不是公式。
+     *
+     * 注意要看整条祖先链：带语言的围栏代码由嵌套解析器接管，
+     * 最内层节点是 JS 语法节点，不能只看它（见 isInsideCodePosition）。
      */
-    const isInsideCode = (pos: number): boolean =>
-        isCodeNodeName(tree.resolveInner(pos, 1).type.name);
+    const isInsideCode = (pos: number): boolean => isInsideCodePosition(tree, pos);
 
     // 预编译行内公式正则，允许分隔符内外出现常见空格。
     // `(?!\$)` 的两头是为了排除 `$$`；结尾的 `(?!\d)` 是为了放过「$5 到 $10」这种价格。
@@ -273,7 +300,7 @@ export function collectMathDecorations(
         const leadingSpace = lineText.length - lineText.trimStart().length;
         if (isInsideCode(line.from + leadingSpace)) continue;
 
-        // 同行块级公式：只有整行都由 $$ 包围时，才保留块级渲染（渲染成块级 widget，占 2.5 行高）。
+        // 同行块级公式：只有整行都由 $$ 包围时，才保留块级渲染（渲染成块级 widget，占 3 行高）。
         const sameLineMatch = lineText.match(/^\s*\$\$\s*(.+?)\s*\$\$\s*$/);
         if (sameLineMatch) {
             // 块级语义：光标 / 选区落在这一行就整行显示源码（展开粒度 = 行，
@@ -431,15 +458,18 @@ export function pushInlineMath(
  *
  * @param state - 编辑器状态
  * @param range - 只算这个范围涉及的公式（block 遍整篇、inline 遍窗口）
+ * @param tree - 当前语法树（可选；不传就现查一次，调用方有现成的就复用）
  * @returns 公式源码区间数组（无序，调用方只做包含判断）
  */
 export function collectMathSourceRanges(
     state: EditorState,
-    range: ILineRange
+    range: ILineRange,
+    tree?: Tree
 ): Array<{ from: number; to: number }> {
     const result: Array<{ from: number; to: number }> = [];
     const win = windowLines(state, range);
-    const pairs = pairDollarLines(state);
+    const syntax = tree ?? syntaxTree(state);
+    const pairs = pairDollarLines(state, syntax);
     const closers = new Set(pairs.values());
 
     // 1. 多行 $$：配对区间含两条 $$ 行，只收与窗口相交的
@@ -460,6 +490,8 @@ export function collectMathSourceRanges(
         if (!line.text.includes('$')) continue;
         // 多行 $$ 的开头 / 结尾行已由配对区间整行覆盖，别重复
         if (pairs.get(ln) !== undefined || closers.has(ln)) continue;
+        // 代码里的 `$` 不是公式（带语言的围栏要走完整祖先链，见 isInsideCodePosition）
+        if (isInsideCodePosition(syntax, line.from)) continue;
 
         // 2. 整行 $$x$$（sameLineMatch 同规则）：整行
         if (/^\s*\$\$\s*(.+?)\s*\$\$\s*$/.test(line.text)) {
@@ -471,11 +503,13 @@ export function collectMathSourceRanges(
         let m: RegExpExecArray | null;
         doubleRegex.lastIndex = 0;
         while ((m = doubleRegex.exec(line.text))) {
+            if (isInsideCodePosition(syntax, line.from + m.index)) continue;
             result.push({ from: line.from + m.index, to: line.from + m.index + m[0].length });
         }
         // 行内 $…$
         singleRegex.lastIndex = 0;
         while ((m = singleRegex.exec(line.text))) {
+            if (isInsideCodePosition(syntax, line.from + m.index)) continue;
             result.push({ from: line.from + m.index, to: line.from + m.index + m[0].length });
         }
     }
@@ -504,18 +538,9 @@ export function inlineMathFocusSignature(state: EditorState, tree: Tree): string
     const line = state.doc.lineAt(selection.head);
     if (!line.text.includes('$')) return null;
 
-    // 代码（行内代码 / 围栏代码）里的 $ 不是公式，判定与收集时的 isInsideCode 一致
-    const resolvedName = tree.resolveInner(selection.head, 1).type.name;
-    if (
-        resolvedName === 'InlineCode' ||
-        resolvedName === 'CodeMark' ||
-        resolvedName === 'FencedCode' ||
-        resolvedName === 'CodeText' ||
-        resolvedName === 'CodeBlock' ||
-        resolvedName === 'CodeInfo'
-    ) {
-        return null;
-    }
+    // 代码（行内代码 / 围栏代码）里的 $ 不是公式，判定与收集时的 isInsideCode 一致。
+    // 同样要沿祖先链查：带语言的围栏最内层是嵌套语言节点（见 isInsideCodePosition）。
+    if (isInsideCodePosition(tree, selection.head)) return null;
 
     // 整行 $$x$$ 是块级语义，交给 focusedRange 变化触发，这里不产出签名
     if (/^\s*\$\$\s*.+?\s*\$\$\s*$/.test(line.text)) return null;

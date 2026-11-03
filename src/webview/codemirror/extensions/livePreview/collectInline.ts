@@ -252,6 +252,8 @@ export function collectImageDecorations(
                 measureTrailingWidthAttribute(text.slice(match.index + match[0].length));
             // 单元格里不渲染图片：格子是 mark 包出来的，整段 replace 会把盒子顶掉
             if (isInTableCell(tree, wikiFrom)) continue;
+            // 行内还夹着别的文字时保持源码，不渲染成图片 widget
+            if (!isImageOnOwnLine(state, wikiFrom, wikiTo)) continue;
             const wikiRawText = state.doc.sliceString(wikiFrom, wikiTo);
             const wikiWidth =
                 parseMediaWidthPercent(wikiRawText) ?? DEFAULT_MEDIA_WIDTH_PERCENT;
@@ -302,6 +304,8 @@ export function collectImageDecorations(
                 spacedFrom +
                 match[0].length +
                 measureTrailingWidthAttribute(text.slice(match.index + match[0].length));
+            // 同上：和文字同行时不渲染图片
+            if (!isImageOnOwnLine(state, spacedFrom, spacedTo)) continue;
             const spacedRawText = state.doc.sliceString(spacedFrom, spacedTo);
             const spacedWidth =
                 parseMediaWidthPercent(spacedRawText) ?? DEFAULT_MEDIA_WIDTH_PERCENT;
@@ -353,6 +357,37 @@ export function isWidgetBackedNode(node: SyntaxNode, state: EditorState): boolea
     return false;
 }
 
+
+/**
+ * 行首的结构标记：列表圆点 / 有序序号 / 引用 `>`。
+ *
+ * 判断「这一行是不是只有这张图」时要先把它剥掉：`- ![图](x.png)` 里
+ * `- ` 属于结构而不是正文，图片仍然是这一行唯一的内容。
+ */
+const LINE_LEADING_MARKERS = /^[ \t]*(?:(?:>[ \t]*)|(?:[-*+][ \t]+)|(?:\d{1,9}[.)][ \t]+))+/;
+
+/**
+ * 判断图片是不是这一行**唯一的内容**（行首的列表 / 引用标记不算内容）。
+ *
+ * 用途：只有这种图片才渲染成 ImageWidget —— 它是「独占一行」的交互
+ * （整行居中、右下角挂放大 / 复制 / 缩放胶囊）。和文字同行时如果照样渲染，
+ * 图片会把段落推开、绝对定位的按钮还会压住旁边的字；所以这种情况保持
+ * Markdown 源码不渲染（与表格格子里的图片走 InlineHtmlImageWidget 是两回事）。
+ *
+ * @param state - 编辑器状态
+ * @param from - 图片语法起点
+ * @param to - 图片语法终点（含尾随的宽度属性）
+ * @returns 整行只有这张图时返回 true
+ */
+export function isImageOnOwnLine(state: EditorState, from: number, to: number): boolean {
+    const end = Math.min(Math.max(to, from), state.doc.length);
+    if (end <= from) return false;
+    const line = state.doc.lineAt(from);
+    // 跨行的图片语法（理论上不存在）不算独占
+    if (state.doc.lineAt(end - 1).number !== line.number) return false;
+    const content = line.text.replace(LINE_LEADING_MARKERS, '');
+    return content.trim() === state.doc.sliceString(from, end).trim();
+}
 
 /**
  * 图片独占一行时，给这一行挂上居中装饰。

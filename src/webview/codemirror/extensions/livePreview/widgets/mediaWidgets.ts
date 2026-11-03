@@ -174,47 +174,68 @@ export class ImageWidget extends WidgetType {
 
         // 统一把远程地址与本地相对路径解析成 webview 可访问地址。
         const resolvedUrl = resolvePreviewImageUrl(this.url);
-        // 浮层的 onTitleCommit 只回传标题文本，这里把渲染时的 view 补进去。
-        const commitTitle = this.onTitleCommit;
-        const actionGroup = createPreviewActionGroup(
-            '放大查看图片',
-            '复制图片',
-            () => {
-                openImagePreviewOverlay({
-                    rawUrl: this.url,
-                    resolvedUrl,
-                    altText: this.alt,
-                    titleText: this.alt || null,
-                    onTitleCommit: commitTitle ? (title: string) => commitTitle(view, title) : undefined,
-                    // 与 mermaid 浮层同理：导图节点的 mini-CM 在变换层里，fixed 浮层
-                    // 挂 view.dom 会被变换祖先定位/裁剪，只能挂 body；再由 themeScope
-                    // 把 CodeMirror 的主题类带到 portal 上，否则浮层没有样式。
-                    mountHost: document.body,
-                    themeScope: view.dom,
-                });
-            },
-            async () => {
-                if (!resolvedUrl) {
-                    throw new Error('image url not resolved');
-                }
+        // 操作胶囊（放大 / 复制 / 缩放）只给**真的能显示出来**的图片挂：
+        // 地址解析不出来 = 图片不存在，这些按钮没有任何作用，白占右下角。
+        //
+        // 地址能解析、但文件其实不存在（404 / 被删）时，只有 img 的 error 事件
+        // 才知道结果。**不能先挂胶囊再撤**：图片加载是异步的，先挂上的话，每次
+        // widget 重建（点进 / 点出源码模式、导图节点重渲染）坏图都会让胶囊先
+        // 闪现一帧、再被 onerror 收走 —— 就是用户反馈的「工具栏一闪而过」。
+        // 所以改成**按需挂载**：等图片 load 成功之后再把胶囊加进 DOM。
+        let actionGroup: HTMLElement | null = null;
+        let actionsMounted = false;
 
-                const response = await fetch(resolvedUrl);
-                if (!response.ok) {
-                    throw new Error('image fetch failed');
-                }
+        /**
+         * 挂上右下角操作胶囊（幂等）。
+         *
+         * 只在图片**加载成功之后**调用 —— 这样胶囊出现时图片一定显示得出来，
+         * 坏图从头到尾都不会有胶囊闪过。
+         */
+        const mountActions = (): void => {
+            if (!resolvedUrl || actionsMounted) return;
+            actionsMounted = true;
+            // 收窄后的别名：下面的回调是异步执行的，用别名拿到的就是 string，
+            // 不依赖 TS 对闭包里 const 收窄的推断。
+            const imageUrl = resolvedUrl;
 
-                const blob = await response.blob();
-                if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
-                    throw new Error('clipboard image write unavailable');
-                }
+            // 浮层的 onTitleCommit 只回传标题文本，这里把渲染时的 view 补进去。
+            const commitTitle = this.onTitleCommit;
+            actionGroup = createPreviewActionGroup(
+                '放大查看图片',
+                '复制图片',
+                () => {
+                    openImagePreviewOverlay({
+                        rawUrl: this.url,
+                        resolvedUrl: imageUrl,
+                        altText: this.alt,
+                        titleText: this.alt || null,
+                        onTitleCommit: commitTitle ? (title: string) => commitTitle(view, title) : undefined,
+                        // 与 mermaid 浮层同理：导图节点的 mini-CM 在变换层里，fixed 浮层
+                        // 挂 view.dom 会被变换祖先定位/裁剪，只能挂 body；再由 themeScope
+                        // 把 CodeMirror 的主题类带到 portal 上，否则浮层没有样式。
+                        mountHost: document.body,
+                        themeScope: view.dom,
+                    });
+                },
+                async () => {
+                    const response = await fetch(imageUrl);
+                    if (!response.ok) {
+                        throw new Error('image fetch failed');
+                    }
 
-                const mimeType = blob.type || 'image/png';
-                await navigator.clipboard.write([new ClipboardItem({ [mimeType]: blob })]);
-            }
-        );
-        // 缩放按钮并进右下角同一个胶囊，共用现成的定位与底色。
-        appendMediaResizeGroup(actionGroup, this.widthPercent, '图片', this.onWidthCommit, view);
-        wrapper.appendChild(actionGroup);
+                    const blob = await response.blob();
+                    if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+                        throw new Error('clipboard image write unavailable');
+                    }
+
+                    const mimeType = blob.type || 'image/png';
+                    await navigator.clipboard.write([new ClipboardItem({ [mimeType]: blob })]);
+                }
+            );
+            // 缩放按钮并进右下角同一个胶囊，共用现成的定位与底色。
+            appendMediaResizeGroup(actionGroup, this.widthPercent, '图片', this.onWidthCommit, view);
+            wrapper.appendChild(actionGroup);
+        };
 
         if (resolvedUrl) {
             const img = document.createElement('img');
@@ -223,15 +244,32 @@ export class ImageWidget extends WidgetType {
             img.className = 'cm-md-image';
             // 图片是异步加载的，加载完高度才定下来。这里让 CodeMirror 重新量一次，
             // 否则它按加载前的高度算总高度，滚动条位置会对不上。
-            img.addEventListener('load', () => view.requestMeasure());
+            img.addEventListener('load', () => {
+                view.requestMeasure();
+                // 加载成功才挂操作胶囊（坏图永远不会走到这里）
+                mountActions();
+            });
             img.onerror = () => {
+                // 图挂了：放大 / 复制 / 缩放都无从谈起，整组胶囊一起撤掉
+                // （正常路径下胶囊还没挂上，这里主要是兜底）。
+                actionGroup?.remove();
+                actionGroup = null;
                 contentHost.replaceChildren();
                 const fallback = document.createElement('span');
                 fallback.className = 'cm-md-image-fallback';
                 fallback.textContent = this.alt || '[image]';
                 contentHost.appendChild(fallback);
+                // 占位框和图片不一定是同一个高度，重量一次，下面的行才不会偏
+                view.requestMeasure();
             };
             contentHost.appendChild(img);
+            // 缓存命中时 load 事件可能早于监听器挂上：`complete && naturalWidth > 0`
+            // 就是「已经加载好」的同步判据，直接补挂胶囊。
+            // 尺寸在构建这一刻就定了，CM 随后那次测量会量到，不用再 requestMeasure。
+            // `complete` 但 naturalWidth 为 0 是缓存里记着的**失败**结果，不挂。
+            if (img.complete && img.naturalWidth > 0) {
+                mountActions();
+            }
         } else {
             const fallback = document.createElement('span');
             fallback.className = 'cm-md-image-fallback';

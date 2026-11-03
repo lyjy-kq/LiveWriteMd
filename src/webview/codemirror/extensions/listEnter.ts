@@ -21,6 +21,32 @@ import { EditorSelection, Prec, type Extension } from '@codemirror/state';
 import { keymap, type EditorView } from '@codemirror/view';
 import { syntaxTree } from '@codemirror/language';
 import { insertNewlineContinueMarkup } from '@codemirror/lang-markdown';
+import { isInCodeBlock } from './livePreview/ranges.js';
+
+/**
+ * 代码块里的 Enter：复制当前行的前导空白，保持在围栏内。
+ *
+ * 这是 VS Code 新 Markdown editor 的口径（`_indentedCodeLineBreak`）：
+ * 代码块里的缩进是代码的一部分，不能按 Markdown 的列表/段落规则清零。
+ *
+ * @param view - 编辑器视图
+ * @returns true 表示已处理；false 表示不在代码块里或不是塌光标
+ */
+function codeBlockEnter(view: EditorView): boolean {
+    const state = view.state;
+    const main = state.selection.main;
+    if (!main.empty) return false;
+    if (!isInCodeBlock(state, main.head)) return false;
+
+    const line = state.doc.lineAt(main.head);
+    const indent = line.text.match(/^[ \t]*/)?.[0] ?? '';
+    view.dispatch({
+        changes: { from: main.head, insert: '\n' + indent },
+        selection: EditorSelection.cursor(main.head + 1 + indent.length),
+        userEvent: 'input',
+    });
+    return true;
+}
 
 /**
  * 处理「空列表项按 Enter」。
@@ -86,7 +112,11 @@ export const listEnterExtension: Extension = Prec.highest(
         {
             key: 'Enter',
             run(view: EditorView): boolean {
-                return emptyListEnter(view) || insertNewlineContinueMarkup(view);
+                return (
+                    codeBlockEnter(view) ||
+                    emptyListEnter(view) ||
+                    insertNewlineContinueMarkup(view)
+                );
             },
         },
     ])

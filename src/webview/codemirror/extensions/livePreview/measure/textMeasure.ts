@@ -31,6 +31,30 @@ let measureCache: {
 } | null = null;
 
 /**
+ * 显式指定的测量根（卡片 / 幻灯片等「正文之外」的编辑器）。
+ *
+ * 默认口径读 `#editor .cm-content`，那是主编辑器的正文字号。幻灯片模式里
+ * 块编辑器的字号按块类型不同（标题 40、正文 27、表格 18），而且主编辑器
+ * 是隐藏的；继续读主编辑器会把表格列宽按 27/14px 去量，列宽和文字对不上。
+ *
+ * 由调用方在「创建表格块 / 重排表格」前设置成该块的 `.cm-content`，
+ * 离开该场景时清空。生命周期很短，不做引用计数。
+ */
+let measureRootOverride: Element | null = null;
+
+/**
+ * 设置 / 清空测量根。
+ *
+ * @param el - 目标编辑器的 `.cm-content`；传 null 恢复主编辑器口径
+ */
+export function setMeasureRootOverride(el: Element | null): void {
+    measureRootOverride = el;
+    // 字体环境可能完全变了，缓存必须作废（key 里也带字体，但别让
+    // 旧 ctx 的 lookedUpAt / fromContent 判定抢先命中）
+    measureCache = null;
+}
+
+/**
  * 取一个和正文同字体的画布上下文，用来量字宽。
  *
  * 字号、字体族、字重都从编辑器正文的实际计算样式里读，所以换主题、改字体缩放
@@ -59,7 +83,12 @@ export function getMeasureContext(): {
     // 会被调用几十次（每张表、每次量字宽都要），每次都 querySelector + getComputedStyle
     // 加起来就是一两毫秒。所以只做一次便宜的 querySelector 探测，不算样式。
     const now = Date.now();
-    const contentEl = document.querySelector('#editor .cm-content');
+    const override =
+        measureRootOverride && measureRootOverride.isConnected
+            ? measureRootOverride
+            : null;
+    const contentEl =
+        override ?? document.querySelector('#editor .cm-content');
     if (
         measureCache &&
         measureCache.lookedUpAt > now - 250 &&
@@ -80,7 +109,9 @@ export function getMeasureContext(): {
     const cs = getComputedStyle(styleSource);
     // 行内代码渲染态换成等宽字体（见 styles.ts 的 .cm-md-code），量它的宽度得换字体量。
     // 优先量一个真实存在的代码元素（最准），页面上暂时没有就退回 CSS 变量。
-    const codeSample = document.querySelector('#editor .cm-md-code');
+    const codeSample = override
+        ? override.querySelector('.cm-md-code')
+        : document.querySelector('#editor .cm-md-code');
     const codeFamily = codeSample
         ? getComputedStyle(codeSample).fontFamily
         : (getComputedStyle(document.documentElement)

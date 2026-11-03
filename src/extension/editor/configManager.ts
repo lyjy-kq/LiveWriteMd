@@ -121,7 +121,12 @@ export class ConfigManager {
     private static readonly DEFAULT_THEME: 'auto' | 'dark' | 'light' = 'auto';
 
     /** Default value for default editor mode */
-    private static readonly DEFAULT_MODE: 'live' | 'source' | 'viewer' | 'mindmap' = 'live';
+    private static readonly DEFAULT_MODE:
+        | 'live'
+        | 'source'
+        | 'viewer'
+        | 'mindmap'
+        | 'slides' = 'live';
 
     /**
      * Default value for image save folder name.
@@ -330,10 +335,18 @@ export class ConfigManager {
      *
      * @returns 'live', 'source', or 'viewer'
      */
-    static getDefaultMode(): 'live' | 'source' | 'viewer' | 'mindmap' {
+    static getDefaultMode():
+        | 'live'
+        | 'source'
+        | 'viewer'
+        | 'mindmap'
+        | 'slides' {
         return vscode.workspace
             .getConfiguration(this.CONFIG_SECTION)
-            .get<'live' | 'source' | 'viewer' | 'mindmap'>('defaultMode', this.DEFAULT_MODE);
+            .get<'live' | 'source' | 'viewer' | 'mindmap' | 'slides'>(
+                'defaultMode',
+                this.DEFAULT_MODE
+            );
     }
 
     /**
@@ -348,20 +361,6 @@ export class ConfigManager {
         return vscode.workspace
             .getConfiguration(this.CONFIG_SECTION)
             .get<boolean>('rememberLastMode', true);
-    }
-
-    /**
-     * Retrieves the editor title mode switcher style.
-     *
-     * Configuration Key: liveWriteMd.modeSwitcher
-     * Default: 'cycle'
-     *
-     * @returns 'cycle'（单按钮循环）或 'buttons'（多按钮直达）
-     */
-    static getModeSwitcher(): 'cycle' | 'buttons' {
-        return vscode.workspace
-            .getConfiguration(this.CONFIG_SECTION)
-            .get<'cycle' | 'buttons'>('modeSwitcher', 'cycle');
     }
 
     /**
@@ -435,5 +434,57 @@ export class ConfigManager {
     ): Promise<void> {
         const config = vscode.workspace.getConfiguration(this.CONFIG_SECTION);
         await config.update(key, value, target);
+    }
+
+    /**
+     * 旧设置键 → 新键。
+     *
+     * 键重命名 / 功能从某个模式提升为全局时在这里登记一行，
+     * 激活时由 {@link migrateLegacySettings} 把用户已经设过的值搬过去，
+     * 避免升级后「设置看起来被重置了」。
+     */
+    private static readonly LEGACY_KEY_ALIASES: Record<string, string> = {
+        // 性能监测从导图专属提升为全局功能
+        mindmapPerfMonitor: 'perfMonitor',
+    };
+
+    /**
+     * 把旧键上用户显式设置过的值迁移到新键（激活时调用一次）。
+     *
+     * 只在「新键还没被显式设置」时迁移，用户升级后自己改过新键就尊重新键；
+     * 作用域跟随旧值（用户 / 工作区 / 工作区文件夹）。整体是尽力而为的，
+     * 失败不影响扩展启动。
+     */
+    static async migrateLegacySettings(): Promise<void> {
+        const config = vscode.workspace.getConfiguration(this.CONFIG_SECTION);
+        for (const [oldKey, newKey] of Object.entries(this.LEGACY_KEY_ALIASES)) {
+            const oldInspect = config.inspect<SettingValue>(oldKey);
+            if (!oldInspect) continue;
+            const source =
+                oldInspect.workspaceFolderValue ??
+                oldInspect.workspaceValue ??
+                oldInspect.globalValue;
+            if (source === undefined) continue;
+
+            const newInspect = config.inspect<SettingValue>(newKey);
+            const alreadySet =
+                newInspect !== undefined &&
+                (newInspect.workspaceFolderValue !== undefined ||
+                    newInspect.workspaceValue !== undefined ||
+                    newInspect.globalValue !== undefined);
+            if (alreadySet) continue;
+
+            const target =
+                oldInspect.workspaceFolderValue !== undefined
+                    ? vscode.ConfigurationTarget.WorkspaceFolder
+                    : oldInspect.workspaceValue !== undefined
+                      ? vscode.ConfigurationTarget.Workspace
+                      : vscode.ConfigurationTarget.Global;
+            try {
+                await config.update(newKey, source, target);
+            } catch {
+                // 迁移失败就保持原样，下次激活再试
+            }
+        }
     }
 }

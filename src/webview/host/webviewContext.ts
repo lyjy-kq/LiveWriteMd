@@ -11,6 +11,7 @@
 
 import type { CodeMirrorEditor } from '../codemirror/editor.js';
 import type { MindMapApp } from '../mindmap/mindmapApp.js';
+import type { SlidesApp } from '../slides/slidesApp.js';
 import type { WebviewThemeManager } from '../theme.js';
 import type { OutlinePanel } from '../outline/outlinePanel.js';
 import type { EditorContextMenu, EditorMode } from '../editing/editorContextMenu.js';
@@ -75,7 +76,9 @@ interface WebviewCtx {
     editor: CodeMirrorEditor | null;
     /** 导图应用实例，首次进入导图模式时惰性创建。 */
     mindmapApp: MindMapApp | null;
-    /** 当前文档文件名（不含扩展名），导图虚拟根使用。 */
+    /** 幻灯片应用实例，首次进入幻灯片模式时惰性创建。 */
+    slidesApp: SlidesApp | null;
+    /** 当前文档文件名（不含扩展名），导图虚拟根 / 幻灯片页脚使用。 */
     mindmapFileName: string;
     /** webview 当前明暗主题，导图主题 auto 时跟随。 */
     currentTheme: ThemeType;
@@ -121,6 +124,7 @@ export const ctx: WebviewCtx = {
     })(),
     editor: null,
     mindmapApp: null,
+    slidesApp: null,
     mindmapFileName: '',
     currentTheme: 'dark',
     searchHistoryController: null,

@@ -9,9 +9,14 @@
 
 import { undo, redo } from '@codemirror/commands';
 import { codeLanguages } from '../codemirror/editor.js';
+import { tableRemeasureEffect } from '../codemirror/extensions/livePreview/state.js';
 import { MESSAGE_TYPES } from '../../shared/messageTypes.js';
-import { MindMapApp } from '../mindmap/mindmapApp.js';
+// 只取类型：真正的实现改为进入对应模式时才动态 import（见下方 enter 函数）。
+// 静态 import 会把导图 / 幻灯片整套代码塞进入口 bundle，每个 md 文件首屏
+// 都要为「还没进入的模式」付编译成本。
+import type { MindMapApp } from '../mindmap/mindmapApp.js';
 import type { MindMapRuntimeSettings } from '../mindmap/types.js';
+import type { SlidesApp } from '../slides/slidesApp.js';
 import { settingsState } from '../settings/settingsState.js';
 import type { EditorMode } from '../editing/editorContextMenu.js';
 import { ctx } from './webviewContext.js';
@@ -40,6 +45,13 @@ export function getMindmapHost(): HTMLElement {
 }
 
 /**
+ * 获取幻灯片挂载容器（HTML 壳子里已预置 #slides）。
+ */
+export function getSlidesHost(): HTMLElement {
+    return document.getElementById('slides') as HTMLElement;
+}
+
+/**
  * 从文档 URI 推导文件名（不含扩展名），作为导图虚拟根文本。
  *
  * @param uri 文档 URI
@@ -60,22 +72,18 @@ export function fileNameFromUri(uri: string): string {
  * 从 settingsState 读取导图运行时设置。
      */
 export function readMindmapSettings(): MindMapRuntimeSettings {
-    const perfMonitor = settingsState.getString('mindmapPerfMonitor');
     return {
         mindmapTheme: settingsState.getString('mindmapTheme') || 'auto',
         mindmapDefaultExpandLevel: settingsState.getNumber('mindmapDefaultExpandLevel'),
         // 节点尺寸上限：getNumber 缺省/异常时回退 0，这里兜底成默认值
         mindmapNodeMaxWidth: settingsState.getNumber('mindmapNodeMaxWidth') || 20,
         mindmapNodeMaxLines: settingsState.getNumber('mindmapNodeMaxLines') || 3,
-        // 代码块最小宽度：0 是合法值（不设），不能 || 兜底
-        mindmapCodeMinWidth: settingsState.getNumber('mindmapCodeMinWidth'),
+        // 代码块宽度：40–100 列，0 / 缺失时回退 schema 默认值 60
+        mindmapCodeWidth: settingsState.getNumber('mindmapCodeWidth') || 60,
         // 手势期清晰度优先：默认关闭（关闭 = 手势期提升合成层，帧率优先）
         mindmapGestureCrisp: settingsState.getBoolean('mindmapGestureCrisp'),
         // 内链箭头层：默认开启（schema 默认值即 true）
         mindmapInternalLinks: settingsState.getBoolean('mindmapInternalLinks'),
-        // 性能监测浮层：只认三个合法值，其它（含旧 boolean 配置）一律关闭
-        mindmapPerfMonitor:
-            perfMonitor === 'minimal' || perfMonitor === 'full' ? perfMonitor : 'off',
         // 快速卡片：开关 + 宽高（0 视为没读到，回退 schema 默认值）
         quickCardEnabled: settingsState.getBoolean('quickCardEnabled'),
         quickCardWidth: settingsState.getNumber('quickCardWidth') || 280,
@@ -95,13 +103,19 @@ export function readMindmapSettings(): MindMapRuntimeSettings {
  *
  * @param newFullText 导图操作算出的新全文
  */
-export function applyMindmapEdit(newFullText: string): void {
+export function applyDocumentEdit(
+    newFullText: string,
+    source: 'mindmap' | 'slides' = 'mindmap'
+): void {
     const view = ctx.editor?.getView();
     if (!view) {
         // CM 还没就绪 / 正在 INIT 重建：不能把改动丢掉，直接把全文发扩展侧。
-        // INIT 重建时 MindMapApp.destroy() 会先把未提交的编辑写回这里，
+        // INIT 重建时应用 destroy() 会先把未提交的编辑写回这里，
         // 这条兜底保证「刚打开文件就编辑」的那一下也送得出去。
-        sendLog('WARN', 'Mindmap edit: CodeMirror view is not ready, sending content directly');
+        sendLog(
+            'WARN',
+            `${source} edit: CodeMirror view is not ready, sending content directly`
+        );
         ctx.debouncedSendContentChange(newFullText);
         ctx.debouncedSendContentChange.flush();
         return;
@@ -142,6 +156,11 @@ export function applyMindmapEdit(newFullText: string): void {
     ctx.debouncedSendContentChange.flush();
 }
 
+/** 导图编辑回写（兼容旧调用点）。 */
+export function applyMindmapEdit(newFullText: string): void {
+    applyDocumentEdit(newFullText, 'mindmap');
+}
+
 /**
  * 导图模式的撤销 / 重做（todo.md 任务 7）。
  *
@@ -171,6 +190,9 @@ export async function enterMindmapMode(): Promise<void> {
     host.hidden = false;
 
     if (!ctx.mindmapApp) {
+        // 首次进导图才加载实现模块：画布引擎 / 样式模板 / 快速卡片栏加起来
+        // 约 200KB，和文本编辑器首屏无关，没必要让每次打开文件都等它。
+        const { MindMapApp } = await import('../mindmap/mindmapApp.js');
         ctx.mindmapApp = new MindMapApp(host, {
             onEdit: applyMindmapEdit,
             // Ctrl+S：强制写回并保存。
@@ -236,19 +258,145 @@ export function leaveMindmapMode(): void {
 }
 
 /**
- * 应用扩展侧下发的模式切换（live / viewer / source / mindmap）。
+ * 进入幻灯片模式：隐藏文本容器（CM 实例保留），惰性创建 / 复用幻灯片应用。
+ *
+ * 顺序很重要：先把文档喂给应用（非激活状态只记录），再 setActive 一次性
+ * 解析 / 测量 / 渲染，避免先跑一轮空文档。
+ */
+export async function enterSlidesMode(): Promise<void> {
+    const host = getSlidesHost();
+    const editorHost = getOrCreateEditorHost();
+    // 容器隐藏后拿不到光标行，进入前先取（1-based → 0-based）
+    const currentLine =
+        ctx.editor && ctx.editor.isReady()
+            ? Math.max(0, ctx.editor.getCurrentLine() - 1)
+            : null;
+    editorHost.hidden = true;
+    host.hidden = false;
+
+    if (!ctx.slidesApp) {
+        // 幻灯片同理：解析 / 分页 / 样式的整套代码只在第一次进幻灯片时加载。
+        const { SlidesApp } = await import('../slides/slidesApp.js');
+        ctx.slidesApp = new SlidesApp(host, {
+            onEdit: (fullText) => applyDocumentEdit(fullText, 'slides'),
+            // Ctrl+S：强制写回并落盘，和导图同一条路径
+            onSave: (fullText) => {
+                applyDocumentEdit(fullText, 'slides');
+                ctx.vscode.postMessage({
+                    type: MESSAGE_TYPES.SAVE_DOCUMENT,
+                    content: fullText,
+                });
+            },
+            onPersistSetting: (key, value) => {
+                settingsState.set(key, value);
+                ctx.vscode.postMessage({
+                    type: MESSAGE_TYPES.UPDATE_SETTING,
+                    key,
+                    value,
+                });
+            },
+            // mini-CM 的代码块嵌套高亮语言表（主编辑器同款）
+            codeLanguages,
+            // PPT 模式复用右侧大纲：分页一变就重渲染页码标注
+            onPagesChange: () => ctx.outlinePanel?.refresh(),
+            // 大纲高亮跟着当前页走（PPT 页面里没有正文光标）
+            onActiveLineChange: (line0) => {
+                if (line0 !== null) {
+                    ctx.outlinePanel?.setActiveLine(line0 + 1);
+                }
+            },
+            // 物理屏幕全屏：webview 是沙箱 iframe，requestFullscreen 被拒时
+            // 让扩展宿主执行 F11 同款的窗口全屏命令
+            onWindowFullscreen: (on) => {
+                ctx.vscode.postMessage({
+                    type: MESSAGE_TYPES.SLIDES_FULLSCREEN,
+                    on,
+                });
+            },
+        });
+        ctx.slidesApp.setEditorTheme(ctx.currentTheme);
+        ctx.slidesApp.applySettings();
+    }
+
+    // 大纲右侧的「行号」换成页码（P8 / P8,9）。分页还没算完时返回空串，
+    // 大纲会自动回退显示行号。
+    ctx.outlinePanel?.setMetaProvider(
+        (line) => ctx.slidesApp?.getOutlinePageLabel(line) ?? ''
+    );
+
+    ctx.slidesApp.setDocument(
+        ctx.editor?.getContent() ?? '',
+        ctx.mindmapFileName
+    );
+    ctx.slidesApp.setActive(true, currentLine);
+    await ctx.slidesApp.whenReady();
+    sendLog('INFO', 'Slides mode activated');
+}
+
+/**
+ * 退出幻灯片模式：提交未完成的编辑、隐藏容器、恢复文本容器。
+ *
+ * 切回文本时尽量回到当前页第一行，保持和导图一致的「位置连续」体验。
+ */
+export function leaveSlidesMode(): void {
+    const host = getSlidesHost();
+    const line = ctx.slidesApp?.getCurrentLine0() ?? null;
+    ctx.slidesApp?.setActive(false);
+    // 大纲恢复成普通行号显示
+    ctx.outlinePanel?.setMetaProvider(null);
+    host.hidden = true;
+    getOrCreateEditorHost().hidden = false;
+    requestAnimationFrame(() => {
+        const view = ctx.editor?.getView();
+        view?.requestMeasure();
+        // 幻灯片期间表格列宽可能是按块编辑器的字体口径量的（测量根被
+        // setMeasureRootOverride 临时切走过），回到正文后强制重排一次表格
+        if (view) view.dispatch({ effects: tableRemeasureEffect.of(null) });
+        // 回到幻灯片里最后看的那一页第一行（行号是 0-based，scrollToLine 要 1-based）
+        if (line !== null) ctx.editor?.scrollToLine(line + 1);
+    });
+}
+
+/**
+ * 应用扩展侧下发的模式切换（live / viewer / source / mindmap / slides）。
  *
  * @param mode 目标模式
  */
 export async function applyEditorMode(mode: EditorMode): Promise<void> {
+    const previousMode = ctx.currentEditorMode;
     ctx.currentEditorMode = mode;
     if (mode === 'mindmap') {
+        leaveSlidesMode();
         await enterMindmapMode();
         return;
     }
+    if (mode === 'slides') {
+        leaveMindmapMode();
+        await enterSlidesMode();
+        return;
+    }
+    leaveSlidesMode();
     leaveMindmapMode();
     if (ctx.editor && ctx.editor.isReady()) {
         ctx.editor.setMode(mode);
+        // 三个文本模式互切：永远回到最近一次光标 / 鼠标位置。
+        // 切出 / 切入导图、幻灯片时不插手 —— 它们有自己的位置恢复逻辑。
+        // setMode 重配了装饰，行高与折行都会变，等一帧重新测量后再滚，
+        // 否则滚到的是旧布局的行位置。
+        const isTextMode = (value: EditorMode | null | undefined): boolean =>
+            value === 'live' || value === 'viewer' || value === 'source';
+        if (
+            previousMode !== mode &&
+            isTextMode(previousMode) &&
+            isTextMode(mode)
+        ) {
+            const line = ctx.editor.getCurrentLine();
+            requestAnimationFrame(() => {
+                const view = ctx.editor?.getView();
+                view?.requestMeasure();
+                ctx.editor?.revealLine(line);
+            });
+        }
     }
 }
 

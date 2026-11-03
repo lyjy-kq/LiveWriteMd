@@ -70,6 +70,12 @@ export const NODE_CONTENT_CSS = `
     /* 占位内容用户可读（换真前的过渡态），只是没有渲染效果 */
     color: inherit;
 }
+/* 代码块占位：与真身一致地不折行；超出的部分由节点盒子裁掉，
+   换真后再由 mini-CM 的 scroller 接管横向滚动。 */
+.lwm-node-placeholder-code {
+    white-space: pre;
+    overflow: hidden;
+}
 /* widget 自带的放大/复制/尺寸按钮在导图节点里隐藏：保持节点紧凑、
    点击行为统一（点击图片/图表 = 选中节点，不进浮层）。
    mermaid 例外：用户要求复用 live 的「放大查看 / 尺寸调节」，
@@ -120,12 +126,22 @@ export const NODE_CONTENT_CSS = `
     box-shadow: none;
     border-radius: 0;
 }
-/* 代码块节点：上限 40 列 × 20 行；
-   最小宽度走设置 mindmapCodeMinWidth（容器变量 --lwm-code-min-width） */
+/* 代码块节点：宽度 40–100 列（40 列是下限，上限走设置 mindmapCodeWidth），
+   高度上限 20 行；长行不换行，超出后在节点内左右滚动。
+   +12px 给底部横向滚动条留位置，避免第 20 行被裁掉。 */
 .lwm-node-code {
-    min-width: var(--lwm-code-min-width, 10ch);
-    max-width: 40ch;
-    max-height: calc(20 * var(--livewritemd-line-height, 1.7em) + 1.4em);
+    min-width: 40ch;
+    max-width: var(--lwm-code-width, 60ch);
+    max-height: calc(20 * var(--livewritemd-line-height, 1.7em) + 1.4em + 12px);
+}
+/* 代码块节点自己当滚动容器：mini-CM 的 scroller 关掉滚动，
+   否则横向滚动条会落在内容最底部，被 20 行高度上限裁掉。
+   节点滚动时背景、选中高亮和复制按钮一起跟着走，行为更像 VS Code。 */
+.lwm-node.lwm-node-code {
+    overflow: auto;
+}
+.lwm-node.lwm-node-code .cm-scroller {
+    overflow: visible;
 }
 /* 表格节点：宽度封顶 60em，高度不限、行数尽量全渲染。
    取值考虑：README 海报墙那种「一行 4 张 170px 缩略图」的表格约需 750px，
@@ -136,14 +152,11 @@ export const NODE_CONTENT_CSS = `
 .lwm-node-table {
     max-width: var(--lwm-table-max-width, 60em);
 }
-/* 图片节点：自带上限。
-   高度上限与公式/mermaid 一致（20em）：图片的宽度档位是
-   「30em × 25/50/75/100%」，100% 那一档按常见横图比例约 20em 高，
-   上限太小会把最大档直接压回去，点「+」看不出变化。 */
-.lwm-node-image {
-    max-width: 30em;
-    max-height: 20em;
-}
+/* 图片 / mermaid 节点不再写死宽高上限。
+   节点尺寸完全由内容（wrapper 上的宽度档位 × 30em 基准）决定：
+   固定上限会和「± 档位同时改变宽高」冲突 —— 超过 100% 后图变高，被
+   节点盒裁掉，看起来就只剩宽度在变。宽度由 wrapper 的 max-width 兜底，
+   高度交给图片 / SVG 自己的等比缩放。 */
 /* 图片节点：节点盒贴合图片本身。
    默认的正文排版会给图片多留一圈空白 ——
    .cm-content 上下各 2px 内边距、.cm-line 左右各 4px 内边距，
@@ -161,7 +174,7 @@ export const NODE_CONTENT_CSS = `
     line-height: 0;
 }
 .lwm-node-image:not(.lwm-node-editing) .cm-md-image-wrapper {
-    /* 宽度档位（25/50/75/100%）在导图里以节点上限 30em 为基准：
+    /* 宽度档位（25–200%）在导图里以节点上限 30em 为基准：
        默认 75% → 22.5em。--cm-md-media-ratio 是 ImageWidget 写入的
        无单位小数（0.75），这里才能用 calc 乘出长度。 */
     max-width: calc(30em * var(--cm-md-media-ratio, 0.75));
@@ -169,10 +182,10 @@ export const NODE_CONTENT_CSS = `
     vertical-align: top;
 }
 .lwm-node-image:not(.lwm-node-editing) .cm-md-image {
-    /* 宽度跟着 wrapper 的档位走；高度上限与节点一致，
-       宽高同时受限时浏览器会按比例缩放，不会裁掉一截 */
+    /* 宽度跟着 wrapper 的档位走；高度不再单独设上限，
+       由图片按自身宽高比等比缩放（否则超过 100% 后高被卡住，
+       观感就是「只变宽不变高」） */
     max-width: 100%;
-    max-height: 20em;
     width: auto;
     height: auto;
     vertical-align: top;
@@ -185,9 +198,17 @@ export const NODE_CONTENT_CSS = `
     max-width: none;
     max-height: none;
 }
-/* 数学块 / mermaid 节点：图可能很高，默认截断 */
-.lwm-node-math,
-.lwm-node-mermaid {
+/* mermaid 节点：和图片同一套口径 —— 宽度档位用**绝对长度**消费。
+   百分比 max-width 在导图「max-content 测量 + 固定节点宽」的组合下
+   不参与尺寸计算，会出现「± 只改宽度、高度不变」的假象。
+   SVG 自己的 height:auto 会按实际比例跟着缩放。 */
+.lwm-node-mermaid:not(.lwm-node-editing) .cm-md-mermaid-wrapper {
+    max-width: calc(30em * var(--cm-md-media-ratio, 0.75));
+}
+/* 数学块节点：图可能很高，默认截断。
+   mermaid 不在这里封顶 —— 宽度已经由 wrapper 的档位（30em × 比例）兜住，
+   高度必须让 SVG 按实际宽高比跟着长，否则就是「只变宽不变高」。 */
+.lwm-node-math {
     max-width: 30em;
     max-height: 20em;
 }
@@ -260,63 +281,6 @@ export const NODE_CONTENT_CSS = `
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
     font-size: 13px;
     pointer-events: none;
-}
-
-/* 性能监控浮层（设置「性能监控面板」开启）：画布右上角，半透明小字；
-   整体不接指针事件（不挡画布拖动），只有复制按钮可点。
-   z-index 必须低于右侧快速卡片栏（18）：卡片展开时会盖到右上角，
-   监控条不能压在卡片上面（用户要求卡片优先） */
-.lwm-perf-hud {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    z-index: 17;
-    padding: 5px 8px;
-    border-radius: 6px;
-    background: rgba(20, 24, 31, 0.82);
-    border: 1px solid var(--vscode-widget-border, #454545);
-    color: #9fd3a8;
-    font: 11px/1.6 Consolas, monospace;
-    pointer-events: none;
-    user-select: none;
-    max-width: 46%;
-}
-#mindmap[data-lwm-theme="light"] .lwm-perf-hud {
-    background: rgba(255, 255, 255, 0.9);
-    color: #1c6fb5;
-}
-/* 极简档：右上角一行小字，无边框、无底色（文字阴影保证任何背景上可读） */
-#mindmap[data-lwm-theme] .lwm-perf-hud.lwm-perf-hud-minimal {
-    top: 6px;
-    right: 10px;
-    padding: 0;
-    border: none;
-    border-radius: 0;
-    background: transparent;
-    color: var(--vscode-editor-foreground, #d4d4d4);
-    font-size: 11px;
-    line-height: 1.4;
-    opacity: 0.72;
-    text-shadow: 0 0 3px var(--vscode-editor-background, #1e1e1e);
-}
-#mindmap[data-lwm-theme="light"] .lwm-perf-hud.lwm-perf-hud-minimal {
-    background: transparent;
-    color: var(--vscode-editor-foreground, #333);
-    text-shadow: 0 0 3px var(--vscode-editor-background, #fff);
-}
-.lwm-perf-hud-spikes {
-    color: #d8a04a;
-}
-.lwm-perf-hud-copy {
-    pointer-events: auto;
-    margin-top: 2px;
-    padding: 1px 8px;
-    font-size: 11px;
-    border: 1px solid var(--vscode-widget-border, #454545);
-    border-radius: 4px;
-    background: transparent;
-    color: inherit;
-    cursor: pointer;
 }
 
 /* 空文档 / 纯代码块文档：只有虚拟根时的引导提示 */

@@ -11,12 +11,14 @@ export const MEDIA_STYLES = {
         // Images
         // =================================================================
         // 图片默认占正文宽度的 75%，范围由 −/+ 按钮控制（见 --cm-md-media-width）。
+        // 档位允许超过 100%（给导图用），但正文列宽就是天花板：
+        // 实时 / 阅读模式里用 min(100%, …) 把超出的部分压回 100%。
         // 图片是行内 decoration，这里必须保持 inline-block：行内 widget 的根元素
         // 一旦变成块级，CM6 的高度估算会跟实际布局对不上，还会把行内图片强制断行。
         '.cm-md-image-wrapper': {
             position: 'relative',
             display: 'inline-block',
-            maxWidth: 'var(--cm-md-media-width, 75%)',
+            maxWidth: 'min(100%, var(--cm-md-media-width, 75%))',
             verticalAlign: 'middle',
         },
         '.cm-md-image-content': {
@@ -52,6 +54,12 @@ export const MEDIA_STYLES = {
             display: 'inline-block',
             color: '#888',
             fontStyle: 'italic',
+            // 行高必须显式给：导图图片节点为了「节点贴合图片」会把所在
+            // `.cm-line` 的 line-height 压成 0。占位框里是文字，行高跟着
+            // 继承成 0 时内容盒高度为 0，框只剩 padding，字全从虚线框里
+            // 溢出来（map 模式下破图样式的 bug）。这里给回普通行高，
+            // 正文里也顺带把上下留白稳定下来。
+            lineHeight: '1.5',
             padding: '4px 8px',
             backgroundColor: 'rgba(128, 128, 128, 0.1)',
             borderRadius: '4px',
@@ -133,6 +141,11 @@ export const MEDIA_STYLES = {
             color: '#f3f4f6',
             fontVariantNumeric: 'tabular-nums',
             userSelect: 'none',
+        },
+        // 浅色主题：胶囊底色是半透明白，百分比文字沿用深色主题的 #f3f4f6
+        // 会变成白底白字（mermaid / 图片的 ± 号组里看不到缩放百分比）。
+        '&light .cm-md-resize-value': {
+            color: '#1f2937',
         },
         '.cm-md-preview-action': {
             width: '18px',

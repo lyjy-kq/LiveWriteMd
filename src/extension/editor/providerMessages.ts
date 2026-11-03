@@ -16,6 +16,7 @@ import type {
     FontScaleChangeMessage,
     EditorActionMessage,
     SearchHistoryChangeMessage,
+    SlidesFullscreenMessage,
     UpdateSettingMessage,
     WebviewToExtensionMessage,
     EditorMode,
@@ -39,6 +40,26 @@ const OUTLINE_PANEL_WIDTH_STORAGE_KEY = 'liveWriteMd.outlineWidth';
 /**
  * 澶х翰闈㈡澘瀹藉害鐨勯粯璁ゅ€笺€? * 褰撳瓨鍌ㄧ己澶辨垨鍊奸潪娉曟椂浣跨敤銆? */
 const DEFAULT_OUTLINE_PANEL_WIDTH = 280;
+
+/**
+ * 幻灯片放映是否已经把 VS Code 窗口切到了全屏（F11）。
+ *
+ * webview 只汇报「想进 / 想退」，真实状态记在这里：状态没变就不发命令，
+ * 避免 Webview 重复消息把全屏来回切换。
+ */
+let slidesWindowFullscreen = false;
+
+/**
+ * 按需切换 VS Code 窗口全屏。
+ *
+ * 这是 webview 拿不到物理全屏时的兜底：沙箱 iframe 的 requestFullscreen
+ * 被拒后，由扩展宿主执行和 F11 同款的命令。
+ */
+function setWindowFullscreen(on: boolean): void {
+    if (slidesWindowFullscreen === on) return;
+    slidesWindowFullscreen = on;
+    void vscode.commands.executeCommand('workbench.action.toggleFullScreen');
+}
 
 /**
  * 把 1-based 的文件链接范围转换为 VS Code 可用的 Range。
@@ -151,8 +172,9 @@ export async function handleWebviewMessage(
             Logger.info(
                 `INIT postMessage completed: delivered=${initDelivered}, mode=${initialMode}, documentBaseUri=${docDirWebviewUri}`
             );
-            // 字体列表不阻塞 INIT；枚举完成后单独补一条消息，面板打开时就有数据
-            provider.sendSystemFonts(webviewPanel);
+            // 这里不枚举系统字体：枚举要 spawn PowerShell（Windows 上 1~2 秒），
+            // 会和首屏渲染抢 CPU，正是「打开文件很慢」的来源。设置面板打开时
+            // providerCommands.openSettings 会按需补发（结果有缓存）。
             break;
         }
 
@@ -256,6 +278,16 @@ export async function handleWebviewMessage(
                 .getConfiguration('liveWriteMd')
                 .update('fontScale', clampedScale, vscode.ConfigurationTarget.Global);
             Logger.debug(`Editor font scale saved: ${clampedScale}`);
+            break;
+        }
+
+        // 幻灯片放映：浏览器全屏被沙箱拒绝时，切 VS Code 窗口全屏
+        case MESSAGE_TYPES.SLIDES_FULLSCREEN: {
+            const fullscreenMsg = message as SlidesFullscreenMessage;
+            setWindowFullscreen(Boolean(fullscreenMsg.on));
+            Logger.debug(
+                `Slides window fullscreen: ${fullscreenMsg.on ? 'on' : 'off'}`
+            );
             break;
         }
 

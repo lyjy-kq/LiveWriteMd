@@ -248,11 +248,18 @@ export const CHROME_STYLES = {
         // 块级公式的外框**照着代码块的框来做**（同样的圆角、底色、内边距）：
         // 公式和代码块在正文里是同一类「整块的东西」，长得一样看着才顺；
         // 公式本身仍然居中，字号比正文大一点。
-        // 公式比这个框高就整体缩放塞进去（见 widgets.ts），于是「一行的小公式」和
-        // 「六行的长推导」在正文里占的高度是同一个数 —— 打字、滚动时下面的内容不会跳。
-        // 内容居中，超出的一小部分裁掉。
+        // 公式一律整体缩放**正好填满**这个框（见 mathWidgets.ts）：小的放大、大的缩小，
+        // 于是「一行的小公式」和「六行的长推导」在正文里占的高度是同一个数 ——
+        // 打字、滚动时下面的内容不会跳，翻文档时视觉节奏也一致。
+        // 缩放用的是 font-size 而不是 transform：布局尺寸会跟着变，导图节点 /
+        // 幻灯片块按内容量尺寸时才能量到缩放后的真实大小（transform 会让墨迹
+        // 超出盒子被裁掉）。内容居中，超出的一小部分裁掉。
         //
-        // 高度**就是 2.5 行**，而且这条公式写在这里、不写进行内 style：
+        // 上下各留 1px padding：公式缩放后紧贴边框，留一点余量免得字形被
+        // 圆角 / 边框切到（fitMathToBox 算可用高度时会把 padding 和边框扣掉）。
+        //
+        // 高度**就是 3 行**（源码 `$$` / 内容 / `$$` 正好三行），而且这条公式写在这里、
+        // 不写进行内 style：
         //   - 行高跟着 `--livewritemd-line-height`（webviewContent.ts 注进来的用户设置），
         //     用 em 现算，所以改字号/滚轮缩放/换行高设置都会自己跟上；
         //   - 换成 JS 写死的 px 会**钉死**在首次构建那一刻：那时 `.cm-line` 还不存在，
@@ -262,17 +269,18 @@ export const CHROME_STYLES = {
         // **上下不许有 margin**：这个框是块级 widget，直接挂在 `.cm-content` 底下，
         // 而 CM 量块高量的是「元素自己的盒」—— margin 在盒子外面，量不到。
         // 于是高度表里少掉的正是这两条 margin，下面每一行的行号、点击落点
-        // 统统往上偏同样多（2026-09-21 反馈：3 行源码 → 2.5 行的框，点下面的行
-        // 差了半行）。留白一律用 padding 做在盒子**里面**，或者交给源码里的空行。
+        // 统统往上偏同样多（2026-09-21 反馈：框比正文高，点下面的行差半行）。
+        // 留白一律用 padding 做在盒子**里面**，或者交给源码里的空行。
         '.cm-md-math-block': {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            height: 'calc(2.5 * var(--livewritemd-line-height, 1.7em))',
+            height: 'calc(3 * var(--livewritemd-line-height, 1.7em))',
             overflow: 'hidden',
             textAlign: 'center',
             margin: '0',
-            padding: '0 0.9em',
+            // 上下 1px 是缩放后的呼吸位，左右沿用原来的留白
+            padding: '1px 0.9em',
             borderRadius: '12px',
             border: '1px solid rgba(255, 255, 255, 0.12)',
             backgroundColor: 'var(--vscode-textCodeBlock-background, rgba(128,128,128,0.08))',
@@ -280,10 +288,17 @@ export const CHROME_STYLES = {
             // 公式整块是替换 widget，光标进不去 —— 鼠标样式明示「可以点进去改源码」
             cursor: 'text',
         },
-        // 缩放层：内容比框高时整体缩小（transform 不影响布局，框高始终是 2.5 行）
+        // 缩放层：公式通过 font-size 缩放到正好填满 3 行。
+        // 不用 transform —— 字号缩放会改变布局尺寸，导图 / 幻灯片量到的
+        // 就是缩放后的宽高（transform 只管绘制，会被节点盒子裁掉）。
         '.cm-md-math-inner': {
             display: 'block',
-            transformOrigin: 'center center',
+        },
+        // KaTeX 的 display 公式自带上下各 1em 的 margin。这层 margin 会被一起缩放，
+        // 量到的高度里就混进了空白，公式缩完后墨迹只占 3 行中的 2 行多、填不满。
+        // 清掉之后 inner 的高度就是公式墨迹本身，`avail / natural` 才等于「正好填充」。
+        '.cm-md-math-inner .katex-display': {
+            margin: '0',
         },
         '.cm-md-math-block:hover': {
             borderColor: 'rgba(79, 193, 255, 0.45)',

@@ -2,7 +2,7 @@
   "name": "livewrite-md",
   "displayName": "LiveWriteMD",
   "description": "WYSIWYG Markdown editor for VS Code with Obsidian-style live preview. Tables, Mermaid diagrams, KaTeX math, code block syntax highlighting, and full IME support.",
-  "version": "0.0.29",
+  "version": "0.0.32",
   "publisher": "lyjy",
   "license": "SEE LICENSE IN LICENSE",
   "repository": {
@@ -90,6 +90,18 @@
         "icon": "$(type-hierarchy)"
       },
       {
+        "command": "liveWriteMd.enterSlidesMode",
+        "title": "切换到幻灯片",
+        "category": "LiveWriteMD",
+        "icon": "$(screen-full)"
+      },
+      {
+        "command": "liveWriteMd.toggleSlidesMode",
+        "title": "切换幻灯片",
+        "category": "LiveWriteMD",
+        "icon": "$(screen-full)"
+      },
+      {
         "command": "liveWriteMd.cycleEditorMode",
         "title": "切换编辑模式",
         "category": "LiveWriteMD",
@@ -100,18 +112,6 @@
         "title": "切换思维导图",
         "category": "LiveWriteMD",
         "icon": "$(type-hierarchy)"
-      },
-      {
-        "command": "liveWriteMd.cycleTextMode",
-        "title": "切换文本模式（实时/阅读/源码）",
-        "category": "LiveWriteMD",
-        "icon": "$(arrow-swap)"
-      },
-      {
-        "command": "liveWriteMd.openMindmapPanel",
-        "title": "在侧边打开思维导图",
-        "category": "LiveWriteMD",
-        "icon": "$(split-horizontal)"
       },
       {
         "command": "liveWriteMd.exportAsHtml",
@@ -125,7 +125,7 @@
       },
       {
         "command": "liveWriteMd.toggleOutline",
-        "title": "LiveWriteMD: 显示/隐藏大纲",
+        "title": "显示/隐藏大纲",
         "category": "LiveWriteMD",
         "icon": "$(list-unordered)"
       },
@@ -180,7 +180,36 @@
         "when": "activeCustomEditorId == liveWriteMd.editor"
       }
     ],
+    "submenus": [
+      {
+        "id": "liveWriteMd.modeMenu",
+        "label": "模式",
+        "icon": "$(layout)"
+      }
+    ],
     "menus": {
+      "liveWriteMd.modeMenu": [
+        {
+          "command": "liveWriteMd.enterLiveMode",
+          "group": "navigation@1"
+        },
+        {
+          "command": "liveWriteMd.enterViewerMode",
+          "group": "navigation@2"
+        },
+        {
+          "command": "liveWriteMd.enterSourceMode",
+          "group": "navigation@3"
+        },
+        {
+          "command": "liveWriteMd.enterMindmapMode",
+          "group": "navigation@4"
+        },
+        {
+          "command": "liveWriteMd.enterSlidesMode",
+          "group": "navigation@5"
+        }
+      ],
       "explorer/context": [
         {
           "command": "liveWriteMd.openWith",
@@ -205,425 +234,26 @@
       ],
       "editor/title": [
         {
-          "command": "liveWriteMd.toggleMindmapMode",
+          "submenu": "liveWriteMd.modeMenu",
           "when": "activeCustomEditorId == liveWriteMd.editor",
-          "group": "navigation@5"
-        },
-        {
-          "command": "liveWriteMd.cycleTextMode",
-          "when": "activeCustomEditorId == liveWriteMd.editor && liveWriteMd.editorMode != mindmap",
-          "group": "navigation@6"
-        },
-        {
-          "command": "liveWriteMd.openMindmapPanel",
-          "when": "activeCustomEditorId == liveWriteMd.editor",
-          "group": "1_run@1"
+          "group": "navigation@1"
         },
         {
           "command": "liveWriteMd.toggleOutline",
           "when": "activeCustomEditorId == liveWriteMd.editor",
-          "group": "navigation@9"
+          "group": "navigation@3"
         },
         {
           "command": "liveWriteMd.openSettings",
           "when": "activeCustomEditorId == liveWriteMd.editor",
-          "group": "navigation@10"
+          "group": "navigation@4"
         }
       ]
     },
     "configuration": {
       "title": "LiveWriteMD",
       "properties": {
-        "liveWriteMd.largeFileWarningThreshold": {
-          "type": "number",
-          "default": 1048576,
-          "minimum": 0,
-          "description": "Large file warning threshold in bytes. Set to 0 to disable."
-        },
-        "liveWriteMd.syncDebounceMs": {
-          "type": "number",
-          "default": 300,
-          "minimum": 50,
-          "maximum": 2000,
-          "description": "Sync debounce time in milliseconds"
-        },
-        "liveWriteMd.enableDebugLog": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable verbose debug logging. Logs appear in the Output panel (View > Output > LiveWriteMD)."
-        },
-        "liveWriteMd.lineNumbers": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show line numbers"
-        },
-        "liveWriteMd.lineGutterGap": {
-          "type": "number",
-          "default": 4,
-          "minimum": 0,
-          "maximum": 24,
-          "description": "Distance in pixels between the left edge of body text and the line-number rule. Minimum is 0.",
-          "markdownDescription": "正文行最左缘与行号竖线之间的距离（px），最低可调到 `0`。"
-        },
-        "liveWriteMd.wordWrap": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable word wrap for long lines"
-        },
-        "liveWriteMd.readableLineLength": {
-          "type": "number",
-          "default": 900,
-          "minimum": 0,
-          "description": "Max content width in pixels. Set to 0 for unlimited. Default: 900"
-        },
-        "liveWriteMd.lineHeightScale": {
-          "type": "number",
-          "default": 1,
-          "minimum": 1,
-          "maximum": 3,
-          "description": "Line height multiplier on top of the base line height (Word-style). 1.0 = single spacing.",
-          "markdownDescription": "Word 式倍行距：在基础行高（VS Code 的 `editor.lineHeight`，未设置时为 1.7 倍字号）上乘以该倍数，`1.0` 为单倍行距。"
-        },
-        "liveWriteMd.fontScale": {
-          "type": "number",
-          "default": 1,
-          "minimum": 0.5,
-          "maximum": 2,
-          "description": "Editor body font size scale. Ctrl+wheel changes this value and saves it automatically.",
-          "markdownDescription": "编辑器正文的字体大小缩放倍率。按 `Ctrl+滚轮` 调整后会自动保存。"
-        },
-        "liveWriteMd.fontFamilyEnglish": {
-          "type": "string",
-          "default": "",
-          "description": "Font family used for Latin letters and digits. Empty = follow the VS Code editor font. Accepts any installed font family; the in-app panel lists fonts installed on this machine.",
-          "markdownDescription": "英文、数字使用的字体。留空跟随 VS Code 编辑器字体。可填写任意已安装字体；应用内设置面板会列出本机字体供选择。"
-        },
-        "liveWriteMd.fontFamilyChinese": {
-          "type": "string",
-          "default": "",
-          "description": "Font family used for Chinese characters. Empty = follow the system default. Accepts any installed font family; the in-app panel lists fonts installed on this machine.",
-          "markdownDescription": "中文汉字使用的字体。留空跟随系统默认；英文字体没有 CJK 字形时汉字回退到它。可填写任意已安装字体；应用内设置面板会列出本机字体供选择。"
-        },
-        "liveWriteMd.theme": {
-          "type": "string",
-          "enum": [
-            "auto",
-            "dark",
-            "light"
-          ],
-          "default": "auto",
-          "description": "Theme setting (auto: follow VS Code theme)"
-        },
-        "liveWriteMd.imageSaveFolder": {
-          "type": "string",
-          "default": "assets",
-          "description": "Folder name for saved images (relative to .md file). Default: assets"
-        },
-        "liveWriteMd.pdfBrowserPath": {
-          "type": "string",
-          "default": "",
-          "description": "Path to the Edge/Chrome executable used for PDF export. Leave empty to auto-detect.",
-          "markdownDescription": "导出 PDF 所用的 Edge/Chrome 可执行文件路径。留空则自动探测。"
-        },
         "liveWriteMd.defaultMode": {
-          "type": "string",
-          "enum": [
-            "live",
-            "source",
-            "viewer",
-            "mindmap"
-          ],
-          "default": "live",
-          "description": "Default editing mode when opening files",
-          "enumDescriptions": [
-            "Live Preview - Edit with real-time rendering",
-            "Source - Raw Markdown source only",
-            "Viewer - Read-only rendered view",
-            "Mind Map - Canvas outline rendered by the built-in engine"
-          ]
-        },
-        "liveWriteMd.modeSwitcher": {
-          "type": "string",
-          "enum": [
-            "cycle",
-            "buttons"
-          ],
-          "default": "cycle",
-          "description": "Mode switcher button style in the editor title bar",
-          "enumDescriptions": [
-            "Cycle - Single button that cycles Live → Viewer → Source → Mind Map",
-            "Buttons - Show direct-jump buttons for the other three modes"
-          ]
-        },
-        "liveWriteMd.rememberLastMode": {
-          "type": "boolean",
-          "default": true,
-          "description": "Remember the editing mode used per file instead of always using Default mode."
-        },
-        "liveWriteMd.smartUrlPaste": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically wrap a pasted bare URL as a Markdown link."
-        },
-        "liveWriteMd.mindmapTheme": {
-          "type": "string",
-          "enum": [
-            "auto",
-            "default",
-            "dark"
-          ],
-          "default": "auto",
-          "description": "Mind map color theme. Auto follows the VS Code light/dark theme.",
-          "enumDescriptions": [
-            "Auto - Follow the editor light/dark theme",
-            "Default - Classic light theme",
-            "Dark - Always use the bundled dark theme"
-          ]
-        },
-        "liveWriteMd.mindmapDefaultExpandLevel": {
-          "type": "number",
-          "default": 2,
-          "minimum": 0,
-          "maximum": 6,
-          "multipleOf": 1,
-          "description": "Default expand level when opening a mind map. 0 shows only the root."
-        },
-        "liveWriteMd.mindmapNodeMaxWidth": {
-          "type": "number",
-          "default": 20,
-          "minimum": 5,
-          "maximum": 60,
-          "markdownDescription": "思维导图文本节点一行最多排几列（1 列 = 1 个中文字宽），超出换行。"
-        },
-        "liveWriteMd.mindmapNodeMaxLines": {
-          "type": "number",
-          "default": 3,
-          "minimum": 1,
-          "maximum": 10,
-          "markdownDescription": "思维导图文本节点最多显示几行，超出截断加省略号；点击已选中节点可先展开，再点进入编辑。"
-        },
-        "liveWriteMd.mindmapInternalLinks": {
-          "type": "boolean",
-          "default": true,
-          "description": "在思维导图中把文档内链接（[[#标题]] / [文字](#标题)）绘制为底层虚线箭头，点击箭头跳转到目标标题。"
-        },
-        "liveWriteMd.mindmapPerfMonitor": {
-          "type": "string",
-          "default": "off",
-          "enum": [
-            "off",
-            "minimal",
-            "full"
-          ],
-          "enumDescriptions": [
-            "关闭",
-            "极简（帧率 + 内存）",
-            "完整（详细指标）"
-          ],
-          "description": "在思维导图右上角显示性能数据：极简版无边框，只显示帧率与堆内存；完整版另含实例数 / 换真队列 / 强制布局速率，并记录帧率跳变现场。"
-        },
-        "liveWriteMd.highlightActiveLine": {
-          "type": "boolean",
-          "default": true,
-          "description": "Highlight the line that contains the cursor."
-        },
-        "liveWriteMd.highlightWhitespace": {
-          "type": "boolean",
-          "default": false,
-          "description": "Render spaces and tabs with subtle markers."
-        },
-        "liveWriteMd.h1Color": {
-          "type": "string",
-          "default": "",
-          "description": "Heading 1 color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.h2Color": {
-          "type": "string",
-          "default": "",
-          "description": "Heading 2 color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.h3Color": {
-          "type": "string",
-          "default": "",
-          "description": "Heading 3 color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.h4Color": {
-          "type": "string",
-          "default": "",
-          "description": "Heading 4 color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.h5Color": {
-          "type": "string",
-          "default": "",
-          "description": "Heading 5 color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.h6Color": {
-          "type": "string",
-          "default": "",
-          "description": "Heading 6 color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.h1Size": {
-          "type": "number",
-          "default": 1.2,
-          "minimum": 0.9,
-          "maximum": 2,
-          "multipleOf": 0.01,
-          "description": "Heading 1 font size relative to body text."
-        },
-        "liveWriteMd.boldColor": {
-          "type": "string",
-          "default": "",
-          "description": "Bold text color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.italicColor": {
-          "type": "string",
-          "default": "",
-          "description": "Italic text color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.italicSlant": {
-          "type": "boolean",
-          "default": false,
-          "description": "Use a real slanted italic glyph instead of color-only emphasis."
-        },
-        "liveWriteMd.boldWeight": {
-          "type": "boolean",
-          "default": false,
-          "description": "Use a real bold font weight for bold text. Off (default): color-only emphasis, weight follows body text.",
-          "markdownDescription": "开启后加粗使用粗体字形；关闭（默认）时加粗只用颜色区分，字重与正文一致。"
-        },
-        "liveWriteMd.strikethroughColor": {
-          "type": "string",
-          "default": "",
-          "description": "Strikethrough color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.inlineCodeColor": {
-          "type": "string",
-          "default": "",
-          "description": "Inline code text color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.inlineCodeBackground": {
-          "type": "string",
-          "default": "",
-          "description": "Inline code background color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.inlineCodeScale": {
-          "type": "number",
-          "default": 0.95,
-          "minimum": 0.8,
-          "maximum": 1.05,
-          "multipleOf": 0.01,
-          "description": "Inline code font size relative to body text."
-        },
-        "liveWriteMd.codeblockBackground": {
-          "type": "string",
-          "default": "",
-          "description": "Code block background color. Empty = follow VS Code theme."
-        },
-        "liveWriteMd.codeblockEdge": {
-          "type": "string",
-          "default": "",
-          "description": "Code block edge color. Empty = follow VS Code theme."
-        },
-        "liveWriteMd.linkColor": {
-          "type": "string",
-          "default": "",
-          "description": "Link color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.quoteBorderColor": {
-          "type": "string",
-          "default": "",
-          "description": "Blockquote left border color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.quoteTextColor": {
-          "type": "string",
-          "default": "",
-          "description": "Blockquote text color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.hrColor": {
-          "type": "string",
-          "default": "",
-          "description": "Horizontal rule color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.tableBorderColor": {
-          "type": "string",
-          "default": "",
-          "description": "Table border color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.tableHeaderBackground": {
-          "type": "string",
-          "default": "",
-          "description": "Table header background color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.tableStripeBackground": {
-          "type": "string",
-          "default": "",
-          "description": "Background for striped (even) table rows. Empty = no stripes."
-        },
-        "liveWriteMd.tableSelectedBackground": {
-          "type": "string",
-          "default": "",
-          "description": "Selected table cell highlight color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.bulletColor": {
-          "type": "string",
-          "default": "",
-          "description": "List bullet color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.bulletYOffset": {
-          "type": "number",
-          "default": 0,
-          "minimum": -0.3,
-          "maximum": 0.3,
-          "description": "Vertical bullet offset from the line center, in em (negative = up, positive = down)."
-        },
-        "liveWriteMd.checkboxAccent": {
-          "type": "string",
-          "default": "",
-          "description": "Checkbox accent color. Empty = auto (follow the theme)."
-        },
-        "liveWriteMd.outlineAutoOpen": {
-          "type": "boolean",
-          "default": false,
-          "description": "Expand the outline automatically when a file opens."
-        },
-        "liveWriteMd.outlineWidth": {
-          "type": "number",
-          "default": 280,
-          "minimum": 220,
-          "maximum": 480,
-          "multipleOf": 4,
-          "description": "Default outline panel width in pixels."
-        },
-        "liveWriteMd.outlineGuides": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show indentation guides in the outline."
-        },
-        "liveWriteMd.mediaWidth": {
-          "type": "number",
-          "default": 75,
-          "minimum": 20,
-          "maximum": 100,
-          "description": "Default media width as a percentage of body width."
-        },
-        "liveWriteMd.mediaCenter": {
-          "type": "boolean",
-          "default": true,
-          "description": "Center media that occupies its own line."
-        },
-        "liveWriteMd.dragThreshold": {
-          "type": "number",
-          "default": 4,
-          "minimum": 2,
-          "maximum": 15,
-          "description": "Mouse movement in pixels required to count as a drag-select."
-        },
-        "liveWriteMd.doubleClickPin": {
-          "type": "boolean",
-          "default": true,
-          "description": "Double-click to pin the source view of a line."
-        },
-        "defaultMode": {
           "description": "打开 Markdown 文件时进入的模式。",
           "type": "string",
           "default": "live",
@@ -631,44 +261,33 @@
             "live",
             "source",
             "viewer",
-            "mindmap"
+            "mindmap",
+            "slides"
           ],
           "enumDescriptions": [
             "实时预览（边写边渲染）",
             "源码（只看 Markdown 原文）",
             "阅读（只读渲染视图）",
-            "思维导图（画布式大纲）"
+            "思维导图（画布式大纲）",
+            "幻灯片（16:9 自动分页）"
           ]
         },
-        "modeSwitcher": {
-          "description": "选循环则标题栏只有一个按钮，点一下换到下一个模式；选按钮则直接列出其他几个模式。",
-          "type": "string",
-          "default": "cycle",
-          "enum": [
-            "cycle",
-            "buttons"
-          ],
-          "enumDescriptions": [
-            "循环（单按钮轮流切换）",
-            "按钮（直达另外三种模式）"
-          ]
-        },
-        "rememberLastMode": {
+        "liveWriteMd.rememberLastMode": {
           "description": "开启后重新打开同一文件时回到上次使用的模式，而不是统一用「默认打开模式」。",
           "type": "boolean",
           "default": true
         },
-        "smartUrlPaste": {
+        "liveWriteMd.smartUrlPaste": {
           "description": "粘贴单独的 URL 时自动包裹成 Markdown 链接文字。",
           "type": "boolean",
           "default": true
         },
-        "lineNumbers": {
+        "liveWriteMd.lineNumbers": {
           "description": "关闭后正文左侧不再显示行号，正文会更贴近编辑区左缘，适合纯写作。",
           "type": "boolean",
           "default": true
         },
-        "lineGutterGap": {
+        "liveWriteMd.lineGutterGap": {
           "description": "正文行最左缘与行号竖线之间的间距。关闭行号后，即为正文与编辑器左边缘的距离。",
           "type": "number",
           "default": 4,
@@ -676,12 +295,12 @@
           "maximum": 24,
           "multipleOf": 1
         },
-        "wordWrap": {
+        "liveWriteMd.wordWrap": {
           "description": "长行按正文宽度折行，而不是横向滚动。",
           "type": "boolean",
           "default": true
         },
-        "readableLineLength": {
+        "liveWriteMd.readableLineLength": {
           "description": "超过此宽度后正文居中、两侧留白。设为 0 则不限制。",
           "type": "number",
           "default": 900,
@@ -689,7 +308,7 @@
           "maximum": 1600,
           "multipleOf": 10
         },
-        "lineHeightScale": {
+        "liveWriteMd.lineHeightScale": {
           "description": "Word 式倍行距：在基础行高（VS Code 的 editor.lineHeight，未设置时为 1.7 倍字号）上乘以该倍数。1.0 为单倍行距。",
           "type": "number",
           "default": 1,
@@ -697,7 +316,7 @@
           "maximum": 3,
           "multipleOf": 0.05
         },
-        "fontScale": {
+        "liveWriteMd.fontScale": {
           "description": "也可在编辑器里按 Ctrl/Cmd + 滚轮调整。",
           "type": "number",
           "default": 1,
@@ -705,59 +324,69 @@
           "maximum": 1.6,
           "multipleOf": 0.05
         },
-        "highlightActiveLine": {
+        "liveWriteMd.fontFamilyEnglish": {
+          "description": "英文、数字使用的字体。列表来自本机已安装字体，可直接输入筛选；留空跟随 VS Code 编辑器字体。 占位提示：输入字体名筛选，或展开列表选择",
+          "type": "string",
+          "default": ""
+        },
+        "liveWriteMd.fontFamilyChinese": {
+          "description": "中文汉字使用的字体。列表来自本机已安装字体，可直接输入筛选；留空跟随系统默认。 占位提示：输入字体名筛选，或展开列表选择",
+          "type": "string",
+          "default": ""
+        },
+        "liveWriteMd.highlightActiveLine": {
           "description": "光标所在行加上淡背景。",
           "type": "boolean",
           "default": true
         },
-        "highlightWhitespace": {
+        "liveWriteMd.highlightWhitespace": {
           "description": "把空格 / 制表符用淡点标记出来。",
           "type": "boolean",
           "default": false
         },
-        "h1Color": {
+        "liveWriteMd.h1Color": {
           "description": "一级标题的文字颜色；留空 = 跟随主题默认色，只影响这一级。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "h2Color": {
+        "liveWriteMd.h2Color": {
           "description": "二级标题的文字颜色；留空 = 跟随主题默认色，只影响这一级。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "h3Color": {
+        "liveWriteMd.h3Color": {
           "description": "三级标题的文字颜色；留空 = 跟随主题默认色，只影响这一级。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "h4Color": {
+        "liveWriteMd.h4Color": {
           "description": "四级标题的文字颜色；留空 = 跟随主题默认色，只影响这一级。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "h5Color": {
+        "liveWriteMd.h5Color": {
           "description": "五级标题的文字颜色；留空 = 跟随主题默认色，只影响这一级。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "h6Color": {
+        "liveWriteMd.h6Color": {
           "description": "六级标题的文字颜色；留空 = 跟随主题默认色，只影响这一级。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "h1Size": {
+        "liveWriteMd.h1Size": {
           "description": "相对于正文的字号倍率。",
           "type": "number",
           "default": 1.2,
@@ -765,47 +394,57 @@
           "maximum": 2,
           "multipleOf": 0.01
         },
-        "boldColor": {
+        "liveWriteMd.headingBold": {
+          "description": "关闭（默认）时标题与正文同字重，只靠字号和颜色区分层级；开启后一级标题用 700、其余级别用 600。",
+          "type": "boolean",
+          "default": false
+        },
+        "liveWriteMd.boldColor": {
           "description": "加粗文字的颜色；留空 = 跟随主题默认，可单独上色让加粗在正文里更醒目。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "italicColor": {
+        "liveWriteMd.boldWeight": {
+          "description": "关闭（默认）时加粗只以颜色区分、字重与正文一致；开启后使用粗体字形。",
+          "type": "boolean",
+          "default": false
+        },
+        "liveWriteMd.italicColor": {
           "description": "斜体文字的颜色；留空 = 跟随主题默认，可给斜体一个偏柔和的色替代倾斜。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "italicSlant": {
+        "liveWriteMd.italicSlant": {
           "description": "关闭（默认）时斜体只以颜色区分、字形不倾斜；开启后使用真斜体字形。",
           "type": "boolean",
           "default": false
         },
-        "strikethroughColor": {
+        "liveWriteMd.strikethroughColor": {
           "description": "删除线文字的颜色；留空 = 跟随主题默认，调淡可弱化已完成的待办。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "inlineCodeColor": {
+        "liveWriteMd.inlineCodeColor": {
           "description": "行内代码（`文字`）的文字色；留空 = 跟随主题，与代码块配色保持一致。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "inlineCodeBackground": {
+        "liveWriteMd.inlineCodeBackground": {
           "description": "行内代码的背景色；留空 = 跟随主题，加一层淡底能让代码在正文里更好认。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "inlineCodeScale": {
+        "liveWriteMd.inlineCodeScale": {
           "description": "相对于正文的字号倍率（默认略小一点）。",
           "type": "number",
           "default": 0.95,
@@ -813,84 +452,84 @@
           "maximum": 1.05,
           "multipleOf": 0.01
         },
-        "codeblockBackground": {
+        "liveWriteMd.codeblockBackground": {
           "description": "留空则跟随 VS Code 主题。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "codeblockEdge": {
+        "liveWriteMd.codeblockEdge": {
           "description": "留空则跟随 VS Code 主题。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "linkColor": {
+        "liveWriteMd.linkColor": {
           "description": "正文链接的颜色；留空 = 跟随主题，改它可让链接更醒目或更低调。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "quoteBorderColor": {
+        "liveWriteMd.quoteBorderColor": {
           "description": "引用块左侧竖线的颜色；留空 = 跟随主题，用它拉开引用与正文的层次。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "quoteTextColor": {
+        "liveWriteMd.quoteTextColor": {
           "description": "引用块内文字的颜色；留空 = 跟随主题，通常比正文略淡以区分出处。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "hrColor": {
+        "liveWriteMd.hrColor": {
           "description": "分隔线（---）的颜色；留空 = 跟随主题，想弱化分节时可把它调淡。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "tableBorderColor": {
+        "liveWriteMd.tableBorderColor": {
           "description": "表格边框和网格线的颜色；留空 = 跟随主题，边框太抢眼时可调淡。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "tableHeaderBackground": {
+        "liveWriteMd.tableHeaderBackground": {
           "description": "表头行的背景色；留空 = 跟随主题，加一层底色可让表头和数据行分开。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "tableStripeBackground": {
+        "liveWriteMd.tableStripeBackground": {
           "description": "为偶数数据行加底色；留空（默认）则不显示斑马纹。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "tableSelectedBackground": {
+        "liveWriteMd.tableSelectedBackground": {
           "description": "编辑时选中单元格的高亮底色；留空 = 跟随主题，选区不显眼时换个明显的颜色。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "bulletColor": {
+        "liveWriteMd.bulletColor": {
           "description": "列表圆点和序号标记的颜色；留空 = 跟随主题，想突出层级时可单独上色。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "bulletYOffset": {
+        "liveWriteMd.bulletYOffset": {
           "description": "圆点相对行中心的上下微调：0 为行正中，负值向上、正值向下。",
           "type": "number",
           "default": 0,
@@ -898,19 +537,19 @@
           "maximum": 0.3,
           "multipleOf": 0.01
         },
-        "checkboxAccent": {
+        "liveWriteMd.checkboxAccent": {
           "description": "复选框勾选后的强调色；留空 = 跟随主题，待办很多时上色更易扫读。",
           "type": "string",
           "default": "",
           "pattern": "^$|^#[0-9a-fA-F]{3,8}$|^rgba?\\(|^[a-z]+$",
           "patternErrorMessage": "请输入 CSS 颜色（如 #338122、rgba(...) ），留空表示跟随主题。"
         },
-        "outlineAutoOpen": {
+        "liveWriteMd.outlineAutoOpen": {
           "description": "开启后每次打开 Markdown 文件都自动展开大纲面板；关闭则手动点开。",
           "type": "boolean",
           "default": false
         },
-        "outlineWidth": {
+        "liveWriteMd.outlineWidth": {
           "description": "大纲面板首次打开时的宽度；之后手动拖拽调过的宽度会单独记住。",
           "type": "number",
           "default": 280,
@@ -918,17 +557,17 @@
           "maximum": 480,
           "multipleOf": 4
         },
-        "outlineGuides": {
+        "liveWriteMd.outlineGuides": {
           "description": "开启时大纲条目之间显示缩进引导线，层级更直观；关闭则只靠文字缩进。",
           "type": "boolean",
           "default": true
         },
-        "imageSaveFolder": {
+        "liveWriteMd.imageSaveFolder": {
           "description": "拖拽 / 粘贴的图片相对当前 Markdown 所在目录存放。 占位提示：assets",
           "type": "string",
           "default": "assets"
         },
-        "mediaWidth": {
+        "liveWriteMd.mediaWidth": {
           "description": "图片 / Mermaid 初始占正文宽度的百分比。",
           "type": "number",
           "default": 75,
@@ -936,12 +575,12 @@
           "maximum": 100,
           "multipleOf": 1
         },
-        "mediaCenter": {
+        "liveWriteMd.mediaCenter": {
           "description": "开启时独占一行的图片 / Mermaid 图居中显示；关闭则靠左对齐。",
           "type": "boolean",
           "default": true
         },
-        "mindmapTheme": {
+        "liveWriteMd.mindmapTheme": {
           "description": "设为自动时跟随编辑器当前的明 / 暗主题。",
           "type": "string",
           "default": "auto",
@@ -956,7 +595,23 @@
             "深色"
           ]
         },
-        "mindmapDefaultExpandLevel": {
+        "liveWriteMd.mindmapNodeWash": {
+          "description": "节点背景色 = 标题色按该比例混入。比例越低，底色越淡、文字与底色的对比越强，笔画看起来更清晰；0 = 完全透明（只剩边框）。",
+          "type": "number",
+          "default": 8,
+          "minimum": 0,
+          "maximum": 40,
+          "multipleOf": 1
+        },
+        "liveWriteMd.quickCardWidth": {
+          "description": "快速卡片的宽度（拖动卡片左边界调整，全局生效）。",
+          "type": "number",
+          "default": 280,
+          "minimum": 160,
+          "maximum": 480,
+          "multipleOf": 10
+        },
+        "liveWriteMd.mindmapDefaultExpandLevel": {
           "description": "打开导图时默认展开到第几层，0 = 只显示根节点。",
           "type": "number",
           "default": 2,
@@ -964,7 +619,7 @@
           "maximum": 6,
           "multipleOf": 1
         },
-        "mindmapNodeMaxWidth": {
+        "liveWriteMd.mindmapNodeMaxWidth": {
           "description": "文本节点一行最多排几列（1 列 = 1 个中文字宽），超出换行；与「节点最大行数」共同决定截断点。",
           "type": "number",
           "default": 20,
@@ -972,7 +627,7 @@
           "maximum": 60,
           "multipleOf": 1
         },
-        "mindmapNodeMaxLines": {
+        "liveWriteMd.mindmapNodeMaxLines": {
           "description": "文本节点最多显示几行，超出部分截断加省略号；点击已选中的节点可先展开到最大行数，再点进入编辑。",
           "type": "number",
           "default": 3,
@@ -980,30 +635,30 @@
           "maximum": 10,
           "multipleOf": 1
         },
-        "mindmapCodeMinWidth": {
-          "description": "代码块节点的最小宽度（1 列 = 1 个等宽字符宽），避免短代码的节点过窄；0 = 不设最小宽度。",
+        "liveWriteMd.mindmapCodeWidth": {
+          "description": "代码块节点的最大宽度（1 列 = 1 个等宽字符宽）；节点最窄 40 列。长行不换行，超出后在节点内左右滚动。",
           "type": "number",
-          "default": 10,
-          "minimum": 0,
-          "maximum": 60,
+          "default": 60,
+          "minimum": 40,
+          "maximum": 100,
           "multipleOf": 1
         },
-        "mindmapPerfMonitor": {
-          "description": "在画布右上角实时显示性能数据。极简版无边框，只显示帧率与堆内存；完整版另含实例数 / 换真队列 / 强制布局速率，并记录帧率跳变与长任务现场（可一键复制成 JSON）。默认关闭。",
-          "type": "string",
-          "default": "off",
-          "enum": [
-            "off",
-            "minimal",
-            "full"
-          ],
-          "enumDescriptions": [
-            "关闭",
-            "极简（帧率 + 内存）",
-            "完整（详细指标）"
-          ]
+        "liveWriteMd.mindmapInternalLinks": {
+          "description": "文档内链接（[[#标题]] 或 [文字](#标题)）在导图中以底层虚线箭头呈现，从内链所在节点指向目标标题节点，点击箭头跳转。",
+          "type": "boolean",
+          "default": true
         },
-        "theme": {
+        "liveWriteMd.mindmapGestureCrisp": {
+          "description": "开启（默认）时，拖动和滚轮缩放期间不提升合成层，文字在运动中也按当前比例重新栅格化、保留次像素抗锯齿；关闭后手势期间临时提升合成层换帧率，运动中的文字是缓存位图（略灰）。实测 60~74 个可见节点时两者帧间隔相同。",
+          "type": "boolean",
+          "default": true
+        },
+        "liveWriteMd.quickCardEnabled": {
+          "description": "在导图右边界显示快速卡片栏，用来记录临时想法。关闭后整条卡片栏隐藏。",
+          "type": "boolean",
+          "default": true
+        },
+        "liveWriteMd.theme": {
           "description": "设为自动时跟随 VS Code 当前主题。",
           "type": "string",
           "default": "auto",
@@ -1018,7 +673,7 @@
             "浅色"
           ]
         },
-        "syncDebounceMs": {
+        "liveWriteMd.syncDebounceMs": {
           "description": "Webview 与文档同步前的等待毫秒数，打字快时可适当调大。",
           "type": "number",
           "default": 300,
@@ -1026,7 +681,7 @@
           "maximum": 2000,
           "multipleOf": 50
         },
-        "dragThreshold": {
+        "liveWriteMd.dragThreshold": {
           "description": "鼠标移动超过多少像素才视为「拖选」并展开整行。",
           "type": "number",
           "default": 4,
@@ -1034,76 +689,89 @@
           "maximum": 15,
           "multipleOf": 1
         },
-        "doubleClickPin": {
+        "liveWriteMd.doubleClickPin": {
           "description": "关闭后双击不再钉住整行的源码显示。",
           "type": "boolean",
           "default": true
         },
-        "largeFileWarningThreshold": {
+        "liveWriteMd.largeFileWarningThreshold": {
           "description": "单位字节，0 表示关闭警告。 占位提示：1048576",
           "type": "string",
           "default": "1048576"
         },
-        "pdfBrowserPath": {
+        "liveWriteMd.pdfBrowserPath": {
           "description": "导出 PDF 所用 Edge/Chrome 可执行文件，留空自动探测。 占位提示：留空自动探测",
           "type": "string",
           "default": ""
         },
-        "enableDebugLog": {
+        "liveWriteMd.enableDebugLog": {
           "description": "详细日志输出到「输出」面板的 LiveWriteMD 通道。",
           "type": "boolean",
           "default": false
         },
-        "fontFamilyEnglish": {
-          "description": "英文、数字使用的字体。列表来自本机已安装字体，可直接输入筛选；留空跟随 VS Code 编辑器字体。 占位提示：输入字体名筛选，或展开列表选择",
+        "liveWriteMd.perfMonitor": {
+          "description": "在窗口右上角实时显示当前打开文件的性能数据，实时 / 源码 / 阅读 / 导图 / 幻灯片所有模式通用。极简版只有帧率与堆内存；完整版另含 DOM、文档大小、当前模式专属指标（导图节点、幻灯片页数、文本视口行数）与强制布局速率，并记录帧率跳变和长任务现场（可一键复制成 JSON）。默认关闭。",
           "type": "string",
-          "default": ""
+          "default": "off",
+          "enum": [
+            "off",
+            "minimal",
+            "full"
+          ],
+          "enumDescriptions": [
+            "关闭",
+            "极简（帧率 + 内存）",
+            "完整（详细指标）"
+          ]
         },
-        "fontFamilyChinese": {
-          "description": "中文汉字使用的字体。列表来自本机已安装字体，可直接输入筛选；留空跟随系统默认。 占位提示：输入字体名筛选，或展开列表选择",
+        "liveWriteMd.slidesTheme": {
+          "description": "自动跟随 VS Code 明暗：浅色用「纸」、深色用「墨」。也可以固定成纸 / 墨 / 靛。",
           "type": "string",
-          "default": ""
+          "default": "auto",
+          "enum": [
+            "auto",
+            "paper",
+            "ink",
+            "indigo"
+          ],
+          "enumDescriptions": [
+            "自动（跟随编辑器明暗）",
+            "纸（暖白 + 朱红）",
+            "墨（深色 + 冷蓝）",
+            "靛（浅靛 + 青绿）"
+          ]
         },
-        "headingBold": {
-          "description": "关闭（默认）时标题与正文同字重，只靠字号和颜色区分层级；开启后一级标题用 700、其余级别用 600。",
-          "type": "boolean",
-          "default": false
+        "liveWriteMd.slidesFrame": {
+          "description": "在页面内容区四周的留白里加一点克制的装饰：内嵌发丝线或四角标记。只影响 PPT 渲染，不改文档。工具栏「边框」按钮也能直接切换。",
+          "type": "string",
+          "default": "none",
+          "enum": [
+            "none",
+            "rule",
+            "corners"
+          ],
+          "enumDescriptions": [
+            "无",
+            "细线框",
+            "四角标记"
+          ]
         },
-        "boldWeight": {
-          "description": "关闭（默认）时加粗只以颜色区分、字重与正文一致；开启后使用粗体字形。",
-          "type": "boolean",
-          "default": false
-        },
-        "mindmapNodeWash": {
-          "description": "节点背景色 = 标题色按该比例混入。比例越低，底色越淡、文字与底色的对比越强，笔画看起来更清晰；0 = 完全透明（只剩边框）。",
-          "type": "number",
-          "default": 8,
-          "minimum": 0,
-          "maximum": 40,
-          "multipleOf": 1
-        },
-        "mindmapInternalLinks": {
-          "description": "文档内链接（[[#标题]] 或 [文字](#标题)）在导图中以底层虚线箭头呈现，从内链所在节点指向目标标题节点，点击箭头跳转。",
-          "type": "boolean",
-          "default": true
-        },
-        "mindmapGestureCrisp": {
-          "description": "开启（默认）时，拖动和滚轮缩放期间不提升合成层，文字在运动中也按当前比例重新栅格化、保留次像素抗锯齿；关闭后手势期间临时提升合成层换帧率，运动中的文字是缓存位图（略灰）。实测 60~74 个可见节点时两者帧间隔相同。",
-          "type": "boolean",
-          "default": true
-        },
-        "quickCardEnabled": {
-          "description": "在导图右边界显示快速卡片栏，用来记录临时想法。关闭后整条卡片栏隐藏。",
-          "type": "boolean",
-          "default": true
-        },
-        "quickCardWidth": {
-          "description": "快速卡片的宽度（拖动卡片左边界调整，全局生效）。",
-          "type": "number",
-          "default": 280,
-          "minimum": 160,
-          "maximum": 480,
-          "multipleOf": 10
+        "liveWriteMd.slidesHeadingLevel": {
+          "description": "按哪一级标题开启新页。选自动时：同时有 H1/H2 就把 H1 当章节页、H2 当内容页；只有一级标题时直接用那一级。",
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "1",
+            "2",
+            "3"
+          ],
+          "enumDescriptions": [
+            "自动",
+            "一级标题（H1）",
+            "二级标题（H2）",
+            "三级标题（H3）"
+          ]
         }
       }
     }
