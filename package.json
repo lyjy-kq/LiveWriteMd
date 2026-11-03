@@ -191,22 +191,27 @@
       "liveWriteMd.modeMenu": [
         {
           "command": "liveWriteMd.enterLiveMode",
+          "icon": "$(edit)",
           "group": "navigation@1"
         },
         {
           "command": "liveWriteMd.enterViewerMode",
+          "icon": "$(book)",
           "group": "navigation@2"
         },
         {
           "command": "liveWriteMd.enterSourceMode",
+          "icon": "$(code)",
           "group": "navigation@3"
         },
         {
           "command": "liveWriteMd.enterMindmapMode",
+          "icon": "$(type-hierarchy)",
           "group": "navigation@4"
         },
         {
           "command": "liveWriteMd.enterSlidesMode",
+          "icon": "$(screen-full)",
           "group": "navigation@5"
         }
       ],

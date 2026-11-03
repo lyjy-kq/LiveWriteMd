@@ -24,7 +24,7 @@
 
 import { EditorState, Prec, Compartment, StateField } from '@codemirror/state';
 import { EditorView, keymap, Decoration, type DecorationSet } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { markdownKeymap } from '../codemirror/extensions/keymap.js';
 import {
@@ -484,7 +484,15 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
                         // 默认键位里的「转到行」之类抢走（我们的 defaultKeymap
                         // 来自 @codemirror/commands，没有 gotoLine，但顺序习惯
                         // 与主编辑器保持一致，便于以后维护）。
-                        keymap.of([...markdownKeymap, ...historyKeymap, ...defaultKeymap]),
+                        // Tab / Shift+Tab 缩进：与主编辑器（live / 阅读）同一套
+                        // indentWithTab。mini-CM 缺了它时 Tab 会落到浏览器默认
+                        // 行为（焦点跳走），导图节点与幻灯片块编辑里都按不出缩进。
+                        keymap.of([
+                            indentWithTab,
+                            ...markdownKeymap,
+                            ...historyKeymap,
+                            ...defaultKeymap,
+                        ]),
                         // 编辑期补回交互插件（拖选锚点/括号配对/表格框选等）
                         ...livePreviewEditAddons(),
                     ]),
