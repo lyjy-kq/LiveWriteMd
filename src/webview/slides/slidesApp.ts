@@ -1935,7 +1935,6 @@ export class SlidesApp {
         const inner = document.createElement('div');
         inner.className = 'cover-inner';
         inner.innerHTML = `
-            <div class="cover-kicker">LIVEWRITEMD</div>
             <div class="cover-title">${this.escapeHtml(meta.title || 'Markdown 幻灯片')}</div>
             <div class="cover-rule"></div>
             ${meta.subtitle ? `<div class="cover-subtitle">${this.escapeHtml(meta.subtitle)}</div>` : ''}

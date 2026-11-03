@@ -166,12 +166,38 @@ export function findActiveInlineNode(state: EditorState, tree: Tree): SyntaxNode
     const selection = state.selection.main;
     if (!selection.empty) return null;
 
-    let node: SyntaxNode | null = tree.resolveInner(selection.head, 0);
-    while (node) {
-        if (isInlineFormatNode(node.name)) return node;
-        if (node.name === 'Document') return null;
-        node = node.parent;
-    }
+    /** 从节点往上找最近的行内元素（最多几层，嵌套很浅）。 */
+    const inlineAncestor = (start: SyntaxNode | null): SyntaxNode | null => {
+        let node = start;
+        for (let depth = 0; node && depth < 6; depth++) {
+            if (isInlineFormatNode(node.name)) return node;
+            if (node.name === 'Document') return null;
+            node = node.parent;
+        }
+        return null;
+    };
+    // 只接受落在光标所在行里的元素：resolveInner 的 side 偏移可能指到
+    // 上一段末尾的元素，那种不能算「光标落进去了」。
+    const lineNumber = state.doc.lineAt(selection.head).number;
+    const onCaretLine = (node: SyntaxNode | null): SyntaxNode | null =>
+        node && state.doc.lineAt(node.from).number === lineNumber ? node : null;
+
+    // ① 常规：光标真正落在元素内部（含标记内部）。
+    const inside = onCaretLine(inlineAncestor(tree.resolveInner(selection.head, 0)));
+    if (inside) return inside;
+
+    // ② 边界补判：光标正好贴在元素左边缘（head === from）或右边缘
+    //    （head === to）时，side 0 会落到元素**外面**的 Paragraph 上。
+    //    但渲染态里 `**` 是隐藏的、宽度为 0，光标视觉上就紧挨着元素文字，
+    //    用户点在那里显然是想编辑这个元素（Obsidian 同样按「触碰」处理）。
+    //    所以再看一眼左右两侧的节点：贴右边缘 → side -1 落在结尾标记里，
+    //    贴左边缘 → side +1 落在开头标记里。
+    const before = onCaretLine(inlineAncestor(tree.resolveInner(selection.head, -1)));
+    const after = onCaretLine(inlineAncestor(tree.resolveInner(selection.head, 1)));
+    // 只在「真的贴边」时采纳：元素必须正好从光标处开始或结束，
+    // 避免两侧的普通节点把相邻元素误激活。
+    if (before && before.to === selection.head) return before;
+    if (after && after.from === selection.head) return after;
     return null;
 }
 

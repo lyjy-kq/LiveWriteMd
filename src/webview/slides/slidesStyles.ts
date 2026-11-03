@@ -327,6 +327,28 @@ const SLIDES_CSS = `
  * 色带只是背景装饰，关掉不影响列表的编辑规则与圆点位置。
  */
 .slide-block .cm-md-indent { background-image: none !important; }
+/*
+ * 列表圆点跟随正文字号缩放。
+ *
+ * live 里圆点是固定 12px 的 SVG（相对 14px 正文约 0.86em），到幻灯片 30px
+ * 正文下就只剩 0.4em —— 看起来是「一个几乎看不见的小黑点」，和 live 的
+ * 实心圆点明显不一致。这里把盒子改成 0.86em（与 live 的 12/14 同比例），
+ * SVG 撑满盒子；垂直方向用 translateY(6px - 50%) 把「圆心」钉回原来的
+ * 位置（top 锚的是盒子顶边，盒子变大后不补偿会整体下移）。
+ * 只作用于幻灯片 / 幻灯片测量层，主编辑器与导图节点不受影响。
+ */
+.slide-page .cm-md-bullet-dot,
+.slides-measure .cm-md-bullet-dot {
+    width: 0.86em;
+    height: 0.86em;
+    transform: translateY(-50%);
+}
+.slide-page .cm-md-bullet-dot svg,
+.slides-measure .cm-md-bullet-dot svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
 /* 单图块居中；mermaid 白底交给 deck 背景 */
 .slide-block.kind-image { --livewritemd-media-center-align: center; }
 /*
@@ -573,12 +595,6 @@ const SLIDES_CSS = `
     background: linear-gradient(135deg, var(--deck-bg) 0%, var(--deck-cover-2) 100%);
 }
 .cover-inner { max-width: 940px; }
-.cover-kicker {
-    color: var(--deck-accent);
-    font-size: 15px;
-    letter-spacing: 0.26em;
-    margin-bottom: 24px;
-}
 .cover-title {
     font-size: 76px;
     line-height: 1.12;
