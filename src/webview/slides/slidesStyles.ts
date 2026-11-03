@@ -208,7 +208,15 @@ const SLIDES_CSS = `
     color: var(--deck-fg);
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.22);
     --livewritemd-editor-font-size: 28px;
-    --livewritemd-editor-font-family: ${FONT_STACK};
+    /*
+     * 不要在这里重新声明 --livewritemd-editor-font-family：
+     * FONT_STACK 本身就是 var(--livewritemd-editor-font-family, …)，
+     * 把同一个变量再定义成自己会形成 CSS 循环，声明失效后 mini-CM 会
+     * 退回 --vscode-editor-font-family（Consolas），而 live / 导图用的是
+     * 根节点上的用户字体设置 —— 字宽不同，列表缩进位置就会对不上。
+     * 这里直接继承根变量；没设置字体时由 font-family: FONT_STACK 的
+     * deck 兜底字体接管。
+     */
     --livewritemd-font-scale: 1;
     /* 行高 / 行内代码缩放继承 live 的用户设置（与 map 节点同一套），
        不再写死 1.5em / 0.9，否则同一段文字在两种视图里排版不同。 */
@@ -222,7 +230,7 @@ const SLIDES_CSS = `
     --livewritemd-h6-color: var(--deck-fg);
 }
 .slides-measure {
-    --livewritemd-editor-font-family: ${FONT_STACK};
+    /* 字体族同样继承根设置，不要在测量层再自引用一遍（见 .slide-page） */
     --livewritemd-font-scale: 1;
     /* 行高 / 行内代码缩放继承 live 的用户设置（与 map 节点同一套），
        不再写死 1.5em / 0.9，否则同一段文字在两种视图里排版不同。 */
