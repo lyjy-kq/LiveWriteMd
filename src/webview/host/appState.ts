@@ -247,6 +247,9 @@ const slidesCardsHost: QuickCardsHost = {
 let liveDropMark: HTMLElement | null = null;
 /** 指示线当前画在哪一行（同一行不重复写 DOM）。 */
 let liveDropLine = -1;
+/** 幻灯片卡片栏的 pointerdown 守卫（动手前先同步提交块编辑）。 */
+let slidesCardPointerTarget: HTMLElement | null = null;
+let slidesCardPointerHandler: ((event: PointerEvent) => void) | null = null;
 
 /** 当前模式对应的卡片栏宿主；非卡片模式返回 null。 */
 function activeQuickCardsHost(): QuickCardsHost | null {
@@ -285,9 +288,11 @@ function createQuickCardOptions(host: QuickCardsHost): QuickCardRailOptions {
             // 最小差异 dispatch + 立即上报扩展侧，卡片改动进 CM 撤销栈
             applyDocumentEdit(text, host.mode);
             // 幻灯片的模型是独立一份 fullText：不同步的话 Ctrl+S 与块回写
-            // 都会用旧全文覆盖卡片改动（setDocument 不回调 onEdit，无环）
+            // 都会用旧全文覆盖卡片改动。commitCardText 是轻量同步：只改
+            // 卡片内容时不动分页（不闪页、不吞下一次点击），只有增删 /
+            // 换序导致行号变化才重建。setDocument 不回调 onEdit，无环。
             if (host.mode === 'slides') {
-                ctx.slidesApp?.setDocument(text, ctx.mindmapFileName);
+                ctx.slidesApp?.commitCardText(text);
             }
             // 卡片栏自己改的内容立即重画，不等主编辑器 onChange 的防抖
             host.rail?.refresh(text);
@@ -385,7 +390,10 @@ export async function ensureQuickCards(
                 host.rail?.relayout()
             );
             host.resizeObserver.observe(container);
-            if (mode === 'slides') watchSlidesPresenting();
+            if (mode === 'slides') {
+                watchSlidesPresenting();
+                watchSlidesCardPointer(container);
+            }
             return rail;
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -406,6 +414,19 @@ function destroyQuickCardsHost(host: QuickCardsHost): void {
     // 又排一个刷新定时器，所以定时器要在 destroy 之后再清
     host.rail?.destroy();
     host.rail = null;
+    if (
+        host.mode === 'slides' &&
+        slidesCardPointerTarget &&
+        slidesCardPointerHandler
+    ) {
+        slidesCardPointerTarget.removeEventListener(
+            'pointerdown',
+            slidesCardPointerHandler,
+            true
+        );
+        slidesCardPointerTarget = null;
+        slidesCardPointerHandler = null;
+    }
     host.resizeObserver?.disconnect();
     host.resizeObserver = null;
     host.presentingObserver?.disconnect();
@@ -483,6 +504,35 @@ function watchSlidesPresenting(): void {
         attributes: true,
         attributeFilter: ['class'],
     });
+}
+
+/**
+ * 卡片栏 / 工具条按下时，先把正在编辑的幻灯片块同步提交。
+ *
+ * 右键选中卡片再拖动时 pointerdown 会被 preventDefault，块编辑器不会
+ * 失焦；不先提交的话，卡片操作基于旧全文计算，随后块提交又按旧行号
+ * 回写，两边互相覆盖。点在幻灯片舞台上不拦（普通失焦由 mini-CM 处理）。
+ */
+function watchSlidesCardPointer(container: HTMLElement): void {
+    if (slidesCardPointerTarget && slidesCardPointerHandler) {
+        slidesCardPointerTarget.removeEventListener(
+            'pointerdown',
+            slidesCardPointerHandler,
+            true
+        );
+    }
+    slidesCardPointerHandler = (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (target?.closest('.lwm-qcards, .lwm-toolbar')) {
+            ctx.slidesApp?.flushBlockEditSync();
+        }
+    };
+    slidesCardPointerTarget = container;
+    container.addEventListener(
+        'pointerdown',
+        slidesCardPointerHandler,
+        true
+    );
 }
 
 /** 模式 / 设置 / 放映状态变化后同步两条卡片栏的显隐。 */
@@ -669,6 +719,21 @@ function onQuickCardsKeyDown(event: KeyboardEvent): void {
             });
             return;
         }
+    }
+    // 焦点在设置面板 / 大纲 / 工具栏按钮等控件上时，卡片快捷键与后面的
+    // 翻页吞键都不能生效（设置搜索框里的空格 / t / 方向键要能正常输入）。
+    // 主编辑器与幻灯片块编辑器的 .cm-editor 不在此列，保留「卡片已选中、
+    // 焦点还在正文里」的分流。
+    const inRail = !!target?.closest('.lwm-qcards');
+    const inEditor = !!target?.closest('.cm-editor');
+    if (
+        !inRail &&
+        !inEditor &&
+        target?.closest(
+            'input, textarea, select, button, [contenteditable="true"], .fms-window, .outline-pane'
+        )
+    ) {
+        return;
     }
     rail.handleKey(event);
     // 幻灯片：卡片只选中（焦点不在卡内）时，方向键/空格/Home/End/t 会被

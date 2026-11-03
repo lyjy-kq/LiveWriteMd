@@ -24,7 +24,10 @@ import {
     createNodeDisplay,
     type NodeDisplay,
 } from '../mindmap/miniCm.js';
-import { parseQuickCards } from '../mindmap/edit/staging.js';
+import {
+    maskQuickCardLines,
+    parseQuickCards,
+} from '../mindmap/edit/staging.js';
 import { setMeasureRootOverride } from '../codemirror/extensions/livePreview/measure/textMeasure.js';
 import { measureWhitespacePx } from '../codemirror/extensions/livePreview/measure/listIndent.js';
 import { tableRemeasureEffect } from '../codemirror/extensions/livePreview/state.js';
@@ -463,7 +466,72 @@ export class SlidesApp {
         const deck = parseDeck(text, this.settings.headingLevel);
         this.deck = deck;
         this.renderCoverPreview(deck);
+        // rebuild 是异步的：期间旧页面仍在 DOM 里，必须置位让点击/滚轮/
+        // 键盘知道「正在重建」，别让人点进一个马上会被销毁的旧块编辑器。
+        this.rebuilding = true;
         void this.rebuild(null);
+    }
+
+    /**
+     * 卡片栏提交后的轻量同步（从右侧栏改的是卡片内容，不是幻灯片正文）。
+     *
+     * - 掩码文本没变（只改了卡片正文）：行号/分页完全不变，只更新全文，
+     *   不重排、不闪页，也不会在卡片失焦那次点击上吞掉后续的块编辑；
+     * - 卡片增删 / 换序导致掩码文本变化：才重新解析重建。
+     *
+     * 不走 setDocument：那条路径会先 destroyRendered + 播封面占位，卡片
+     * 每提交一次就闪一次，还会让紧接着的点击落到被销毁的旧 DOM 上。
+     */
+    public commitCardText(text: string): void {
+        if (this.fullText === text) return;
+        // 极端防御：块编辑器还开着时，传入的 text 是基于旧全文算出来的，
+        // 按行回写会错位。正常路径在卡片栏 pointerdown 时就把块编辑提交了
+        //（见 appState 的 flushBlockEditSync 钩子）。
+        if (this.activeDisplay) {
+            sendLog(
+                'WARN',
+                'commitCardText ignored: a slide block edit is still active'
+            );
+            return;
+        }
+        const masked = maskQuickCardLines(text);
+        if (this.deck && masked === this.deck.parseText) {
+            this.fullText = text;
+            this.deck.fullText = text;
+            return;
+        }
+        this.fullText = text;
+        this.beginReady();
+        if (!this.active) {
+            this.dirty = true;
+            return;
+        }
+        // 结构变化：取消块编辑提交排下的那次重建，直接按新全文重建一次
+        if (this.rebuildTimer !== null) {
+            window.clearTimeout(this.rebuildTimer);
+            this.rebuildTimer = null;
+        }
+        this.pendingAnchorLine = null;
+        this.rebuilding = true;
+        void this.rebuild(this.getCurrentLine0());
+    }
+
+    /**
+     * 同步提交正在编辑的幻灯片块（卡片栏在 PPT 里动手之前调用）。
+     *
+     * mini-CM 的 blur 处理器会同步走 commitBlock → onEdit；卡片栏随后
+     * getMarkdown 读到的就是包含这次块编辑的新全文，不会基于旧文本换序 /
+     * 删除而把块编辑覆盖掉。
+     */
+    public flushBlockEditSync(): void {
+        if (!this.activeDisplay) return;
+        const display = this.activeDisplay;
+        this.activeDisplay = null;
+        try {
+            display.view.contentDOM.blur();
+        } catch {
+            /* 已销毁 */
+        }
     }
 
     /** 初次渲染（或最近一次 rebuild）完成的 Promise。 */
@@ -764,6 +832,10 @@ export class SlidesApp {
     // =================================================================
 
     private beginReady(): void {
+        // 上一轮等待者（enterSlidesMode 的 await whenReady）不能悬着：
+        // setDocument 会替换就绪 Promise，旧的那份必须先放行，否则一次
+        // 抢跑的 UPDATE 就能让进入模式的 await 永远不返回、卡片栏漏建。
+        this.resolveReady();
         this.readyPromise = new Promise<void>((resolve) => {
             this.readyResolve = resolve;
         });
@@ -2394,14 +2466,7 @@ export class SlidesApp {
         // 片段与快速卡片行相交（松散列表 / HTML block 可以跨过卡片区）：
         // 渲染源码来自掩码副本，卡片位置是空行；这种片段也必须只读 ——
         // 一旦进入编辑，commitBlock 会按整段行区间替换原文，把卡片块删掉。
-        const cards = parseQuickCards(this.fullText);
-        if (
-            cards.some(
-                (card) =>
-                    block.fromLine <= card.toLine &&
-                    block.toLine >= card.fromLine
-            )
-        ) {
+        if (this.blockOverlapsQuickCards(block)) {
             wrap.classList.add('slide-block-static');
             return;
         }
@@ -2522,11 +2587,32 @@ export class SlidesApp {
     }
 
     /**
+     * 片段行区间是否与任一快速卡片相交。
+     *
+     * 相交片段的源码来自掩码副本（卡片行是空行），任何按行整段回写都会
+     * 把卡片内容抹掉。点击编辑（attachEdit）与显示态 widget 回写
+     *（onDisplayChange → commitBlock）都必须走这一道检查。
+     */
+    private blockOverlapsQuickCards(block: SlideBlock): boolean {
+        if (!this.fullText.includes('<<<')) return false;
+        return parseQuickCards(this.fullText).some(
+            (card) =>
+                block.fromLine <= card.toLine && block.toLine >= card.fromLine
+        );
+    }
+
+    /**
      * 把被编辑块的源码写回全文：只替换块占用的行区间，其他行原样保留。
      */
     private commitBlock(block: SlideBlock, newSource: string): void {
         const normalized = newSource.replace(/\r\n?/g, '\n');
         if (normalized === block.source) return;
+        // 显示态 widget（复选框 / 表格加减行 / 媒体宽度）也会走到这里。
+        // 与卡片相交的片段源码是掩码后的空行，整段替换会删掉卡片。
+        if (this.blockOverlapsQuickCards(block)) {
+            this.setStatus('该块与快速卡片相交，请在文本模式中编辑');
+            return;
+        }
         const lines = this.fullText.split('\n');
         // 片段源码在渲染时被去掉了公共缩进（否则嵌套列表会被当成代码块），
         // 回写时逐行补回，源码的层级才不会在编辑一次之后塌掉。

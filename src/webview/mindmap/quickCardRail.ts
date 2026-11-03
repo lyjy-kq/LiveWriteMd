@@ -1594,13 +1594,19 @@ export class QuickCardRail {
             return;
         }
         // 落在侧边栏之外（画布上）→ 交给宿主插进导图。
+        // 宿主没提供投放回调（如 PPT 第一版）：拖出栏外就是空操作，
+        // 不能先清掉选中 / 固定状态 —— 卡片还在文档里，状态应原样保留。
+        if (!this.options.onCardDropOnMap) {
+            this.updateCardStates();
+            return;
+        }
         // 先清选中：投放会删卡并重画，留着旧序号会让下一张自动被选中 + 弹工具条。
         const index = drag.index;
         this.activeIndex = null;
         this.selectOnlyIndex = null;
         // 这张卡要被删掉：固定状态一起清（否则锚点可能漂到同文本的另一张）
         this.updatePinnedAnchor(index, []);
-        this.options.onCardDropOnMap?.(index, event.clientX, event.clientY);
+        this.options.onCardDropOnMap(index, event.clientX, event.clientY);
         this.updateCardStates();
     };
 
