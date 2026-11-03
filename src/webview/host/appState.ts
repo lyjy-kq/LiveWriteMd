@@ -184,6 +184,22 @@ export function applyMindmapUndoRedo(kind: 'undo' | 'redo'): void {
     }
 }
 
+/**
+ * 幻灯片模式的撤销 / 重做（Ctrl/Cmd+Z / Shift+Z / Y）。
+ *
+ * 幻灯片里的块编辑同样经 applyDocumentEdit 进入隐藏 CM 的撤销栈；
+ * 这里对隐藏 CM 执行 undo/redo，再把新全文喂回幻灯片（保留当前页重建，
+ * 不播封面占位）。编辑中的按键在 SlidesApp 里直接交给 mini-CM 历史。
+ */
+export function applySlidesUndoRedo(kind: 'undo' | 'redo'): void {
+    const view = ctx.editor?.getView();
+    if (!view) return;
+    const applied = kind === 'undo' ? undo(view) : redo(view);
+    if (applied) {
+        ctx.slidesApp?.applyExternalText(view.state.doc.toString());
+    }
+}
+
 // ==================================================================
 // 快速卡片栏（live / 幻灯片）
 //
@@ -883,6 +899,9 @@ export async function enterSlidesMode(): Promise<void> {
                     value,
                 });
             },
+            // 浏览态 Ctrl+Z / Shift+Z / Y：隐藏 CM 的撤销栈 → 幻灯片重建
+            onUndo: () => applySlidesUndoRedo('undo'),
+            onRedo: () => applySlidesUndoRedo('redo'),
             // mini-CM 的代码块嵌套高亮语言表（主编辑器同款）
             codeLanguages,
             // PPT 模式复用右侧大纲：分页一变就重渲染页码标注

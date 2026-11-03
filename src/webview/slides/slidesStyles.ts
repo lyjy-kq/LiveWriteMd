@@ -222,12 +222,11 @@ const SLIDES_CSS = `
        不再写死 1.5em / 0.9，否则同一段文字在两种视图里排版不同。 */
     --livewritemd-media-width: 100%;
     --livewritemd-media-center-align: left;
-    --livewritemd-h1-color: var(--deck-fg);
-    --livewritemd-h2-color: var(--deck-fg);
-    --livewritemd-h3-color: var(--deck-fg);
-    --livewritemd-h4-color: var(--deck-fg);
-    --livewritemd-h5-color: var(--deck-fg);
-    --livewritemd-h6-color: var(--deck-fg);
+    /*
+     * 标题样式跟 live 走：不要覆盖 --livewritemd-hN-color / hN-size。
+     * live 的标题色板、字号层级与用户设置由 mini-CM 原样渲染；
+     * deck 只负责页面背景、留白与强调色（标题下的色条）。
+     */
 }
 .slides-measure {
     /* 字体族同样继承根设置，不要在测量层再自引用一遍（见 .slide-page） */
@@ -236,12 +235,6 @@ const SLIDES_CSS = `
        不再写死 1.5em / 0.9，否则同一段文字在两种视图里排版不同。 */
     --livewritemd-media-width: 100%;
     --livewritemd-media-center-align: left;
-    --livewritemd-h1-color: var(--deck-fg);
-    --livewritemd-h2-color: var(--deck-fg);
-    --livewritemd-h3-color: var(--deck-fg);
-    --livewritemd-h4-color: var(--deck-fg);
-    --livewritemd-h5-color: var(--deck-fg);
-    --livewritemd-h6-color: var(--deck-fg);
 }
 .slide-page * { box-sizing: border-box; }
 .slide-page .cm-editor { background: transparent; }

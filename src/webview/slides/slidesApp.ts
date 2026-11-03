@@ -98,6 +98,9 @@ export interface SlidesAppOptions {
      * workbench.action.toggleFullScreen，放映才能铺满物理屏幕。
      */
     onWindowFullscreen?: (on: boolean) => void;
+    /** 撤销 / 重做（页面浏览态，编辑中由 mini-CM 自己的历史处理）。 */
+    onUndo?: () => void;
+    onRedo?: () => void;
 }
 
 const THEME_ORDER: SlidesThemeSetting[] = ['auto', 'paper', 'ink', 'indigo'];
@@ -507,6 +510,17 @@ export class SlidesApp {
             this.deck.fullText = text;
             return;
         }
+        this.applyExternalText(text);
+    }
+
+    /**
+     * 外部（隐藏 CM 的 undo/redo、卡片结构变化）改全文后的重建。
+     *
+     * 不走 setDocument：那条路径会先清空舞台播封面占位，撤销一次就闪一下。
+     * 这里保留当前页 DOM，直接按新全文重新解析 / 测量 / 分页。
+     */
+    public applyExternalText(text: string): void {
+        if (this.fullText === text) return;
         this.fullText = text;
         this.beginReady();
         if (!this.active) {
@@ -2317,6 +2331,27 @@ export class SlidesApp {
      * 最低压到 0.4：再小就看不清了，让它继续标「内容超出页面」提示作者
      * 精简，而不是缩成一团糊字。
      */
+    /**
+     * 页面自适应的缩放下限。
+     *
+     * 普通正文 / 代码保持 0.4：再小就影响阅读，留给作者精简内容。
+     * 但表格 / 公式 / mermaid / 图片是「整块媒体」——它们本来就可以
+     * 等比缩小，单独占一页时即使缩到很小也比直接打「内容超出页面」
+     * 更有用，所以下限放到 0.05。多块混排页仍按 0.4，避免把同页
+     * 正文一起缩得看不清。
+     */
+    private fitFloor(container: HTMLElement): number {
+        const children = Array.from(container.children).filter(
+            (child): child is HTMLElement => child instanceof HTMLElement
+        );
+        if (children.length !== 1) return 0.4;
+        return /(?:^|\s)kind-(?:table|math|mermaid|image)(?:\s|$)/.test(
+            children[0].className
+        )
+            ? 0.05
+            : 0.4;
+    }
+
     private fitPageElement(root: HTMLElement): void {
         const containers = Array.from(
             root.querySelectorAll<HTMLElement>(
@@ -2328,6 +2363,7 @@ export class SlidesApp {
                 (child): child is HTMLElement => child instanceof HTMLElement
             );
             if (children.length === 0) continue;
+            const floor = this.fitFloor(container);
             // 按未缩放尺寸量（分页阶段的等比缩放也先撤掉，最后统一重算）
             for (const child of children) child.style.zoom = '1';
             const gap =
@@ -2465,10 +2501,12 @@ export class SlidesApp {
         const extra = Math.min(extraH, extraW);
         if (extra >= 0.999) return;
 
+        // 单块媒体页允许缩到更小（见 fitFloor）：宁可小一点，也不打溢出提示
+        const floor = this.fitFloor(body);
         for (const child of children) {
             const current = Number.parseFloat(child.style.zoom) || 1;
             child.style.zoom = String(
-                Math.max(0.4, Math.round(current * extra * 1000) / 1000)
+                Math.max(floor, Math.round(current * extra * 1000) / 1000)
             );
         }
     }
@@ -2502,10 +2540,10 @@ export class SlidesApp {
         display: NodeDisplay,
         block: SlideBlock
     ): void {
-        // 合成片段（超高块按行拆出来的）只读：提交半块会把原文结构打散，
-        // 用户要改请回文本模式改动整块。顺便去掉 hover 的虚线框，
-        // 别给一个「点了能编辑」的假提示。
-        if (block.synthetic) {
+        // 合成片段（超高块按行拆出来的）：段落/引用/列表/表格只读，
+        // 提交半块会把原文结构打散；代码块例外 —— 片段带的是原样代码行 +
+        // 合成围栏，提交时只替换对应的源码行区间，可以安全编辑。
+        if (block.synthetic && block.kind !== 'code') {
             wrap.classList.add('slide-block-static');
             return;
         }
@@ -2549,6 +2587,15 @@ export class SlidesApp {
                 event.clientX,
                 event.clientY
             );
+            // 代码 / mermaid 在渲染态是整体 widget，native 命中往往只给出
+            // 「块起点」；先按点击到的 .cm-line 记一个行首位置，进编辑后
+            // 用它把光标放到真正点到的那一行（围栏行不可见，不能用）。
+            const isCodeLike =
+                block.kind === 'code' || block.kind === 'mermaid';
+            const lineCaretPos = isCodeLike
+                ? this.caretLineFromPoint(display, event.clientX, event.clientY)
+                : null;
+            const codeBodyStart = isCodeLike ? block.source.indexOf('\n') : -1;
             this.activeDisplay = display;
             display.enterEdit({
                 kind: this.editableKind(block),
@@ -2561,7 +2608,20 @@ export class SlidesApp {
                     this.commitBlock(block, text);
                 },
             });
-            if (caretPos !== null) display.focusAtPos(caretPos);
+            let caretTarget = caretPos;
+            if (isCodeLike) {
+                // 第一条代码行的位置：块源码第一行是围栏，+1 即正文首行
+                const firstCodePos =
+                    codeBodyStart >= 0 ? codeBodyStart + 1 : 0;
+                const bodyTarget =
+                    caretTarget !== null && caretTarget > codeBodyStart
+                        ? caretTarget
+                        : lineCaretPos !== null && lineCaretPos > codeBodyStart
+                          ? lineCaretPos
+                          : null;
+                caretTarget = bodyTarget ?? firstCodePos;
+            }
+            if (caretTarget !== null) display.focusAtPos(caretTarget);
             else display.focusAt(event.clientX, event.clientY);
         });
     }
@@ -2604,6 +2664,29 @@ export class SlidesApp {
             return display.view.posAtDOM(node, offset);
         } catch {
             // widget 节点（图片 / 公式 / Mermaid）没有可对应的文档位置
+            return null;
+        }
+    }
+
+    /**
+     * 渲染态点击命中的那一行的行首位置（代码 / mermaid 用）。
+     *
+     * 代码块在渲染态是一个整体 widget，caretPositionFromPoint 拿到的
+     * offsetNode 属于 widget 内部，posAtDOM 只能退回块起点；但
+     * elementFromPoint 能找到真正的 .cm-line，用它的行首位置就能把
+     * 光标放到点到的源码行，而不是压在看不见的围栏行上。
+     */
+    private caretLineFromPoint(
+        display: NodeDisplay,
+        x: number,
+        y: number
+    ): number | null {
+        const hit = document.elementFromPoint(x, y);
+        const line = hit instanceof Element ? hit.closest('.cm-line') : null;
+        if (!line || !display.view.dom.contains(line)) return null;
+        try {
+            return display.view.posAtDOM(line, 0);
+        } catch {
             return null;
         }
     }
@@ -2659,6 +2742,11 @@ export class SlidesApp {
             this.setStatus('该块与快速卡片相交，请在文本模式中编辑');
             return;
         }
+        // 分页切出来的代码片段：只替换原代码块对应的源码行
+        if (block.synthetic && block.kind === 'code') {
+            this.commitSyntheticCode(block, normalized);
+            return;
+        }
         const lines = this.fullText.split('\n');
         // 片段源码在渲染时被去掉了公共缩进（否则嵌套列表会被当成代码块），
         // 回写时逐行补回，源码的层级才不会在编辑一次之后塌掉。
@@ -2674,6 +2762,40 @@ export class SlidesApp {
             block.toLine - block.fromLine + 1,
             ...replacement
         );
+        this.fullText = lines.join('\n');
+        this.options.onEdit(this.fullText);
+        this.setStatus(`已回写 · 第 ${block.fromLine + 1} 行`);
+        this.scheduleRebuild(block.fromLine);
+    }
+
+    /**
+     * 提交分页代码片段的编辑。
+     *
+     * 片段源码 = 合成开始围栏 + 本页代码行 + 合成结束围栏；原文档里的
+     * 围栏不会重复出现，所以剥掉首尾围栏、按 block.indent 补回缩进后，
+     * 只 splice 到原代码块对应的行区间 [fromLine, toLine - 2]。
+     * （fromLine 是片段第一行代码在原文档里的行号；toLine 多算了
+     *   两个合成围栏行，减 2 才是本页最后一行代码。）
+     */
+    private commitSyntheticCode(block: SlideBlock, normalized: string): void {
+        let edited = normalized.split('\n');
+        const openFence = /^\s*(?:`{3,}|~{3,})/;
+        const closeFence = /^\s*(?:`{3,}|~{3,})\s*$/;
+        if (
+            edited.length >= 2 &&
+            openFence.test(edited[0] ?? '') &&
+            closeFence.test(edited[edited.length - 1] ?? '')
+        ) {
+            edited = edited.slice(1, -1);
+        }
+        const indent = block.indent ?? '';
+        const replacement = edited.map((line) =>
+            line.length > 0 ? indent + line : line
+        );
+        const lines = this.fullText.split('\n');
+        const start = block.fromLine;
+        const end = Math.max(start, block.toLine - 2);
+        lines.splice(start, end - start + 1, ...replacement);
         this.fullText = lines.join('\n');
         this.options.onEdit(this.fullText);
         this.setStatus(`已回写 · 第 ${block.fromLine + 1} 行`);
@@ -2987,7 +3109,7 @@ export class SlidesApp {
      * 不翻页。
      */
     private onWheel(event: WheelEvent): void {
-        if (!this.active || this.activeDisplay || this.rebuilding) return;
+        if (!this.active || this.rebuilding) return;
         // 右侧快速卡片栏有自己的滚动（长卡片 / 固定卡片）：滚轮落在卡片上
         // 不翻页，否则卡片内容还没滚完就先换了下一页。
         const wheelTarget = event.target as Element | null;
@@ -3011,6 +3133,16 @@ export class SlidesApp {
         }
         this.wheelFlipLocked = true;
         this.armWheelUnlock();
+
+        // 编辑中滚轮：先提交当前块（失焦提交 → 写回文档），再按原方向换页。
+        // flushEdit 会等提交引发的重建结束，避免翻页时旧页面还在半边。
+        if (this.activeDisplay) {
+            const dir = delta > 0 ? 1 : -1;
+            void this.flushEdit().then(() => {
+                if (this.active && !this.activeDisplay) void this.go(dir);
+            });
+            return;
+        }
         void this.go(delta > 0 ? 1 : -1);
     }
 
@@ -3053,6 +3185,14 @@ export class SlidesApp {
             return;
         }
 
+        // F5：放映 / 退出放映（PowerPoint 同款，Esc 仍可退出）。
+        // 编辑中先提交当前块，避免带着未落盘的编辑进入放映。
+        if (event.key === 'F5') {
+            event.preventDefault();
+            void this.flushEdit().then(() => this.toggleFullscreen());
+            return;
+        }
+
         const target = event.target as HTMLElement | null;
         if (target?.closest?.('.cm-editor')) {
             if (event.key === 'Escape') {
@@ -3062,6 +3202,23 @@ export class SlidesApp {
                 }, 0);
             }
             return;
+        }
+
+        // 页面浏览态：Ctrl/Cmd+Z 撤销、Shift+Z / Y 重做。
+        // 编辑中的目标在上面已返回，走 mini-CM 自己的历史（含 Ctrl+B/I/G）。
+        if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+            const key = event.key.toLowerCase();
+            if (key === 'z') {
+                event.preventDefault();
+                if (event.shiftKey) this.options.onRedo?.();
+                else this.options.onUndo?.();
+                return;
+            }
+            if (key === 'y' && !event.shiftKey) {
+                event.preventDefault();
+                this.options.onRedo?.();
+                return;
+            }
         }
 
         if (
