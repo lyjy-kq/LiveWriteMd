@@ -39,6 +39,17 @@ import { EditorView } from '@codemirror/view';
  * Returns all extensions needed for Obsidian-style live preview,
  * including the ViewPlugin, syntax highlighting, link handler, and base theme styles.
  */
+/**
+ * 语法高亮的 StyleModule 只建一次。
+ *
+ * syntaxHighlighting() 每次调用都会生成一个新的 StyleModule（一块 CSS
+ * 规则）。主编辑器 + 每个 mini-CM 各建一份的话，document 里会堆几百份
+ * 重复样式；同一 StyleModule 可以被多个 EditorView 共用。
+ */
+const TOKEN_SYNTAX_HIGHLIGHTING: Extension = syntaxHighlighting(
+    liveWriteMdTokenHighlight
+);
+
 export function createLivePreviewExtension(): Extension[] {
     // 共享 token 色表（CSS 变量）：代码块语法高亮与导图 mini-CM/静态渲染共用，
     // 幂等注入，多实例调用无副作用
@@ -76,7 +87,7 @@ export function createLivePreviewExtension(): Extension[] {
         tableSourceModeHandler(),
         // 单个 HighlightStyle：颜色全是 var(--lwm-tok-*) 引用，
         // 深浅色随 body 的 vscode-light 类翻转（tokenColors.ts）
-        syntaxHighlighting(liveWriteMdTokenHighlight),
+        TOKEN_SYNTAX_HIGHLIGHTING,
         // Click handler for links
         EditorView.domEventHandlers({
             mousedown(event: MouseEvent, view: EditorView) {
@@ -269,7 +280,7 @@ export function createLivePreviewDisplayExtension(): Extension[] {
         // 命令经 tableEditBridge 临时放开可编辑性执行）
         tableHoverControls,
         livePreviewPlugin,
-        syntaxHighlighting(liveWriteMdTokenHighlight),
+        TOKEN_SYNTAX_HIGHLIGHTING,
         createBaseThemeStyles(),
     ];
 }

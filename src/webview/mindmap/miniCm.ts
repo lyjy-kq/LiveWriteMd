@@ -61,6 +61,52 @@ const TEXT_KINDS = new Set(['heading', 'list', 'para', 'quote']);
 /** 单行节点类型：Enter = 提交（图片在 md 里只占一行，多一行会变成图文段落）。 */
 const SINGLE_LINE_KINDS = new Set(['image']);
 
+/**
+ * mini-CM 的尺寸主题只创建一次。
+ *
+ * EditorView.theme() 每次调用都会生成一个 StyleModule —— 以前每个节点
+ * 都新建一份，导图几百个节点 = 几百份重复 CSS 规则挂在 document 上，
+ * 样式重算和内存都跟着节点数涨。主题内容是静态的，多个 EditorView
+ * 可以共用同一个 StyleModule（按 document 去重挂载）。
+ */
+const NODE_SIZING_THEME = Prec.high(
+    EditorView.theme({
+        '&': { height: 'auto' },
+        '.cm-scroller': { overflow: 'visible' },
+        '.cm-content': { padding: '2px 0' },
+    })
+);
+
+/**
+ * markdown 语言支持按「语言表数组」缓存。
+ *
+ * markdown() 每次调用都会新建 LanguageSupport / Language 对象和一串
+ * 解析扩展；同一个语言表（主编辑器传下来的同一个数组）在导图几百个
+ * 节点、幻灯片几十个块之间复用即可。语言本身是无状态的，多视图共享
+ * 是 CodeMirror 的正常用法。
+ */
+const markdownSupportCache = new WeakMap<
+    readonly LanguageDescription[],
+    LanguageSupport
+>();
+
+/** 没有传语言表时的共享空数组（否则每次 new [] 都缓存不中）。 */
+const NO_CODE_LANGUAGES: readonly LanguageDescription[] = [];
+
+function getMarkdownSupport(
+    codeLanguages: readonly LanguageDescription[]
+): LanguageSupport {
+    let support = markdownSupportCache.get(codeLanguages);
+    if (!support) {
+        support = markdown({
+            base: tunedMarkdownLanguage,
+            codeLanguages,
+        });
+        markdownSupportCache.set(codeLanguages, support);
+    }
+    return support;
+}
+
 // ==================================================================
 // 节点显示态（显示/编辑统一，新需求 1）：只读 mini-CM
 // ==================================================================
@@ -227,19 +273,10 @@ export function createNodeDisplay(options: NodeDisplayOptions): NodeDisplay {
         readOnlyComp.of(EditorState.readOnly.of(true)),
         // 全部节点按正文口径折行（长代码行也折行，不再横向滚动）
         EditorView.lineWrapping,
-        markdown({
-            base: tunedMarkdownLanguage,
-            codeLanguages: options.codeLanguages ?? [],
-        }),
+        getMarkdownSupport(options.codeLanguages ?? NO_CODE_LANGUAGES),
         options.theme === 'light' ? lightTheme : darkTheme,
         // 高度随内容（截断交给节点 CSS）
-        Prec.high(
-            EditorView.theme({
-                '&': { height: 'auto' },
-                '.cm-scroller': { overflow: 'visible' },
-                '.cm-content': { padding: '2px 0' },
-            })
-        ),
+        NODE_SIZING_THEME,
         // 选区高亮：主编辑器把 drawSelection 的矩形层藏起来，靠这个插件
         // 用 mark 装饰画选中文字（含代码块 / 行内元素 / widget 高亮）。
         // 节点 CM 以前漏了它 —— 鼠标拖选时 CM 的选区状态其实变了，但屏幕上
