@@ -14,6 +14,7 @@ import type { MindMapTreeNode } from '../types.js';
 import { buildMapModel, walkAll, walkVisible } from './model.js';
 import type { MapNode } from './model.js';
 import type { DisplayEntry } from './canvas.js';
+import { beginSpan, endSpan } from '../../perf/perfProbe.js';
 
 /**
  * 用新的数据树替换模型。
@@ -27,6 +28,7 @@ export function setData(
     tree: MindMapTreeNode,
     opts?: { uidRemap?: Map<string, string>; keepView?: boolean }
 ): void {
+    const span = beginSpan('map.setData');
     const oldRoot = c.root;
     const oldByUid = new Map(c.byUid);
     const oldDisplays = c.displays;
@@ -232,4 +234,5 @@ export function setData(
     c.scheduleViewport();
     // CM/widget 的真实尺寸要到下一帧才稳定
     c.scheduleMeasureSettle();
+    endSpan(span);
 }

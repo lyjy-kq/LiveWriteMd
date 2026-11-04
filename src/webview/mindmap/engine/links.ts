@@ -11,6 +11,7 @@ import { computeInternalLinkGeometry } from './internalLinkGeometry.js';
 import type { MapCanvas } from './canvas.js';
 import { H_GAP, layoutMap } from './layout.js';
 import { walkVisible } from './model.js';
+import { beginSpan, endSpan } from '../../perf/perfProbe.js';
 
 
 // ==================================================================
@@ -20,6 +21,7 @@ import { walkVisible } from './model.js';
 /** 重排后同步节点位置、连线、展开按钮。 */
 export function relayout(c: MapCanvas) : void {
     if (!c.root) return;
+    const span = beginSpan('map.relayout');
     // 节点坐标/尺寸要变了：包围盒缓存与缩略图位图都作废
     c.boundsCache = null;
     c.minimapRaster = null;
@@ -35,6 +37,7 @@ export function relayout(c: MapCanvas) : void {
     c.syncExpandButtons();
     // 节点坐标变了：缩略图里的方块要重画（合并到下一轮）
     c.scheduleMinimap();
+    endSpan(span);
 }
 
 

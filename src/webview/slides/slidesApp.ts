@@ -33,6 +33,7 @@ import { measureWhitespacePx } from '../codemirror/extensions/livePreview/measur
 import { tableRemeasureEffect } from '../codemirror/extensions/livePreview/state.js';
 import { settingsState } from '../settings/settingsState.js';
 import { sendLog } from '../host/logForward.js';
+import { beginSpan, endSpan } from '../perf/perfProbe.js';
 import type { ThemeType } from '../../shared/types.js';
 import { ensureSlidesCss } from './slidesStyles.js';
 import {
@@ -1202,7 +1203,9 @@ export class SlidesApp {
 
             const previousLogical = this.pages[this.pageIndex]?.logicalIndex;
             const paginateStart = performance.now();
+            const paginateSpan = beginSpan('slides.paginate');
             const pages = paginateDeck(deck, measured);
+            endSpan(paginateSpan);
             this.stats.lastPaginateMs = performance.now() - paginateStart;
             this.stats.paginateRuns += 1;
             this.deck = deck;
@@ -1296,7 +1299,12 @@ export class SlidesApp {
         onlySlides?: ReadonlySet<number>
     ): Promise<MeasureResult> {
         const job = this.measureChain
-            .then(() => this.measureDeckNow(deck, token, onlySlides))
+            .then(() => {
+                const span = beginSpan('slides.measure');
+                return this.measureDeckNow(deck, token, onlySlides).finally(
+                    () => endSpan(span)
+                );
+            })
             .finally(() => {
                 this.measureInFlight = false;
             });
@@ -1859,9 +1867,12 @@ export class SlidesApp {
     private repaginatePreservingPage(): void {
         const deck = this.deck;
         if (!deck) return;
+        const span = beginSpan('slides.repaginate');
         const previous = this.pages[this.pageIndex];
         const paginateStart = performance.now();
+        const paginateSpan = beginSpan('slides.paginate');
         const pages = paginateDeck(deck, this.lastMeasure);
+        endSpan(paginateSpan);
         this.stats.lastPaginateMs = performance.now() - paginateStart;
         this.stats.paginateRuns += 1;
         this.pages = pages;
@@ -1883,7 +1894,10 @@ export class SlidesApp {
             0,
             Math.min(this.pageIndex, Math.max(0, pages.length - 1))
         );
-        if (!this.active) return;
+        if (!this.active) {
+            endSpan(span);
+            return;
+        }
         // 页码可能整体后移：先清理缓存里已经不存在的页、对齐页脚，
         // 再通知大纲刷新标注，最后决定要不要重画当前页
         this.prunePageCache();
@@ -1898,6 +1912,7 @@ export class SlidesApp {
         } else {
             this.options.onActiveLineChange?.(this.getCurrentLine0());
         }
+        endSpan(span);
     }
 
     /** 一页的稳定标识：逻辑页 + 段 + 首个块（续页靠块区分）。 */
@@ -2227,7 +2242,9 @@ export class SlidesApp {
             return cached;
         }
         const buildStart = performance.now();
+        const span = beginSpan('slides.pageBuild');
         const built = this.buildPageElement(page, index);
+        endSpan(span);
         this.stats.lastPageBuildMs = performance.now() - buildStart;
         this.stats.pageBuilds += 1;
         this.pageEls.set(key, built);
@@ -2429,6 +2446,7 @@ export class SlidesApp {
         const spec = record.pending.shift();
         if (spec) {
             const blockStart = performance.now();
+            const span = beginSpan(`slides.fill.${spec.block.kind}`);
             const { wrap, display } = this.createBlockDisplay(
                 spec.block,
                 spec.font,
@@ -2442,6 +2460,7 @@ export class SlidesApp {
             this.attachEdit(wrap, display, spec.block);
             record.entries.push({ wrap, display });
             spec.parent.appendChild(wrap);
+            endSpan(span);
             const blockMs = performance.now() - blockStart;
             this.stats.lastFillBlockMs = blockMs;
             this.stats.maxFillBlockMs = Math.max(
@@ -2473,8 +2492,10 @@ export class SlidesApp {
             // 后台预加载页：保留 dirtyFit，真正显示时再量
             return;
         }
+        const span = beginSpan('slides.finishFill');
         this.fitPageElement(record.el);
         this.checkOverflow(record.el);
+        endSpan(span);
         record.dirtyFit = false;
         if (this.flipStartedAt !== null) {
             this.stats.lastFlipSettleMs = Math.round(
@@ -2571,13 +2592,16 @@ export class SlidesApp {
     /** 一次空闲只建一页：每页要同步创建一批 mini-CM，不能一口气全建。 */
     private preloadStep(): void {
         if (!this.active) return;
+        const span = beginSpan('slides.preload');
         // 重建 / 编辑优先；编辑期间不走预加载，免得和输入抢主线程
         if (this.rebuilding || this.activeDisplay) {
+            endSpan(span);
             this.schedulePreload(800);
             return;
         }
         // 用户刚翻过页 / 滚过轮：先让交互，等停下来再补
         if (performance.now() - this.lastInteraction < 500) {
+            endSpan(span);
             this.schedulePreload(500);
             return;
         }
@@ -2585,17 +2609,22 @@ export class SlidesApp {
         const unfinished = this.nextUnfinishedPage();
         if (unfinished) {
             this.requestFill(unfinished, false);
+            endSpan(span);
             this.schedulePreload(30);
             return;
         }
         const index = this.nextPreloadIndex();
-        if (index < 0) return;
+        if (index < 0) {
+            endSpan(span);
+            return;
+        }
         const record = this.ensurePageElement(index);
         // 骨架建好后正文按帧补：预加载不再一次性造整页 mini-CM，
         // 把 100~300ms 的长任务拆成每帧一个块。
         if (record.pending && record.pending.length > 0) {
             this.requestFill(record, false);
         }
+        endSpan(span);
         this.schedulePreload(40);
     }
 
@@ -3161,6 +3190,7 @@ export class SlidesApp {
             // （就是「点这里却选中那里」的那个 bug）。浏览器原生命中测试
             // 跑在真实布局上，再把命中的 DOM 节点交给 posAtDOM 即可。
             const enterStart = performance.now();
+            const span = beginSpan('slides.editEnter');
             const caretPos = this.caretPosFromPoint(
                 display,
                 event.clientX,
@@ -3202,6 +3232,7 @@ export class SlidesApp {
             }
             if (caretTarget !== null) display.focusAtPos(caretTarget);
             else display.focusAt(event.clientX, event.clientY);
+            endSpan(span);
             this.stats.lastEditEnterMs = performance.now() - enterStart;
         });
     }
@@ -3422,12 +3453,16 @@ export class SlidesApp {
     }
 
     private async go(delta: number): Promise<void> {
+        const span = beginSpan('slides.flip');
         const start = performance.now();
         this.flipSawMeasure = false;
         this.flipStartedAt = start;
         this.stats.lastFlipSettleMs = -1;
         await this.goTo(this.pageIndex + delta);
-        if (!this.active) return;
+        if (!this.active) {
+            endSpan(span);
+            return;
+        }
         const elapsed = performance.now() - start;
         this.stats.lastFlipMs = elapsed;
         this.stats.lastFlipWaitMeasure = this.flipSawMeasure;
@@ -3441,6 +3476,7 @@ export class SlidesApp {
             );
             this.flipStartedAt = null;
         }
+        endSpan(span);
     }
 
     /** 当前可见页的缓存记录（可能还没建 / 是封面预览）。 */

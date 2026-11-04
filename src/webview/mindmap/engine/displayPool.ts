@@ -12,6 +12,7 @@ import { mountNode } from './mounting.js';
 import type { MapCanvas } from './canvas.js';
 import { createNodeDisplay } from '../miniCm.js';
 import type { NodeDisplay } from '../miniCm.js';
+import { beginSpan, endSpan } from '../../perf/perfProbe.js';
 import { walkAll, walkVisible } from './model.js';
 import type { MapNode } from './model.js';
 import { EditorSelection } from '@codemirror/state';
@@ -454,6 +455,7 @@ export function scheduleMeasureSettle(c: MapCanvas, forceAll = false) : void {
  */
 export function settleMounted(c: MapCanvas) : void {
     if (!c.root || !c.active) return;
+    const span = beginSpan('map.settle');
     const forceAll = c.settleForceAll;
     c.settleForceAll = false;
 
@@ -492,7 +494,10 @@ export function settleMounted(c: MapCanvas) : void {
             consider(node);
         }
     }
-    if (targets.length === 0) return;
+    if (targets.length === 0) {
+        endSpan(span);
+        return;
+    }
 
     // 批量测量：一次强制布局，而不是每个节点一轮
     c.measureNodes(targets);
@@ -513,6 +518,7 @@ export function settleMounted(c: MapCanvas) : void {
         c.updateViewport();
         c.options.onViewChange();
     }
+    endSpan(span);
 }
 
 
@@ -738,6 +744,7 @@ export function schedulePump(c: MapCanvas, delay = 16) : void {
             c.schedulePump(PUMP_PAUSE_MS);
             return;
         }
+        const span = beginSpan('map.pump');
         // 只换「当前视口里」的占位。预热挂载会把大圈离屏节点也放进
         // DOM，以前这些节点同样入队换真：几百个根本没人看的 mini-CM
         // 每 16ms 建两个，每个 10~20ms —— 加载期 30~70fps 抖动的主要
@@ -802,6 +809,7 @@ export function schedulePump(c: MapCanvas, delay = 16) : void {
             // （settleMounted 内部只在尺寸真的变了时才重排）
             c.scheduleMeasureSettle();
         }
+        endSpan(span);
         if (c.queue.length > 0) {
             c.schedulePump();
         }

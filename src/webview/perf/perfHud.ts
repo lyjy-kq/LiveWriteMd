@@ -20,6 +20,10 @@
  */
 
 import { BUILD_STAMP } from '../../shared/buildStamp.js';
+import {
+    recentSpans,
+    setPerfProbeEnabled,
+} from './perfProbe.js';
 
 /** 浮层档位（去掉 off）。 */
 export type PerfHudMode = 'minimal' | 'full';
@@ -60,9 +64,10 @@ export interface PerfSpikeRecord {
 
 /** 一帧间隔超过 max(中位数 × 该倍数, SPIKE_MIN_MS) 记为尖峰。 */
 const SPIKE_FACTOR = 2.5;
-const SPIKE_MIN_MS = 33;
-/** 长任务阈值（ms）：小于它的不记。 */
-const LONGTASK_MIN_MS = 100;
+/** 165Hz 下 median≈6ms；24ms 已经掉了 4 帧，20~32ms 的卡顿不能再吞掉。 */
+const SPIKE_MIN_MS = 24;
+/** 长任务阈值（ms）：longtask 规范下限就是 50ms。 */
+const LONGTASK_MIN_MS = 50;
 /** 环形缓冲容量。 */
 const MAX_SPIKES = 50;
 /** 文本刷新节奏（ms）。 */
@@ -87,6 +92,10 @@ export class PerfHud {
     private lastFrame = 0;
     /** 滚动窗口内的帧间隔（ms）。 */
     private deltas: number[] = [];
+    /** 上一次文本刷新时的中位帧间隔（尖峰判定用，避免每帧排序）。 */
+    private medianDelta = 16.7;
+    /** 上一次文本刷新的时刻（尖峰现场算 since-tick 增量）。 */
+    private lastTickAt = 0;
     private readonly spikes: PerfSpikeRecord[] = [];
 
     // —— 强制布局读计数（仅完整档，HUD 存活期间包装，destroy 时恢复）——
@@ -150,8 +159,11 @@ export class PerfHud {
         if (mode === 'full') {
             this.installGbcrCounter();
             this.startLongtaskObserver();
+            // 只记录最近操作，不采样；关闭时调用点只多一次布尔判断
+            setPerfProbeEnabled(true);
         }
         this.startFpsLoop();
+        this.lastTickAt = performance.now();
         this.timer = setInterval(() => this.tick(), TEXT_TICK_MS);
     }
 
@@ -176,9 +188,9 @@ export class PerfHud {
     /** 帧间隔跳变 → 记一条现场。 */
     private maybeRecordSpike(delta: number): void {
         if (delta < SPIKE_MIN_MS) return;
-        const sorted = [...this.deltas].sort((a, b) => a - b);
-        const median = sorted[Math.floor(sorted.length / 2)] ?? 16.7;
-        if (delta < Math.max(median * SPIKE_FACTOR, SPIKE_MIN_MS)) return;
+        if (delta < Math.max(this.medianDelta * SPIKE_FACTOR, SPIKE_MIN_MS)) {
+            return;
+        }
         this.recordSpike(delta, 'frame');
     }
 
@@ -199,18 +211,28 @@ export class PerfHud {
     }
 
     private recordSpike(deltaMs: number, kind: PerfSpikeRecord['kind']): void {
-        // 现场快照要能回答「尖峰发生时停在哪个模式、文件多大」
+        // 现场快照要能回答「尖峰发生时停在哪个模式、文件多大、刚才在跑什么」
         const snap = this.snapshot();
+        const now = performance.now();
         this.spikes.push({
-            t: Math.round((performance.now() - this.startedAt) / 100) / 10,
+            t: Math.round((now - this.startedAt) / 100) / 10,
             deltaMs: Math.round(deltaMs),
             kind,
             snapshot: {
                 line: snap.line,
                 ...snap.raw,
                 heapMB: this.heapMB(),
+                domNodes: document.getElementsByTagName('*').length,
+                // 速率（上一 500ms 窗口）与「本窗口增量」都保留：
+                // 尖峰可能发生在两次 tick 之间，只读 rate 会拿到 0
                 gbcrPerSec: Math.round(this.gbcrRate),
                 layoutReadsPerSec: Math.round(this.layoutRate),
+                gbcrSinceTick: this.gbcrCount - this.lastGbcr,
+                layoutReadsSinceTick:
+                    this.layoutReadCount - this.lastLayoutReads,
+                sinceTickMs: Math.round(Math.max(1, now - this.lastTickAt)),
+                // 尖峰前刚结束的关键操作（翻页 / 填充 / 测量 / 分页……）
+                recentSpans: recentSpans(),
                 // 哪次构建产生的记录（旧包 / 新包一眼区分，排查的前提）
                 build: BUILD_STAMP,
             },
@@ -328,7 +350,12 @@ export class PerfHud {
         if (this.deltas.length > 0) {
             const avg = this.deltas.reduce((a, b) => a + b, 0) / this.deltas.length;
             this.fps = Math.round(1000 / Math.max(1, avg));
+            // 中位数每个刷新周期只算一次：以前每条尖峰都复制+排序 240 个
+            // delta，持续卡顿时诊断器自己就成了负担。
+            const sorted = [...this.deltas].sort((a, b) => a - b);
+            this.medianDelta = sorted[Math.floor(sorted.length / 2)] ?? 16.7;
         }
+        this.lastTickAt = performance.now();
 
         // 极简档：一行「帧率 · 堆」，不读快照、不算速率
         if (this.mode === 'minimal') {
@@ -411,6 +438,7 @@ export class PerfHud {
         if (this.timer !== null) clearInterval(this.timer);
         this.longtaskObserver?.disconnect();
         this.restoreLayoutCounter();
+        if (this.mode === 'full') setPerfProbeEnabled(false);
         this.el.remove();
     }
 }
