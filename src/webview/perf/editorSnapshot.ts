@@ -50,12 +50,26 @@ export function buildEditorPerfSnapshot(): PerfSnapshot {
         };
     }
 
-    // —— 幻灯片：物理页 / 逻辑页 / 内容块 / 已渲染的块编辑器 ——
+    // —— 幻灯片：页数 / 块 / 缓存页与 CM / 翻页与测量耗时 ——
+    //
+    // 行内只放最关键的几个数：页数、缓存规模、后台测量队列、最近一次
+    // 翻页（含是否在等测量）和最近一次测量批。完整字段都在 raw 里，
+    // 尖峰记录与「显示内存占用」能拿到全部细节。
     if (mode === 'slides' && ctx.slidesApp) {
         const stats = ctx.slidesApp.debugStats();
         Object.assign(raw, stats);
+        const flip =
+            stats.lastFlipSettleMs >= 0
+                ? `${stats.lastFlipMs}/${stats.lastFlipSettleMs}ms`
+                : `${stats.lastFlipMs}ms(补)`;
         return {
-            line: `${base} · 页 ${stats.pages} · 块 ${stats.blocks}`,
+            line:
+                `${base} · 页 ${stats.pages} · 块 ${stats.blocks}` +
+                ` · 缓存 ${stats.cachedPages}p/${stats.cmCount}cm` +
+                ` · 待测 ${stats.measurePending}` +
+                ` · 填充 ${stats.fillPendingBlocks}块` +
+                ` · 翻页 ${flip}` +
+                ` · 测量 ${stats.lastMeasureMs}ms`,
             raw,
         };
     }

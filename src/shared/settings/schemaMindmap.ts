@@ -244,7 +244,7 @@ export const MINDMAP_SECTIONS: SettingSection[] = [
                 key: 'perfMonitor',
                 label: '性能监测',
                 description:
-                    '在窗口右上角实时显示当前打开文件的性能数据，实时 / 源码 / 阅读 / 导图 / 幻灯片所有模式通用。极简版只有帧率与堆内存；完整版另含 DOM、文档大小、当前模式专属指标（导图节点、幻灯片页数、文本视口行数）与强制布局速率，并记录帧率跳变和长任务现场（可一键复制成 JSON）。默认关闭。',
+                    '在窗口右上角实时显示当前打开文件的性能数据，实时 / 源码 / 阅读 / 导图 / 幻灯片所有模式通用。极简版只有帧率与堆内存；完整版另含 DOM、文档大小、当前模式专属指标（导图节点 / 队列、幻灯片页数 / 缓存页 / 常驻 CM / 待测页 / 填充块 / 翻页与测量耗时、文本视口行数）与「布局读」速率（getBoundingClientRect + offset/client/scroll 几何读取，比只看 gBCR 更接近真实排版压力），并记录帧率跳变与长任务现场（可一键复制成 JSON）。幻灯片明细也可以从「LiveWriteMD: 显示内存占用」命令里复制。默认关闭。',
                 control: 'select',
                 default: 'off',
                 options: [

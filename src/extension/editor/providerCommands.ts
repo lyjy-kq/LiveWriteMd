@@ -149,9 +149,21 @@ export async function presentMemoryStats(stats: Record<string, unknown>): Promis
     const hostMB = Math.round(process.memoryUsage().rss / 1048576);
     const caches = (stats.caches ?? {}) as Record<string, number>;
     const map = (stats.map ?? null) as Record<string, unknown> | null;
+    const slides = (stats.slides ?? null) as Record<string, unknown> | null;
     const cacheLine = Object.entries(caches)
         .map(([key, value]) => `${key}=${value}`)
         .join(' ');
+    // 幻灯片诊断：页缓存 / 常驻 mini-CM / 未测页 / 翻页与测量耗时。
+    // 这些字段由 SlidesApp.debugStats() 提供；以前 webview 已经采集，
+    // 但这里从来没展示，等于翻完页什么也看不到。
+    const slidesLine = slides
+        ? `幻灯片: 页 ${slides.pages}/${slides.logicalSlides} · ` +
+          `缓存页 ${slides.cachedPages}（回收 ${slides.evictedPages ?? 0}）· ` +
+          `常驻 CM ${slides.cmCount} · 未测 ${slides.measurePending} · ` +
+          `填充 ${slides.fillPendingBlocks ?? 0} 块 · ` +
+          `翻页 ${slides.lastFlipMs}ms / 补齐 ${slides.lastFlipSettleMs}ms · ` +
+          `测量 ${slides.lastMeasureMs}ms · 分页 ${slides.lastPaginateMs}ms`
+        : '幻灯片: 未激活';
     const lines = [
         `文档: ${stats.docKB} KB / ${stats.docLines} 行（模式: ${stats.mode}）`,
         `Webview JS 堆: ${stats.heapUsedMB} MB / 已分配上限 ${stats.heapTotalMB} MB`,
@@ -159,9 +171,11 @@ export async function presentMemoryStats(stats: Record<string, unknown>): Promis
         map
             ? `导图: 节点 ${map.nodes} / 已挂载 ${map.mounted} / 显示实例 ${map.displays} / 连线 ${map.links}`
             : '导图: 未激活',
+        slidesLine,
         `缓存: ${cacheLine}`,
         `扩展宿主 RSS: ${hostMB} MB`,
-    ];
+        slides ? `幻灯片明细: ${JSON.stringify(slides)}` : '',
+    ].filter(Boolean);
     const detail = lines.join('\n');
     Logger.info(`内存占用统计:\n${detail}`);
     const copy = '复制详情';

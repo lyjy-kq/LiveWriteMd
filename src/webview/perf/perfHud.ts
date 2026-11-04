@@ -89,14 +89,27 @@ export class PerfHud {
     private deltas: number[] = [];
     private readonly spikes: PerfSpikeRecord[] = [];
 
-    // —— gBCR 计数（仅完整档，HUD 存活期间包装，destroy 时恢复）——
+    // —— 强制布局读计数（仅完整档，HUD 存活期间包装，destroy 时恢复）——
+    //
+    // 只数 getBoundingClientRect 是不够的：offsetHeight / scrollWidth /
+    // clientHeight 这些属性同样会把脏布局同步算出来，而且幻灯片模式的
+    // 自适应（fitPageElement）恰恰全走这几个属性。分开计数，既能看总
+    // 布局压力，也能一眼分辨「是不是 gBCR 这一路」。
     private gbcrCount = 0;
+    private layoutReadCount = 0;
+    private readonly layoutRestore: Array<{
+        proto: object;
+        name: string;
+        desc: PropertyDescriptor;
+    }> = [];
     private gbcrOrig: typeof Element.prototype.getBoundingClientRect | null = null;
     /** 上一文本周期的瞬时速率基数。 */
     private lastCreated = 0;
     private lastGbcr = 0;
+    private lastLayoutReads = 0;
     private swapRate = 0;
     private gbcrRate = 0;
+    private layoutRate = 0;
     private fps = 0;
 
     /**
@@ -197,6 +210,7 @@ export class PerfHud {
                 ...snap.raw,
                 heapMB: this.heapMB(),
                 gbcrPerSec: Math.round(this.gbcrRate),
+                layoutReadsPerSec: Math.round(this.layoutRate),
                 // 哪次构建产生的记录（旧包 / 新包一眼区分，排查的前提）
                 build: BUILD_STAMP,
             },
@@ -215,8 +229,87 @@ export class PerfHud {
         const self = this;
         proto.getBoundingClientRect = function (this: Element) {
             self.gbcrCount++;
+            self.layoutReadCount++;
             return orig.call(this);
         };
+        // 布局属性读取：与 gBCR 同源，都是「读几何 → 浏览器必须先排版」。
+        //
+        // 注意描述符所在的接口不一样：offset* 在 HTMLElement.prototype，
+        // client* / scroll* 在 Element.prototype（SVG 元素也走这一层）。
+        // 以前全从 HTMLElement.prototype 取，client/scroll 四个属性被
+        // 静默跳过 —— 幻灯片自适应恰好大量读 clientHeight/scrollWidth，
+        // HUD 的「布局」读数因此长期偏低。
+        const groups: Array<{ proto: object; names: readonly string[] }> = [
+            {
+                proto: Element.prototype,
+                names: [
+                    'clientWidth',
+                    'clientHeight',
+                    'clientTop',
+                    'clientLeft',
+                    'scrollWidth',
+                    'scrollHeight',
+                    'scrollTop',
+                    'scrollLeft',
+                    'getClientRects',
+                ],
+            },
+            {
+                proto: HTMLElement.prototype,
+                names: [
+                    'offsetHeight',
+                    'offsetWidth',
+                    'offsetTop',
+                    'offsetLeft',
+                ],
+            },
+        ];
+        for (const group of groups) {
+            for (const name of group.names) {
+                const desc = Object.getOwnPropertyDescriptor(group.proto, name);
+                if (!desc?.get && !desc?.value) continue;
+                if (desc.get) {
+                    const getter = desc.get;
+                    Object.defineProperty(group.proto, name, {
+                        configurable: true,
+                        enumerable: desc.enumerable,
+                        get(this: Element) {
+                            self.layoutReadCount++;
+                            return getter.call(this);
+                        },
+                    });
+                } else {
+                    // getClientRects 是方法而不是 getter：包一层函数
+                    const original = desc.value as (
+                        ...args: unknown[]
+                    ) => unknown;
+                    Object.defineProperty(group.proto, name, {
+                        configurable: true,
+                        enumerable: desc.enumerable,
+                        value(this: Element, ...args: unknown[]) {
+                            self.layoutReadCount++;
+                            return original.apply(this, args);
+                        },
+                    });
+                }
+                this.layoutRestore.push({
+                    proto: group.proto,
+                    name,
+                    desc,
+                });
+            }
+        }
+    }
+
+    /** 恢复布局读包装（destroy 与重复安装时调用）。 */
+    private restoreLayoutCounter(): void {
+        if (this.gbcrOrig) {
+            Element.prototype.getBoundingClientRect = this.gbcrOrig;
+            this.gbcrOrig = null;
+        }
+        for (const item of this.layoutRestore.splice(0)) {
+            Object.defineProperty(item.proto, item.name, item.desc);
+        }
     }
 
     private heapMB(): number {
@@ -265,13 +358,17 @@ export class PerfHud {
         }
         this.gbcrRate = (this.gbcrCount - this.lastGbcr) / (TEXT_TICK_MS / 1000);
         this.lastGbcr = this.gbcrCount;
+        this.layoutRate =
+            (this.layoutReadCount - this.lastLayoutReads) /
+            (TEXT_TICK_MS / 1000);
+        this.lastLayoutReads = this.layoutReadCount;
 
         const parts = [
             `${this.fps}fps`,
             `堆 ${this.heapMB()}MB`,
             `DOM ${document.getElementsByTagName('*').length}`,
             snap.line,
-            `布局 ${Math.round(this.gbcrRate)}/s`,
+            `布局读 ${Math.round(this.layoutRate)}/s`,
         ];
         // 「换真」只对导图有意义；其它模式 snapshot 不提供 createdTotal
         if (snap.createdTotal !== undefined) {
@@ -313,7 +410,7 @@ export class PerfHud {
         if (this.rafId !== null) cancelAnimationFrame(this.rafId);
         if (this.timer !== null) clearInterval(this.timer);
         this.longtaskObserver?.disconnect();
-        if (this.gbcrOrig) Element.prototype.getBoundingClientRect = this.gbcrOrig;
+        this.restoreLayoutCounter();
         this.el.remove();
     }
 }
