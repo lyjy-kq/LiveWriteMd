@@ -197,6 +197,14 @@ const SLIDES_CSS = `
     display: flex;
     flex-direction: column;
     /*
+     * 布局隔离：所有页面叠在同一个 .slides-stage 里，以前当前页里一次
+     * 强制布局（fitPageElement 读 offsetHeight）会把所有缓存页的脏布局
+     * 一起算出来，翻页越久缓存页越多、越翻越卡。contain: layout 让每页
+     * 成为独立的布局容器，只排自己；paint 顺带把绘制范围锁在页内。
+     * 页面尺寸固定 1280×720、绝对定位，隔离不会改变任何外在几何。
+     */
+    contain: layout paint style;
+    /*
      * 用 clip 而不是 hidden：hidden 的盒子仍然是「可滚动容器」，
      * 聚焦页面里的 mini-CM 时浏览器 / CM 的 scrollIntoView 可以把
      * 页面元素本身滚走（内容溢出时尤其容易触发），表现为「点了这里、

@@ -77,6 +77,61 @@ export interface SlidesRuntimeSettings {
     frame: SlidesFrameSetting;
 }
 
+/**
+ * 幻灯片诊断计数（性能浮层 / 内存报告用）。
+ *
+ * 这些字段是为了把「卡在哪一步」直接摊开：翻页耗时、是否等测量、
+ * 后台测量队列、页面构建、分页、进入编辑，以及缓存页 / 常驻 CM 的
+ * 规模。字段只做观测，不参与任何渲染决策。
+ */
+export interface SlidesDebugStats {
+    /** 物理页总数。 */
+    pages: number;
+    /** 逻辑页数。 */
+    logicalSlides: number;
+    /** 顶层内容块数。 */
+    blocks: number;
+    /** 已渲染页面缓存条目数。 */
+    cachedPages: number;
+    /** 缓存页里常驻的块编辑器（mini-CM）总数。 */
+    cmCount: number;
+    /** 还没实测的逻辑页数（后台补测队列长度）。 */
+    measurePending: number;
+    /** 是否还有测量在排队 / 执行。 */
+    measuring: boolean;
+    /** 是否还有空闲预加载任务。 */
+    preloadPending: boolean;
+    /** 最近一次整篇重建（解析 → 首屏测量 → 分页 → 渲染）耗时。 */
+    lastRebuildMs: number;
+    /** 最近一次测量批次的耗时与创建的 CM 数。 */
+    lastMeasureMs: number;
+    lastMeasureCm: number;
+    measureRuns: number;
+    /** 最近一次分页耗时。 */
+    lastPaginateMs: number;
+    paginateRuns: number;
+    /** 最近一次翻页（按键 → 页面骨架可见）耗时；waitMeasure 表示触发了后台补测。 */
+    lastFlipMs: number;
+    lastFlipWaitMeasure: boolean;
+    /** 翻页 → 目标页正文全部填完（-1 表示还在填 / 没测到）。 */
+    lastFlipSettleMs: number;
+    flips: number;
+    maxFlipMs: number;
+    /** 正文填充队列：还有多少页 / 多少块没建。 */
+    fillQueueLen: number;
+    fillPendingBlocks: number;
+    fillRuns: number;
+    lastFillBlockMs: number;
+    maxFillBlockMs: number;
+    /** 最近一次整页构建耗时（预加载与现场构建都记）。 */
+    lastPageBuildMs: number;
+    pageBuilds: number;
+    /** 因 LRU 上限被回收的页面数（会话累计）。 */
+    evictedPages: number;
+    /** 最近一次点击块 → 进入编辑（同步部分）的耗时。 */
+    lastEditEnterMs: number;
+}
+
 export interface SlidesAppOptions {
     /** 编辑提交后的新全文；上层写回隐藏主 CM。 */
     onEdit: (fullText: string) => void;
@@ -190,8 +245,34 @@ const MEASURE_CHUNK = 3;
  */
 const PRELOAD_RADIUS = 5;
 
+/**
+ * 已渲染页面上限（LRU）。
+ *
+ * 用户允许「加载过的页不卸载」，但页面常驻的是一整套 mini-CM：真实
+ * 165 页 deck 会攒出数百个 EditorView（内存 + 每帧样式/布局压力）。
+ * 保留最近 24 页：普通短 deck 仍然全部命中；长 deck 翻回去时按需重建
+ * 一页骨架 + 逐块补齐（每块几毫秒），比把内存堆到几百 MB 更划算。
+ */
+const MAX_CACHED_PAGES = 24;
+
 /** 高度会异步变化（渲染/解码/重排发生在后续帧）的块类型。 */
 const ASYNC_BLOCK_KINDS = new Set(['image', 'mermaid', 'math', 'table']);
+
+/**
+ * 单个测量实例就很贵的块类型。
+ *
+ * 这些块一个 mini-CM 的创建 + 首次排版就要几十毫秒（代码要分词高亮、
+ * 表格要按宽度重新分配列、mermaid / 图片要等异步渲染）。测量时一批里
+ * 只放一个，把长任务切到用户可接受的长度；纯文本块仍然 3 个一批。
+ */
+const HEAVY_MEASURE_KINDS = new Set([
+    'code',
+    'table',
+    'mermaid',
+    'image',
+    'math',
+    'html',
+]);
 
 /** 用户正在操作的信号；后台补测看到这些事件后先让路。 */
 const INTERACTION_EVENTS = [
@@ -204,6 +285,41 @@ const INTERACTION_EVENTS = [
 interface RenderedEntry {
     wrap: HTMLElement;
     display: NodeDisplay;
+}
+
+/**
+ * 已缓存的一页。
+ *
+ * dirtyFit：这一页建好之后还没在真实尺寸上做过自适应 / 溢出判定。
+ * 预加载的页面先不量（隐藏页量了也是白量，而且会把整棵舞台拖进一次
+ * 强制布局）；真正显示时再一次性校准。
+ */
+interface PageRecord {
+    el: HTMLElement;
+    entries: RenderedEntry[];
+    dirtyFit: boolean;
+    /** 图片 load 回调只绑一次。 */
+    imagesBound: boolean;
+    /**
+     * 还没创建的正文块（预加载页按块逐步填充）。
+     *
+     * 一次建一整页的 mini-CM 是 100~300ms 的长任务，用户翻页 / 点击
+     * 正好撞上就卡一下。改成建页面骨架 + 每帧填一个块：页面切换立即
+     * 发生，正文在接下来几帧补齐。
+     */
+    pending: PendingBlockSpec[] | null;
+}
+
+/** 延后创建的正文块：记录放哪、用什么字号 / 宽度、缩放多少。 */
+interface PendingBlockSpec {
+    block: SlideBlock;
+    parent: HTMLElement;
+    font: number;
+    width: number;
+    /** 额外类名（标题块 / statement 块等）。 */
+    extraClass?: string;
+    /** 页面级自适应比例（分页阶段给的，先写上避免填充时抖一下）。 */
+    fit?: number;
 }
 
 export class SlidesApp {
@@ -243,6 +359,8 @@ export class SlidesApp {
 
     /** 大纲页码标注：标题行（1-based）→ "P8" / "P8,9"；空串回退行号。 */
     private pageLabels = new Map<number, string>();
+    /** 上一次通知大纲的页码签名；没变就不重渲染整块大纲。 */
+    private pageLabelSignature = '';
 
     /** 放映态：铺满 webview（或浏览器全屏），隐藏画布外的一切。 */
     private presenting = false;
@@ -266,6 +384,8 @@ export class SlidesApp {
     private rebuilding = false;
     private rebuildToken = 0;
     private rebuildTimer: number | null = null;
+    /** 延迟重分页的句柄（交互期间不重分页）。 */
+    private repaginateTimer: number | null = null;
     private pendingAnchorLine: number | null = null;
     private pendingText: string | null = null;
     /** 上一次使用的 live 正文基准字号（px），用于检测字号/缩放变化。 */
@@ -278,16 +398,25 @@ export class SlidesApp {
      * 已经建好的 DOM / mini-CM 继续复用。内容真改了 → 块 id 里的源码
      * 哈希变化 → 锚点变化 → 自然重建那一页。
      */
-    private readonly pageEls = new Map<
-        string,
-        { el: HTMLElement; entries: RenderedEntry[] }
-    >();
+    private readonly pageEls = new Map<string, PageRecord>();
+    /**
+     * 分页版本：每次 rebuild / 后台重分页 +1。
+     *
+     * 只有版本变化时才需要清理缓存页、同步页脚。翻页本身（页码不变）
+     * 不应该每帧遍历所有缓存页做 querySelector。
+     */
+    private paginationVersion = 0;
+    private prunedPaginationVersion = -1;
+    private footerPaginationVersion = -1;
     /** 当前可见的页面元素（其余缓存页 visibility:hidden，布局照常参与测量）。 */
     private currentPageEl: HTMLElement | null = null;
-    /** 正在构建的页面把块显示登记到这里，构建结束写进 pageEls。 */
-    private buildingEntries: RenderedEntry[] | null = null;
     /** 预加载调度句柄（idle callback / timeout）。 */
     private preloadCancel: (() => void) | null = null;
+    /** 正文块逐步填充的调度句柄（一次只跑一个填充循环）。 */
+    private fillTimer: number | null = null;
+    private fillRaf: number | null = null;
+    /** 需要优先填充的页面（当前可见页），排在预加载页前面。 */
+    private readonly fillQueue: PageRecord[] = [];
 
     private activeDisplay: NodeDisplay | null = null;
     private measureOverrideOwner: NodeDisplay | null = null;
@@ -302,6 +431,61 @@ export class SlidesApp {
         cmCount: 0,
         ms: 0,
     };
+
+    /** 观测计数（只在 debugStats 里读，不参与排版决策）。 */
+    private readonly stats = {
+        lastRebuildMs: 0,
+        lastMeasureMs: 0,
+        lastMeasureCm: 0,
+        measureRuns: 0,
+        lastPaginateMs: 0,
+        paginateRuns: 0,
+        lastFlipMs: 0,
+        lastFlipWaitMeasure: false,
+        lastFlipSettleMs: -1,
+        flips: 0,
+        maxFlipMs: 0,
+        fillRuns: 0,
+        lastFillBlockMs: 0,
+        maxFillBlockMs: 0,
+        lastPageBuildMs: 0,
+        pageBuilds: 0,
+        evictedPages: 0,
+        lastEditEnterMs: 0,
+    };
+    /** 最近一次翻页的起点（用于统计正文填完的 settle 时间）。 */
+    private flipStartedAt: number | null = null;
+    /** 本次翻页是否触发了现场补测（诊断用）。 */
+    private flipSawMeasure = false;
+    /** 是否有一批测量正在执行（诊断用）。 */
+    private measureInFlight = false;
+    /**
+     * 未测逻辑页数缓存。
+     *
+     * HUD 每 500ms 读一次 debugStats；如果每次都遍历所有逻辑页并
+     * flattenItems（slidesPaginate.isSlideMeasured），大文档下诊断本身
+     * 就成了卡顿源。计数只在测量结果变化 / 换文档时重算。
+     */
+    private measurePendingCache = -1;
+    /**
+     * 翻页后台补测的「最后一次」令牌。
+     *
+     * 翻页不再同步等测量：先把估算分页画出来，测量在后台跑。用户连续
+     * 翻页时只认最后一次翻页的回调，避免测量完成后把用户拽回旧页。
+     */
+    private flipMeasureToken = 0;
+    /**
+     * 翻页补测只保留「最新想看的页」。
+     *
+     * 快速连翻会产生一串待测页；逐个排队会让测量任务连续不断，用户每
+     * 翻一页都撞在一个几十毫秒的长任务后面。这里只记最新的一页：正在
+     * 测的那页跑完，如果用户已经翻走就不再补旧页（回到那页会再触发），
+     * 中间页交给空闲补测泵。
+     */
+    private pendingFlipSlide: number | null = null;
+    private flipMeasureBusy = false;
+    /** 翻页补测的防抖：连翻期间不启动测量，停下来再测。 */
+    private flipMeasureTimer: number | null = null;
 
     /**
      * 测量串行队列。
@@ -594,6 +778,8 @@ export class SlidesApp {
             }
             this.cancelPump();
             this.cancelPreload();
+            this.cancelDeferredRepaginate();
+            this.cancelFlipMeasure();
             this.rebuilding = false;
             this.destroyRendered();
             this.clearMeasureOverride();
@@ -673,10 +859,16 @@ export class SlidesApp {
             }
             this.beginReady();
             void this.rebuild(null);
-        } else if ((themeChanged || frameChanged) && this.active) {
-            // 主题只影响颜色，不需要重新测量；但缓存页的上一套配色要清掉
-            this.destroyRendered();
-            this.renderPage();
+        } else if (this.active && (themeChanged || frameChanged)) {
+            if (themeChanged) {
+                // mini-CM 的明暗在建实例时固化，换主题只能重建
+                this.destroyRendered();
+                this.renderPage();
+            } else {
+                // 边框装饰只是页面类名，换掉类名即可；以前这里把全部
+                // 缓存页的 mini-CM 销毁重建，切一次边框就白丢所有缓存。
+                this.updateFrameClass();
+            }
         }
     }
 
@@ -724,6 +916,14 @@ export class SlidesApp {
     /** 重建页码表并通知上层刷新大纲。 */
     private publishPages(): void {
         this.rebuildPageLabels();
+        // 页码没变就不要让大纲把整列标题行 innerHTML 重建一遍：
+        // 后台补测每次重分页都会走到这里，数百个标题时是几十毫秒的
+        // 长任务，而绝大多数重分页并不会改变任何标题的页码。
+        const signature = Array.from(this.pageLabels.entries())
+            .map(([line, label]) => `${line}:${label}`)
+            .join('|');
+        if (signature === this.pageLabelSignature) return;
+        this.pageLabelSignature = signature;
         this.options.onPagesChange?.();
     }
 
@@ -741,14 +941,14 @@ export class SlidesApp {
         this.pageIndex = index;
         if (this.active) {
             this.renderPage();
-            // 这一页可能还没实测：先按估算画出来（不卡住点击），
-            // 测完再按新分页重新定位重画。
-            void this.ensureSlideMeasured(logicalIndex).then((measured) => {
-                if (!measured || !this.active) return;
-                const located = this.findPageIndex(logicalIndex);
-                if (located >= 0) this.pageIndex = located;
-                this.renderPage();
-            });
+            // 和翻页同一条两段式：先画估算页，测量放后台；测完只安排
+            // 一次延迟重分页（会按当前页锚点保持内容不跳）。
+            void this.ensureSlideMeasured(logicalIndex, false).then(
+                (measured) => {
+                    if (!measured || !this.active) return;
+                    this.scheduleDeferredRepaginate(350);
+                }
+            );
         }
         return true;
     }
@@ -780,12 +980,16 @@ export class SlidesApp {
      * 按需补测一张逻辑页（已测过直接返回 false）。
      * 测完立即用新高度重分页；当前页由 repaginate 保持不动。
      */
-    private async ensureSlideMeasured(logicalIndex: number): Promise<boolean> {
+    private async ensureSlideMeasured(
+        logicalIndex: number,
+        repaginate = true
+    ): Promise<boolean> {
         const deck = this.deck;
         if (!deck) return false;
         const slide = deck.logical[logicalIndex];
         if (!slide) return false;
         if (isSlideMeasured(slide, this.lastMeasure)) return false;
+        this.flipSawMeasure = true;
         const token = this.rebuildToken;
         const measured = await this.measureDeck(
             deck,
@@ -793,25 +997,60 @@ export class SlidesApp {
             new Set([logicalIndex])
         );
         if (token !== this.rebuildToken) return false;
-        this.lastMeasure = measured;
-        this.repaginatePreservingPage();
+        this.setMeasureResult(measured);
+        if (repaginate) this.repaginatePreservingPage();
         return true;
     }
 
-    /** 内存统计用。 */
-    debugStats(): {
-        pages: number;
-        blocks: number;
-        logicalSlides: number;
-        cmCount: number;
-    } {
+    /** 内存 / 性能统计用（HUD 与「显示内存占用」共用一份口径）。 */
+    debugStats(): SlidesDebugStats {
+        if (this.measurePendingCache < 0) {
+            let pending = 0;
+            if (this.deck) {
+                for (const slide of this.deck.logical) {
+                    if (!isSlideMeasured(slide, this.lastMeasure)) {
+                        pending += 1;
+                    }
+                }
+            }
+            this.measurePendingCache = pending;
+        }
+        const measurePending = this.measurePendingCache;
+        let fillPendingBlocks = 0;
+        for (const record of this.pageEls.values()) {
+            if (record.pending) fillPendingBlocks += record.pending.length;
+        }
         return {
             pages: this.pages.length,
             blocks: this.deck?.blocks.length ?? 0,
             logicalSlides: this.deck?.logical.length ?? 0,
+            cachedPages: this.pageEls.size,
             // 预加载会让常驻的 mini-CM 数量随访问过的页数增长，这正是
             // 「不卸载」的代价；内存统计里能直接看到
             cmCount: this.renderedCount(),
+            measurePending,
+            measuring: this.measureInFlight,
+            preloadPending: this.preloadCancel !== null,
+            lastRebuildMs: Math.round(this.stats.lastRebuildMs),
+            lastMeasureMs: Math.round(this.stats.lastMeasureMs),
+            lastMeasureCm: this.stats.lastMeasureCm,
+            measureRuns: this.stats.measureRuns,
+            lastPaginateMs: Math.round(this.stats.lastPaginateMs * 10) / 10,
+            paginateRuns: this.stats.paginateRuns,
+            lastFlipMs: Math.round(this.stats.lastFlipMs),
+            lastFlipWaitMeasure: this.stats.lastFlipWaitMeasure,
+            lastFlipSettleMs: Math.round(this.stats.lastFlipSettleMs),
+            flips: this.stats.flips,
+            maxFlipMs: Math.round(this.stats.maxFlipMs),
+            fillQueueLen: this.fillQueue.length,
+            fillPendingBlocks,
+            fillRuns: this.stats.fillRuns,
+            lastFillBlockMs: Math.round(this.stats.lastFillBlockMs),
+            maxFillBlockMs: Math.round(this.stats.maxFillBlockMs),
+            lastPageBuildMs: Math.round(this.stats.lastPageBuildMs),
+            pageBuilds: this.stats.pageBuilds,
+            evictedPages: this.stats.evictedPages,
+            lastEditEnterMs: Math.round(this.stats.lastEditEnterMs * 10) / 10,
         };
     }
 
@@ -843,6 +1082,8 @@ export class SlidesApp {
         }
         this.cancelPump();
         this.cancelPreload();
+        this.cancelDeferredRepaginate();
+        this.cancelFlipMeasure();
         // 让还在排队的测量立刻作废（宿主马上要被清空，量出来的都是 0）
         this.rebuildToken += 1;
         this.destroyRendered();
@@ -852,6 +1093,7 @@ export class SlidesApp {
         this.readyResolve = null;
         this.deck = null;
         this.pages = [];
+        this.measurePendingCache = -1;
         this.pageLabels = new Map();
         this.fullText = '';
     }
@@ -878,6 +1120,13 @@ export class SlidesApp {
     private clearCaches(): void {
         this.heightCache.clear();
         this.titleHeightCache.clear();
+        this.measurePendingCache = -1;
+    }
+
+    /** 更新测量结果；顺带让「未测页数」缓存失效。 */
+    private setMeasureResult(result: MeasureResult): void {
+        this.lastMeasure = result;
+        this.measurePendingCache = -1;
     }
 
     private computeFontSignature(): string {
@@ -925,12 +1174,18 @@ export class SlidesApp {
 
     /** 解析 → 测当前页 → 分页 → 渲染；其余页在后台补测。 */
     private async rebuild(anchorLine: number | null): Promise<void> {
+        const rebuildStart = performance.now();
         // 纯函数分页依赖的基准字号：每次重建前按 live 当前字号刷新
         this.syncLiveBodyFont();
         const token = ++this.rebuildToken;
+        // 旧文档的后台测量回调作废；新分页出来后由 pump 重新排
+        this.flipMeasureToken += 1;
+        this.cancelFlipMeasure();
         this.cancelPump();
-        // 重建期间别在空闲帧里建页，等新分页出来再由 renderPage 重新安排
+        this.cancelDeferredRepaginate();
+        // 重建期间别在空闲帧里建页 / 填块，等新分页出来再重新安排
         this.cancelPreload();
+        this.cancelFill();
         try {
             const deck = parseDeck(this.fullText, this.settings.headingLevel);
             // 只测首屏要显示的那一页。整篇测量是「打开幻灯片要几十秒」的
@@ -943,13 +1198,19 @@ export class SlidesApp {
                 new Set([targetSlide])
             );
             if (token !== this.rebuildToken) return;
-            this.lastMeasure = measured;
+            this.setMeasureResult(measured);
 
             const previousLogical = this.pages[this.pageIndex]?.logicalIndex;
+            const paginateStart = performance.now();
             const pages = paginateDeck(deck, measured);
+            this.stats.lastPaginateMs = performance.now() - paginateStart;
+            this.stats.paginateRuns += 1;
             this.deck = deck;
             this.pages = pages;
+            this.paginationVersion += 1;
             this.pumpSincePaginate = 0;
+            // 换文档后即使页码碰巧相同也要让大纲重挂一次
+            this.pageLabelSignature = '';
 
             if (anchorLine !== null) {
                 const index = pages.findIndex(
@@ -991,6 +1252,7 @@ export class SlidesApp {
             sendLog('ERROR', `Slides rebuild failed: ${message}`);
         } finally {
             if (token === this.rebuildToken) {
+                this.stats.lastRebuildMs = performance.now() - rebuildStart;
                 this.rebuilding = false;
                 this.resolveReady();
                 // 编辑期间收到过外部更新：提交完成后应用它
@@ -1033,9 +1295,11 @@ export class SlidesApp {
         token: number,
         onlySlides?: ReadonlySet<number>
     ): Promise<MeasureResult> {
-        const job = this.measureChain.then(() =>
-            this.measureDeckNow(deck, token, onlySlides)
-        );
+        const job = this.measureChain
+            .then(() => this.measureDeckNow(deck, token, onlySlides))
+            .finally(() => {
+                this.measureInFlight = false;
+            });
         // 队列不能因为某一次失败而断掉
         this.measureChain = job.catch(() => undefined);
         return job;
@@ -1055,6 +1319,7 @@ export class SlidesApp {
         // 排队期间可能已经来了新的 rebuild：直接返回缓存里的结果
         if (token !== this.rebuildToken) return this.collectMeasureResult(deck);
 
+        this.measureInFlight = true;
         const host = this.measureHost;
         host.className = `slides-measure deck-${this.effectiveTheme}`;
         host.innerHTML = '';
@@ -1141,11 +1406,11 @@ export class SlidesApp {
 
         host.innerHTML = '';
         host.style.width = '';
-        return this.collectMeasureResult(
-            deck,
-            cmCount,
-            performance.now() - t0
-        );
+        const elapsed = performance.now() - t0;
+        this.stats.lastMeasureMs = elapsed;
+        this.stats.lastMeasureCm = cmCount;
+        this.stats.measureRuns += 1;
+        return this.collectMeasureResult(deck, cmCount, elapsed);
     }
 
     /** 分批跑一组同宽度的测量请求；每批之间让出一帧。 */
@@ -1154,13 +1419,34 @@ export class SlidesApp {
         token: number
     ): Promise<number> {
         let count = 0;
-        for (let i = 0; i < requests.length; i += MEASURE_CHUNK) {
+        let i = 0;
+        while (i < requests.length) {
             if (token !== this.rebuildToken) break;
-            const chunk = requests.slice(i, i + MEASURE_CHUNK);
+            // 组批：轻块最多 MEASURE_CHUNK 个；碰到重块就让它单独一批。
+            // 以前固定 3 个一批，遇到代码 / 表格时一个任务就是 100~300ms，
+            // 用户点击、翻页都会被这个长任务卡住。
+            const chunk: MeasureRequest[] = [];
+            while (i < requests.length && chunk.length < MEASURE_CHUNK) {
+                const request = requests[i];
+                const heavy = HEAVY_MEASURE_KINDS.has(request.block.kind);
+                if (chunk.length > 0 && heavy) break;
+                chunk.push(request);
+                i += 1;
+                if (heavy) break;
+            }
             count += await this.measureChunk(chunk, token);
             // 让出一帧：没有分页标题的大文档（整个逻辑页）也不会
             // 一口气霸占主线程
-            if (i + MEASURE_CHUNK < requests.length) await this.nextFrame();
+            if (i < requests.length) {
+                // 用户刚翻页 / 刚点击：测量批次之间再多让一点，避免
+                // 「翻一页撞一个长任务」。空闲补测不追时间，慢一点无妨。
+                if (performance.now() - this.lastInteraction < 250) {
+                    await new Promise((resolve) =>
+                        window.setTimeout(resolve, 80)
+                    );
+                }
+                await this.nextFrame();
+            }
         }
         return count;
     }
@@ -1391,16 +1677,18 @@ export class SlidesApp {
             /* 字体 API 不可用时直接轮询 */
         }
         if (token !== this.rebuildToken) return;
+        const hasAsync = entries.some((entry) =>
+            ASYNC_BLOCK_KINDS.has(entry.block.kind)
+        );
+        // 纯文本 / 代码块：DOM 一挂上就是最终排版（装饰同步应用、行高
+        // 由 CSS 决定），直接读高度即可。以前每批都白等两帧，一次翻页
+        // 要串好几个批次就是几百毫秒。
+        if (!hasAsync) return;
         // 两帧：让 rAF 里排队的表格重排、CM 自身的 measure 跑完
         await this.nextFrame();
         if (token !== this.rebuildToken) return;
         await this.nextFrame();
         if (token !== this.rebuildToken) return;
-
-        const hasAsync = entries.some((entry) =>
-            ASYNC_BLOCK_KINDS.has(entry.block.kind)
-        );
-        if (!hasAsync) return;
 
         let previous = this.sumHeights(entries);
         for (let i = 0; i < 20; i += 1) {
@@ -1474,11 +1762,18 @@ export class SlidesApp {
 
         const measured = await this.measureDeck(deck, token, new Set([index]));
         if (token !== this.rebuildToken) return;
-        this.lastMeasure = measured;
+        this.setMeasureResult(measured);
         this.pumpSincePaginate += 1;
         if (this.pumpSincePaginate >= 4) {
+            // 用户正在翻页 / 打字时先别重分页：后台补测改变页边界会让
+            // 当前页缓存整体失效、页数跳动，翻页手感立刻变差。等交互
+            // 停下来再一次性整理，补测结果先记账，不会丢。
+            if (performance.now() - this.lastInteraction < 700) {
+                this.schedulePumpNext(deck, token, 250);
+                return;
+            }
             this.pumpSincePaginate = 0;
-            this.repaginatePreservingPage();
+            this.scheduleDeferredRepaginate(150);
         }
         this.schedulePumpNext(deck, token, 120);
     }
@@ -1565,8 +1860,12 @@ export class SlidesApp {
         const deck = this.deck;
         if (!deck) return;
         const previous = this.pages[this.pageIndex];
+        const paginateStart = performance.now();
         const pages = paginateDeck(deck, this.lastMeasure);
+        this.stats.lastPaginateMs = performance.now() - paginateStart;
+        this.stats.paginateRuns += 1;
         this.pages = pages;
+        this.paginationVersion += 1;
         if (previous) {
             const anchor = this.pageAnchorId(previous);
             const exact = pages.findIndex(
@@ -1740,8 +2039,13 @@ export class SlidesApp {
                     '.slide-page'
                 ) as HTMLElement | null;
                 if (!root) return;
+                const record = this.recordForEl(root);
+                // 预加载页：只记脏，等真正显示时再校准；当前页才立刻重排。
+                if (record) record.dirtyFit = true;
+                if (this.currentPageEl !== root) return;
                 this.fitPageElement(root);
                 this.checkOverflow(root);
+                if (record) record.dirtyFit = false;
             });
         });
     }
@@ -1771,21 +2075,18 @@ export class SlidesApp {
         return count;
     }
 
-    /** 构建页面期间登记块显示（测量用的临时实例不走这里）。 */
-    private trackBlock(wrap: HTMLElement, display: NodeDisplay): void {
-        this.buildingEntries?.push({ wrap, display });
-    }
-
     /** 销毁所有已渲染页面（离开模式 / 重建文档 / 换主题时用）。 */
     private destroyRendered(): void {
+        this.cancelFill();
         for (const entry of this.pageEls.values()) {
+            // 还没填的块只有规格没有实例，直接丢弃
+            entry.pending = null;
             for (const block of entry.entries) {
                 this.destroyDisplay(block.display);
             }
         }
         this.pageEls.clear();
         this.currentPageEl = null;
-        this.buildingEntries = null;
         this.activeDisplay = null;
         this.stage.innerHTML = '';
     }
@@ -1865,7 +2166,12 @@ export class SlidesApp {
      * mini-CM；没建过的页现场建一页，并在空闲帧里把前后 5 页补上。
      */
     private renderPage(): void {
-        this.prunePageCache();
+        // 只有分页结果真的变过才清理缓存 / 对齐页脚：翻页本身页码不变，
+        // 以前每次翻页都遍历一遍所有缓存页，页数越多越亏。
+        if (this.prunedPaginationVersion !== this.paginationVersion) {
+            this.prunePageCache();
+            this.prunedPaginationVersion = this.paginationVersion;
+        }
         this.fitStage();
         const page = this.pages[this.pageIndex];
         if (!page) {
@@ -1879,10 +2185,13 @@ export class SlidesApp {
             return;
         }
 
-        const el = this.ensurePageElement(this.pageIndex);
-        this.showPageElement(el);
+        const record = this.ensurePageElement(this.pageIndex);
+        this.showPageElement(record);
         // 后台补测可能让页码整体后移，缓存页的页脚跟着更新
-        this.syncPageFooters();
+        if (this.footerPaginationVersion !== this.paginationVersion) {
+            this.syncPageFooters();
+            this.footerPaginationVersion = this.paginationVersion;
+        }
         this.updateChrome();
         // 大纲高亮跟着「当前页第一行」走（PPT 里没有正文光标）
         this.options.onActiveLineChange?.(this.getCurrentLine0());
@@ -1907,14 +2216,53 @@ export class SlidesApp {
     }
 
     /** 取（必要时创建）某一页的 DOM。 */
-    private ensurePageElement(index: number): HTMLElement {
+    private ensurePageElement(index: number): PageRecord {
         const page = this.pages[index];
         const key = this.pageSignature(page);
         const cached = this.pageEls.get(key);
-        if (cached) return cached.el;
+        if (cached) {
+            // 命中即刷新 LRU 顺序（Map 的插入顺序就是淘汰顺序）
+            this.pageEls.delete(key);
+            this.pageEls.set(key, cached);
+            return cached;
+        }
+        const buildStart = performance.now();
         const built = this.buildPageElement(page, index);
+        this.stats.lastPageBuildMs = performance.now() - buildStart;
+        this.stats.pageBuilds += 1;
         this.pageEls.set(key, built);
-        return built.el;
+        this.evictPagesIfNeeded();
+        return built;
+    }
+
+    /**
+     * 页面缓存 LRU 回收。
+     *
+     * 跳过当前页与正在编辑的块所在页；被回收的页面如果有没填完的正文，
+     * 直接把规格丢掉（填充循环发现 el 已断开会自动跳过）。翻回来时
+     * 重新走骨架 + 逐块填充，不会再出现整页同步长任务。
+     */
+    private evictPagesIfNeeded(): void {
+        if (this.pageEls.size <= MAX_CACHED_PAGES) return;
+        for (const [key, record] of Array.from(this.pageEls.entries())) {
+            if (this.pageEls.size <= MAX_CACHED_PAGES) break;
+            if (record.el === this.currentPageEl) continue;
+            if (
+                this.activeDisplay &&
+                record.entries.some(
+                    (entry) => entry.display === this.activeDisplay
+                )
+            ) {
+                continue;
+            }
+            record.pending = null;
+            for (const entry of record.entries) {
+                this.destroyDisplay(entry.display);
+            }
+            record.el.remove();
+            this.pageEls.delete(key);
+            this.stats.evictedPages += 1;
+        }
     }
 
     /**
@@ -1926,27 +2274,27 @@ export class SlidesApp {
     private buildPageElement(
         page: SlidePage,
         index: number
-    ): { el: HTMLElement; entries: RenderedEntry[] } {
+    ): PageRecord {
         const el = document.createElement('div');
         el.className =
             `slide-page deck-${this.effectiveTheme} layout-${page.layout} frame-${this.settings.frame}`;
         el.style.visibility = 'hidden';
 
         const entries: RenderedEntry[] = [];
-        this.buildingEntries = entries;
-        try {
+        const pending: PendingBlockSpec[] = [];
+        {
             if (page.layout === 'cover') {
                 this.renderCover(el);
             } else if (page.layout === 'section') {
-                this.renderSection(el, page);
+                this.renderSection(el, page, pending);
             } else if (page.layout === 'statement') {
-                this.renderStatement(el, page);
+                this.renderStatement(el, page, pending);
             } else if (page.layout === 'fact') {
-                this.renderFact(el, page);
+                this.renderFact(el, page, pending);
             } else if (page.layout === 'end') {
                 this.renderEnd(el, page);
             } else {
-                this.renderContent(el, page);
+                this.renderContent(el, page, pending);
             }
 
             // 封面 / 章节页 / 结束页不放页码：它们不是内容页，页码反而打断情绪
@@ -1962,23 +2310,26 @@ export class SlidesApp {
                     `<span class="slide-page-no">${index + 1} / ${this.pages.length}</span>`;
                 el.appendChild(footer);
             }
-        } finally {
-            this.buildingEntries = null;
         }
 
         this.stage.appendChild(el);
-        // 建好就做一次自适应（隐藏页也能量），切到这一页时不再跳一下
-        requestAnimationFrame(() => {
-            if (!el.isConnected) return;
-            this.fitPageElement(el);
-            this.checkOverflow(el);
-            this.bindImageReflow(el);
-        });
-        return { el, entries };
+        // 图片解码是异步的：先把 load 回调挂上（只挂监听，不做布局）。
+        this.bindImageReflow(el);
+        // 预加载的隐藏页不在这里做自适应：fitPageElement 要读 offsetHeight /
+        // scrollWidth，会把整个舞台的脏布局同步算出来。页面真正显示时再
+        // 校准一次即可（showPageElement），预加载阶段只建 DOM。
+        return {
+            el,
+            entries,
+            dirtyFit: true,
+            imagesBound: true,
+            pending: pending.length > 0 ? pending : null,
+        };
     }
 
     /** 把某一页切成可见页；其余缓存页隐藏，但布局与实例都保留。 */
-    private showPageElement(el: HTMLElement): void {
+    private showPageElement(record: PageRecord): void {
+        const el = record.el;
         if (this.currentPageEl !== el) {
             if (this.currentPageEl) {
                 this.currentPageEl.style.visibility = 'hidden';
@@ -1986,13 +2337,151 @@ export class SlidesApp {
             el.style.visibility = 'visible';
             this.currentPageEl = el;
         }
-        // 显示后再校一次尺寸：预加载期间 Mermaid / 图片是异步出高度的，
-        // 建页时那次自适应可能早于它们完成。这里只量当前页，代价很小。
+        // 正文还没填完：优先把它排到填充队列最前面，填完再统一自适应。
+        // 页面骨架（标题 / 栏容器）已经可见，翻页本身不再等整页的 CM。
+        if (record.pending && record.pending.length > 0) {
+            this.requestFill(record, true);
+            return;
+        }
+        // 只有「还没校准过」的页才需要自适应。翻回已经校准过的缓存页时
+        // 这一步完全跳过，翻页只剩切 visibility。
+        if (!record.dirtyFit) return;
         requestAnimationFrame(() => {
             if (this.currentPageEl !== el || !el.isConnected) return;
             this.fitPageElement(el);
             this.checkOverflow(el);
+            record.dirtyFit = false;
         });
+    }
+
+    /**
+     * 请求填充一页的正文块。
+     *
+     * foreground = 当前可见页：用 rAF 每帧补一块，尽快补齐，并且不因
+     * 用户交互暂停；后台预加载页用 setTimeout(0) 逐块补，用户一动就先
+     * 让路（晚一点补完全没关系）。
+     */
+    private requestFill(record: PageRecord, foreground: boolean): void {
+        if (!record.pending || record.pending.length === 0) return;
+        const existing = this.fillQueue.indexOf(record);
+        if (existing >= 0) {
+            // 已经在队列里：后台请求保持原位置，前台请求提到队首
+            if (foreground && existing > 0) {
+                this.fillQueue.splice(existing, 1);
+                this.fillQueue.unshift(record);
+            }
+            this.kickFill(foreground);
+            return;
+        }
+        if (foreground) this.fillQueue.unshift(record);
+        else this.fillQueue.push(record);
+        this.kickFill(foreground);
+    }
+
+    private kickFill(foreground: boolean, delay = 0): void {
+        if (foreground) {
+            // 当前页等着看，取消后台那次的 setTimeout，改到下一帧；
+            // 已经有 rAF 在排队就不重复排。
+            if (this.fillTimer !== null) {
+                window.clearTimeout(this.fillTimer);
+                this.fillTimer = null;
+            }
+            if (this.fillRaf !== null) return;
+            this.fillRaf = requestAnimationFrame(() => {
+                this.fillRaf = null;
+                this.fillStep();
+            });
+            return;
+        }
+        // 后台填充：已经有任何一次调度在排队就让它跑，不叠加
+        if (this.fillRaf !== null || this.fillTimer !== null) return;
+        this.fillTimer = window.setTimeout(() => {
+            this.fillTimer = null;
+            this.fillStep();
+        }, delay);
+    }
+
+    /** 填充一步：只创建一个正文块，然后让出主线程。 */
+    private fillStep(): void {
+        const record = this.fillQueue[0];
+        if (!record) return;
+        // 后台预加载页的填充让路给用户交互：把块补完远不如翻页手感重要
+        if (
+            !this.isCurrent(record) &&
+            performance.now() - this.lastInteraction < 500
+        ) {
+            this.kickFill(false, 150);
+            return;
+        }
+        if (!record.pending || record.pending.length === 0) {
+            this.fillQueue.shift();
+            this.finishFill(record);
+            const next = this.fillQueue[0];
+            if (next) this.kickFill(this.isCurrent(next));
+            return;
+        }
+        if (!record.el.isConnected) {
+            record.pending = null;
+            this.fillQueue.shift();
+            if (this.fillQueue.length > 0) this.kickFill(false);
+            return;
+        }
+        const spec = record.pending.shift();
+        if (spec) {
+            const blockStart = performance.now();
+            const { wrap, display } = this.createBlockDisplay(
+                spec.block,
+                spec.font,
+                spec.extraClass ?? '',
+                spec.width
+            );
+            if (spec.fit && spec.fit < 1) {
+                wrap.style.zoom = String(spec.fit);
+                wrap.dataset.fit = String(spec.fit);
+            }
+            this.attachEdit(wrap, display, spec.block);
+            record.entries.push({ wrap, display });
+            spec.parent.appendChild(wrap);
+            const blockMs = performance.now() - blockStart;
+            this.stats.lastFillBlockMs = blockMs;
+            this.stats.maxFillBlockMs = Math.max(
+                this.stats.maxFillBlockMs,
+                blockMs
+            );
+            this.stats.fillRuns += 1;
+        }
+        if (record.pending.length === 0) {
+            record.pending = null;
+            this.fillQueue.shift();
+            this.finishFill(record);
+            const next = this.fillQueue[0];
+            if (next) this.kickFill(this.isCurrent(next));
+            return;
+        }
+        // 当前页用 rAF（跟着绘制节奏）；后台页让出一轮事件循环即可
+        this.kickFill(this.isCurrent(record));
+    }
+
+    private isCurrent(record: PageRecord): boolean {
+        return record.el === this.currentPageEl;
+    }
+
+    /** 一页的正文全部填完：当前页立刻做一次自适应。 */
+    private finishFill(record: PageRecord): void {
+        if (!record.el.isConnected) return;
+        if (!this.isCurrent(record)) {
+            // 后台预加载页：保留 dirtyFit，真正显示时再量
+            return;
+        }
+        this.fitPageElement(record.el);
+        this.checkOverflow(record.el);
+        record.dirtyFit = false;
+        if (this.flipStartedAt !== null) {
+            this.stats.lastFlipSettleMs = Math.round(
+                performance.now() - this.flipStartedAt
+            );
+            this.flipStartedAt = null;
+        }
     }
 
     /** 页码可能在后台补测后整体后移：把缓存页的页脚数字对齐到最新分页。 */
@@ -2049,6 +2538,36 @@ export class SlidesApp {
         this.preloadCancel = null;
     }
 
+    /** 取消尚未启动的翻页补测。 */
+    private cancelFlipMeasure(): void {
+        if (this.flipMeasureTimer !== null) {
+            window.clearTimeout(this.flipMeasureTimer);
+            this.flipMeasureTimer = null;
+        }
+        this.pendingFlipSlide = null;
+    }
+
+    /** 取消失败 / 过期的延迟重分页。 */
+    private cancelDeferredRepaginate(): void {
+        if (this.repaginateTimer !== null) {
+            window.clearTimeout(this.repaginateTimer);
+            this.repaginateTimer = null;
+        }
+    }
+
+    /** 停掉正文填充（离开模式 / 重建文档 / 主题切换时）。 */
+    private cancelFill(): void {
+        if (this.fillTimer !== null) {
+            window.clearTimeout(this.fillTimer);
+            this.fillTimer = null;
+        }
+        if (this.fillRaf !== null) {
+            cancelAnimationFrame(this.fillRaf);
+            this.fillRaf = null;
+        }
+        this.fillQueue.length = 0;
+    }
+
     /** 一次空闲只建一页：每页要同步创建一批 mini-CM，不能一口气全建。 */
     private preloadStep(): void {
         if (!this.active) return;
@@ -2062,9 +2581,21 @@ export class SlidesApp {
             this.schedulePreload(500);
             return;
         }
+        // 已经建了骨架、正文还没填完的页先填（重建 / 取消填充后尤其常见）
+        const unfinished = this.nextUnfinishedPage();
+        if (unfinished) {
+            this.requestFill(unfinished, false);
+            this.schedulePreload(30);
+            return;
+        }
         const index = this.nextPreloadIndex();
         if (index < 0) return;
-        this.ensurePageElement(index);
+        const record = this.ensurePageElement(index);
+        // 骨架建好后正文按帧补：预加载不再一次性造整页 mini-CM，
+        // 把 100~300ms 的长任务拆成每帧一个块。
+        if (record.pending && record.pending.length > 0) {
+            this.requestFill(record, false);
+        }
         this.schedulePreload(40);
     }
 
@@ -2087,6 +2618,22 @@ export class SlidesApp {
         return this.pageEls.has(this.pageSignature(page));
     }
 
+    /** 预加载半径内第一张「骨架已建、正文未填完」的页。 */
+    private nextUnfinishedPage(): PageRecord | null {
+        for (let distance = 1; distance <= PRELOAD_RADIUS; distance += 1) {
+            for (const index of [this.pageIndex + distance, this.pageIndex - distance]) {
+                if (index < 0 || index >= this.pages.length) continue;
+                const record = this.pageEls.get(
+                    this.pageSignature(this.pages[index])
+                );
+                if (record?.pending && record.pending.length > 0) {
+                    return record;
+                }
+            }
+        }
+        return null;
+    }
+
     /**
      * 图片解码后才能拿到真实高度：每张图加载完补做一次自适应。
      *
@@ -2100,12 +2647,25 @@ export class SlidesApp {
                 'load',
                 () => {
                     if (!root.isConnected) return;
+                    const record = this.recordForEl(root);
+                    if (record) record.dirtyFit = true;
+                    // 不在当前页就先不量：等翻回来时 showPageElement 统一校准
+                    if (this.currentPageEl !== root) return;
                     this.fitPageElement(root);
                     this.checkOverflow(root);
+                    if (record) record.dirtyFit = false;
                 },
                 { once: true }
             );
         }
+    }
+
+    /** 由页面根元素找回缓存记录（图片 load / 表格重排这类异步回调）。 */
+    private recordForEl(el: HTMLElement): PageRecord | null {
+        for (const record of this.pageEls.values()) {
+            if (record.el === el) return record;
+        }
+        return null;
     }
 
     private renderCover(stage: HTMLElement): void {
@@ -2124,7 +2684,11 @@ export class SlidesApp {
         stage.appendChild(inner);
     }
 
-    private renderSection(stage: HTMLElement, page: SlidePage): void {
+    private renderSection(
+        stage: HTMLElement,
+        page: SlidePage,
+        pending: PendingBlockSpec[]
+    ): void {
         const inner = document.createElement('div');
         inner.className = 'section-inner';
         const kicker = document.createElement('div');
@@ -2132,20 +2696,23 @@ export class SlidesApp {
         kicker.textContent = 'SECTION';
         inner.appendChild(kicker);
         if (page.titleBlock) {
-            const { wrap, display } = this.createBlockDisplay(
-                page.titleBlock,
-                page.titleFont,
-                'slide-title-block'
-            );
-            this.attachEdit(wrap, display, page.titleBlock);
-            this.trackBlock(wrap, display);
-            inner.appendChild(wrap);
+            pending.push({
+                block: page.titleBlock,
+                parent: inner,
+                font: page.titleFont,
+                width: CONTENT_W,
+                extraClass: 'slide-title-block',
+            });
         }
         stage.appendChild(inner);
     }
 
     /** 金句页：标题只当 kicker，正文整段 64px 居中。 */
-    private renderStatement(stage: HTMLElement, page: SlidePage): void {
+    private renderStatement(
+        stage: HTMLElement,
+        page: SlidePage,
+        pending: PendingBlockSpec[]
+    ): void {
         const inner = document.createElement('div');
         inner.className = 'statement-inner';
         if (page.titleBlock) {
@@ -2156,10 +2723,12 @@ export class SlidesApp {
         }
         const para = page.blocks.find((block) => block.kind === 'para') ?? page.blocks[0];
         if (para) {
-            const { wrap, display } = this.createBlockDisplay(para, 64);
-            this.attachEdit(wrap, display, para);
-            this.trackBlock(wrap, display);
-            inner.appendChild(wrap);
+            pending.push({
+                block: para,
+                parent: inner,
+                font: 64,
+                width: CONTENT_W,
+            });
         }
         stage.appendChild(inner);
     }
@@ -2169,15 +2738,21 @@ export class SlidesApp {
      * 故意不把「数字」和「说明」拆成两个块——拆分会让编辑语义分裂，
      * 用户改一半还要猜另一半在哪里。
      */
-    private renderFact(stage: HTMLElement, page: SlidePage): void {
+    private renderFact(
+        stage: HTMLElement,
+        page: SlidePage,
+        pending: PendingBlockSpec[]
+    ): void {
         const inner = document.createElement('div');
         inner.className = 'fact-inner';
         const para = page.blocks.find((block) => block.kind === 'para') ?? page.blocks[0];
         if (para) {
-            const { wrap, display } = this.createBlockDisplay(para, 96);
-            this.attachEdit(wrap, display, para);
-            this.trackBlock(wrap, display);
-            inner.appendChild(wrap);
+            pending.push({
+                block: para,
+                parent: inner,
+                font: 96,
+                width: CONTENT_W,
+            });
         }
         stage.appendChild(inner);
     }
@@ -2196,20 +2771,28 @@ export class SlidesApp {
         stage.appendChild(inner);
     }
 
-    private renderContent(stage: HTMLElement, page: SlidePage): void {
+    private renderContent(
+        stage: HTMLElement,
+        page: SlidePage,
+        pending: PendingBlockSpec[]
+    ): void {
         // 半幅图把标题塞进文字列，页面本身没有内边距，不能再走顶部 header
         const split = page.layout === 'image-split';
         const header = document.createElement('div');
         header.className = 'slide-header';
         if (!split && page.titleBlock) {
-            const { wrap, display } = this.createBlockDisplay(
-                page.titleBlock,
-                page.titleFont,
-                'slide-title-block'
-            );
-            this.attachEdit(wrap, display, page.titleBlock);
-            this.trackBlock(wrap, display);
-            header.appendChild(wrap);
+            // 标题也只建一个占位槽：标题块同样是完整 mini-CM，
+            // 同步创建要 30~100ms，正好卡在翻页同步段里。
+            const slot = document.createElement('div');
+            slot.className = 'slide-title-slot';
+            header.appendChild(slot);
+            pending.push({
+                block: page.titleBlock,
+                parent: slot,
+                font: page.titleFont,
+                width: CONTENT_W,
+                extraClass: 'slide-title-block',
+            });
             const rule = document.createElement('div');
             rule.className = 'title-rule';
             header.appendChild(rule);
@@ -2232,23 +2815,20 @@ export class SlidesApp {
         const addBlock = (block: SlideBlock, column?: HTMLElement): void => {
             // 半栏页的块按半栏宽分表格列；整页按内容宽
             const blockWidth = column ? COLUMN_W : CONTENT_W;
-            const { wrap, display } = this.createBlockDisplay(
-                block,
-                bodyFontSize(block),
-                '',
-                blockWidth
-            );
             // 分栏用的合成块带 #L / #R 后缀，缩放比例记在原块 id 上
             const fit =
                 page.fitScales.get(block.id) ??
                 page.fitScales.get(block.id.replace(/#[LR]$/, ''));
-            if (fit && fit < 1) {
-                wrap.style.zoom = String(fit);
-                wrap.dataset.fit = String(fit);
-            }
-            this.attachEdit(wrap, display, block);
-            this.trackBlock(wrap, display);
-            (column ?? body).appendChild(wrap);
+            // 正文块不在这里同步创建：一次建整页的 mini-CM 是 100~300ms
+            // 的长任务，翻页 / 点击都会被卡住。先记下「放哪、多大」，
+            // 由 fill 循环每帧补一个（当前页立即开始，预加载页空闲时补）。
+            pending.push({
+                block,
+                parent: column ?? body,
+                font: bodyFontSize(block),
+                width: blockWidth,
+                fit: fit && fit < 1 ? fit : undefined,
+            });
         };
 
         if (page.columns) {
@@ -2271,15 +2851,13 @@ export class SlidesApp {
             // 半幅图：标题作为文字列的第一个块（页面 padding 为 0，
             // 不能再用顶部 header，否则标题会顶到页面边缘）。
             if (split && page.titleBlock) {
-                const { wrap, display } = this.createBlockDisplay(
-                    page.titleBlock,
-                    page.titleFont,
-                    'slide-title-block',
-                    COLUMN_W
-                );
-                this.attachEdit(wrap, display, page.titleBlock);
-                this.trackBlock(wrap, display);
-                left.appendChild(wrap);
+                pending.push({
+                    block: page.titleBlock,
+                    parent: left,
+                    font: page.titleFont,
+                    width: COLUMN_W,
+                    extraClass: 'slide-title-block',
+                });
             }
 
             const media = page.blocks.filter(
@@ -2582,6 +3160,7 @@ export class SlidesApp {
             // 客户端坐标当成未缩放坐标换算，落点偏出固定 x/y 倍率
             // （就是「点这里却选中那里」的那个 bug）。浏览器原生命中测试
             // 跑在真实布局上，再把命中的 DOM 节点交给 posAtDOM 即可。
+            const enterStart = performance.now();
             const caretPos = this.caretPosFromPoint(
                 display,
                 event.clientX,
@@ -2623,6 +3202,7 @@ export class SlidesApp {
             }
             if (caretTarget !== null) display.focusAtPos(caretTarget);
             else display.focusAt(event.clientX, event.clientY);
+            this.stats.lastEditEnterMs = performance.now() - enterStart;
         });
     }
 
@@ -2842,7 +3422,32 @@ export class SlidesApp {
     }
 
     private async go(delta: number): Promise<void> {
+        const start = performance.now();
+        this.flipSawMeasure = false;
+        this.flipStartedAt = start;
+        this.stats.lastFlipSettleMs = -1;
         await this.goTo(this.pageIndex + delta);
+        if (!this.active) return;
+        const elapsed = performance.now() - start;
+        this.stats.lastFlipMs = elapsed;
+        this.stats.lastFlipWaitMeasure = this.flipSawMeasure;
+        this.stats.flips += 1;
+        this.stats.maxFlipMs = Math.max(this.stats.maxFlipMs, elapsed);
+        // 目标页已经完整（缓存页 / 空页）：settle 就是这次翻页本身
+        const record = this.currentRecord();
+        if (!record?.pending || record.pending.length === 0) {
+            this.stats.lastFlipSettleMs = Math.round(
+                performance.now() - start
+            );
+            this.flipStartedAt = null;
+        }
+    }
+
+    /** 当前可见页的缓存记录（可能还没建 / 是封面预览）。 */
+    private currentRecord(): PageRecord | null {
+        const el = this.currentPageEl;
+        if (!el) return null;
+        return this.recordForEl(el);
     }
 
     private async goTo(index: number): Promise<void> {
@@ -2855,26 +3460,132 @@ export class SlidesApp {
         );
         const target = this.pages[clamped];
         const logicalIndex = target?.logicalIndex ?? -1;
+        const anchor = target ? this.pageAnchorId(target) : null;
 
-        // 目标页还没实测：先补测再定位。否则按默认高度切出来的页边界
-        // 可能是错的（点「下一页」却看到半页内容）。
-        if (logicalIndex >= 0) {
-            const measured = await this.ensureSlideMeasured(logicalIndex);
-            if (!this.active) return;
-            if (measured) {
-                const located = this.findPageIndex(
-                    logicalIndex,
-                    target?.segmentIndex,
-                    target ? this.pageAnchorId(target) : undefined
-                );
-                this.pageIndex = located >= 0 ? located : clamped;
-                this.renderPage();
-                return;
-            }
-        }
-
+        // 关键：先按现有（可能是估算的）分页把目标页画出来，绝不同步等
+        // 测量。一次未测量页的补测要建 mini-CM、等字体/表格稳定，常见
+        // 100ms~1s；等它完成再翻页就是用户说的「翻一页卡一下」。估算
+        // 分页的页边界可能略有偏差，测量完成后按锚点重定位即可。
         this.pageIndex = clamped;
         this.renderPage();
+
+        if (logicalIndex >= 0 && this.deck) {
+            const slide = this.deck.logical[logicalIndex];
+            if (slide && !isSlideMeasured(slide, this.lastMeasure)) {
+                this.scheduleFlipMeasure(logicalIndex, anchor);
+            }
+        }
+    }
+
+    /**
+     * 翻页触发的后台补测。
+     *
+     * 只认最后一次翻页的结果：快速连续翻页时，早先页的补测仍会执行
+     * （测量队列串行），但不会把当前页拉回去。补测完成后
+     * `ensureSlideMeasured` 已经重分页并尽量保持当前页；这里再按翻页时
+     * 记下的锚点校正一次页码（分页整体后移时页码会变、内容不变）。
+     */
+    private scheduleFlipMeasure(
+        logicalIndex: number,
+        anchor: string | null
+    ): void {
+        void anchor;
+        this.flipSawMeasure = true;
+        // 只保留最新请求：正在测的页跑完再决定要不要测这一页
+        this.pendingFlipSlide = logicalIndex;
+        if (this.flipMeasureTimer !== null) {
+            window.clearTimeout(this.flipMeasureTimer);
+        }
+        // 连翻期间绝不启动测量：一页的测量任务可能 100ms+，撞在下一次
+        // 翻页按键上就是「翻页卡一下」。用户停手 220ms 再测完全来得及。
+        this.flipMeasureTimer = window.setTimeout(() => {
+            this.flipMeasureTimer = null;
+            this.pumpFlipMeasure();
+        }, 220);
+    }
+
+    /** 翻页补测的单飞循环：同一时刻只测一页，只追最新请求。 */
+    private pumpFlipMeasure(): void {
+        if (this.flipMeasureBusy || !this.active) return;
+        const index = this.pendingFlipSlide;
+        if (index === null) return;
+        // 用户正在编辑 / 重建 / 刚有过交互：测量是百毫秒级的长任务，
+        // 不能让它在输入或下一次翻页时插进来。稍后再试，请求不丢。
+        if (
+            this.activeDisplay ||
+            this.rebuilding ||
+            this.measureInFlight ||
+            performance.now() - this.lastInteraction < 300
+        ) {
+            if (this.flipMeasureTimer !== null) {
+                window.clearTimeout(this.flipMeasureTimer);
+            }
+            this.flipMeasureTimer = window.setTimeout(() => {
+                this.flipMeasureTimer = null;
+                this.pumpFlipMeasure();
+            }, 250);
+            return;
+        }
+        this.pendingFlipSlide = null;
+        this.flipMeasureBusy = true;
+        void this.ensureSlideMeasured(index, false)
+            .then((measured) => {
+                if (!measured || !this.active) return;
+                // 测量本身已经拿到，但先不重分页：用户可能正在连翻，
+                // 页边界一变缓存全失效、页码乱跳。等交互停下来（或
+                // 用户在这一页停留几百毫秒）再统一整理。
+                this.scheduleDeferredRepaginate(450);
+            })
+            .finally(() => {
+                this.flipMeasureBusy = false;
+                // 期间又翻了页：继续追最新那一页（旧页已经不关心了）。
+                // 若刚有交互，交给下一轮延时，别让两批测量背靠背执行。
+                if (this.pendingFlipSlide !== null) {
+                    if (performance.now() - this.lastInteraction < 300) {
+                        if (this.flipMeasureTimer !== null) {
+                            window.clearTimeout(this.flipMeasureTimer);
+                        }
+                        this.flipMeasureTimer = window.setTimeout(() => {
+                            this.flipMeasureTimer = null;
+                            this.pumpFlipMeasure();
+                        }, 250);
+                    } else {
+                        this.pumpFlipMeasure();
+                    }
+                }
+            });
+    }
+
+    /**
+     * 延迟重分页：交互期间只记账，停下来再一次性整理。
+     *
+     * 这是「连续翻页越翻越卡」的关键之一：后台每测完一页就立刻重分页，
+     * 会把已建好的缓存页按新页边界判死、销毁重建，翻页正好撞上就是
+     * 一两百毫秒的长任务。推迟到用户停手之后，翻页过程只切 visibility。
+     */
+    private scheduleDeferredRepaginate(delay = 400): void {
+        if (this.repaginateTimer !== null) {
+            window.clearTimeout(this.repaginateTimer);
+        }
+        this.repaginateTimer = window.setTimeout(() => {
+            this.repaginateTimer = null;
+            if (
+                !this.active ||
+                this.rebuilding ||
+                this.activeDisplay ||
+                !this.deck
+            ) {
+                // 编辑 / 重建优先，稍后再试
+                if (this.active) this.scheduleDeferredRepaginate(500);
+                return;
+            }
+            if (performance.now() - this.lastInteraction < 600) {
+                this.scheduleDeferredRepaginate(300);
+                return;
+            }
+            this.pumpSincePaginate = 0;
+            this.repaginatePreservingPage();
+        }, delay);
     }
 
     private async save(): Promise<void> {
@@ -2982,9 +3693,19 @@ export class SlidesApp {
         this.options.onPersistSetting('slidesFrame', next);
         this.updateChrome();
         if (this.active) {
-            // 装饰挂在页面的类名上，缓存页得重建才能换掉
-            this.destroyRendered();
-            this.renderPage();
+            // 装饰只挂在页面类名上：原地换类名，不重建任何 mini-CM
+            this.updateFrameClass();
+        }
+    }
+
+    /** 把所有已建页面（含封面预览）的 frame-* 类名换成当前设置。 */
+    private updateFrameClass(): void {
+        const next = `frame-${this.settings.frame}`;
+        for (const child of Array.from(this.stage.children)) {
+            if (!(child instanceof HTMLElement)) continue;
+            if (!child.classList.contains('slide-page')) continue;
+            child.classList.remove('frame-none', 'frame-rule', 'frame-corners');
+            child.classList.add(next);
         }
     }
 

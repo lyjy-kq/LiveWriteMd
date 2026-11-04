@@ -702,10 +702,9 @@ function completeSubtree(
  */
 function buildFragments(
     items: SlideItem[],
-    sourceText: string,
+    lines: string[],
     fitByItem: Map<string, number>
 ): SlideBlock[] {
-    const lines = sourceText.split('\n');
     const out: SlideBlock[] = [];
     let i = 0;
 
@@ -812,6 +811,11 @@ export function paginateDeck(
     measured: MeasureResult
 ): SlidePage[] {
     const pages: SlidePage[] = [];
+    // 整篇只 split 一次：以前 buildFragments 每个物理页（双栏页两次）
+    // 都把整篇 parseText 重新 split 一遍，重分页成本是「页数 × 总行数」。
+    // 真实大 deck（401 页 / 2204 行）一次重分页 10ms，翻页补测频繁触发
+    // 时就是可感知的卡顿。
+    const parseLines = deck.parseText.split('\n');
 
     if (deck.meta.title || deck.meta.subtitle) {
         pages.push({
@@ -930,14 +934,14 @@ export function paginateDeck(
                 const leftFrags = chunk.columns
                     ? buildFragments(
                           chunk.columns[0],
-                          deck.parseText,
+                          parseLines,
                           chunk.fitByItem
                       )
                     : [];
                 const rightFrags = chunk.columns
                     ? buildFragments(
                           chunk.columns[1],
-                          deck.parseText,
+                          parseLines,
                           chunk.fitByItem
                       )
                     : [];
@@ -945,7 +949,7 @@ export function paginateDeck(
                     ? [...leftFrags, ...rightFrags]
                     : buildFragments(
                           chunk.items,
-                          deck.parseText,
+                          parseLines,
                           chunk.fitByItem
                       );
                 const isFirst = firstPageOfSlide && pi === 0;
