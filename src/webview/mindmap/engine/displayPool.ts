@@ -6,7 +6,7 @@
  * @module webview/mindmap/engine/displayPool
  */
 
-import { HEADING_TINT_FALLBACKS, PROGRESSIVE_BATCH, PUMP_PAUSE_MS, TEXT_KINDS, WHEEL_ACTIVE_MS } from './canvasConstants.js';
+import { HEADING_TINT_FALLBACKS, PUMP_PAUSE_MS, TEXT_KINDS, WHEEL_ACTIVE_MS } from './canvasConstants.js';
 import { relayout } from './links.js';
 import { mountNode } from './mounting.js';
 import type { MapCanvas } from './canvas.js';
@@ -131,7 +131,7 @@ export function ensureContent(c: MapCanvas, node: MapNode) : void {
     // 判定条件必须严：DOM 里那一个子元素就是占位、文本与本次要写的完全
     // 一致、并且尺寸已经量过。三条都满足时，占位内容与排版都和上次一样，
     // 直接沿用即可。文本变了 / 是真实 CM 容器 / 没量过，都走下面的重建。
-    if (!entry && node.measured && node.wrapper) {
+    if (!entry && node.wrapper) {
         const child = node.wrapper.firstElementChild;
         if (
             child instanceof HTMLElement &&
@@ -140,6 +140,10 @@ export function ensureContent(c: MapCanvas, node: MapNode) : void {
         ) {
             node.display = null;
             node.placeholder = true;
+            // 不因为「没量过」就重建占位 DOM：文本 / 尺寸都没变，重建
+            // 只会白做一次 DOM 替换。node.measured 保持原值，调用方
+            // （setActive 的批量测量）仍会把它收进待测集合。
+            estimateNodeSize(node);
             return;
         }
     }
@@ -232,6 +236,18 @@ export function createDisplay(c: MapCanvas, node: MapNode) : void {
 }
 
 
+/**
+ * 给还没量过的节点一个保守估值。
+ *
+ * 收起子树现在不做首次测量，展开时需要一个能参与布局的宽高（否则
+ * 全部叠在 (0,0)）。settle 的批量测量会在下一两帧把真实尺寸补上。
+ */
+function estimateNodeSize(node: MapNode): void {
+    if (node.width > 0 && node.height > 0) return;
+    node.width = Math.min(320, Math.max(48, node.text.length * 9 + 16));
+    node.height = Math.max(18, 28);
+}
+
 /** 降级为静态占位（同字体源码文本，尺寸与真实渲染接近）。 */
 export function setPlaceholder(c: MapCanvas, node: MapNode, doc?: string) : void {
     const wrapper = node.wrapper;
@@ -247,6 +263,7 @@ export function setPlaceholder(c: MapCanvas, node: MapNode, doc?: string) : void
     node.placeholder = true;
     // 占位文本换了，尺寸就可能变：交给调用方重新测量
     node.measured = false;
+    estimateNodeSize(node);
 }
 
 
@@ -706,6 +723,9 @@ export function schedulePump(c: MapCanvas, delay = 16) : void {
     if (c.pumpTimer !== null) return;
     c.pumpTimer = setTimeout(() => {
         c.pumpTimer = null;
+        // 页面隐藏（切到 live / 幻灯片）时不再建 CM；setActive(true)
+        // 会重新 resumePump，队列不会丢。
+        if (!c.active) return;
         // 手势进行中只轮询不干活。这里必须轮询而不是直接 return：
         // mountNode/enqueueSwap 不会在松手时再触发一次 schedulePump，
         // 直接丢弃定时器会让队列一直躺着。
@@ -713,16 +733,44 @@ export function schedulePump(c: MapCanvas, delay = 16) : void {
             c.schedulePump(PUMP_PAUSE_MS);
             return;
         }
-        const batch = c.queue.splice(0, PROGRESSIVE_BATCH);
+        const view = c.viewSize();
+        if (view.width <= 0 || view.height <= 0) {
+            c.schedulePump(PUMP_PAUSE_MS);
+            return;
+        }
+        // 只换「当前视口里」的占位。预热挂载会把大圈离屏节点也放进
+        // DOM，以前这些节点同样入队换真：几百个根本没人看的 mini-CM
+        // 每 16ms 建两个，每个 10~20ms —— 加载期 30~70fps 抖动的主要
+        // 来源。离屏占位直接出队，等 updateViewport 看到它进入视口
+        // 再重新入队（enqueueSwap 自带去重）。
+        const zoom = c.zoom || 1;
+        const margin = 120 / zoom;
+        const left = -c.panX / zoom - margin;
+        const top = -c.panY / zoom - margin;
+        const right = (view.width - c.panX) / zoom + margin;
+        const bottom = (view.height - c.panY) / zoom + margin;
+
         let changed = false;
         const created: MapNode[] = [];
-        for (const uid of batch) {
+        const tickStart = performance.now();
+        // 时间预算：一帧只花 ~5ms 建 CM，剩下的让给绘制与输入。
+        // 单个 CM 创建本身不可分割，预算只保证不会连续创建多个。
+        const BUDGET_MS = 5;
+        while (c.queue.length > 0) {
+            if (performance.now() - tickStart > BUDGET_MS) break;
+            const uid = c.queue.shift()!;
             c.queued.delete(uid);
             const node = c.byUid.get(uid);
             if (!node?.wrapper || !node.placeholder) continue;
-            // 只换「在画布上」的占位：离屏节点等挂载时再入队，避免
+            // 只换在画布上的占位：离屏节点等挂载时再入队，避免
             // 大文档一次性把几十个 CM 全建出来（内存/首屏都受益）
             if (node.wrapper.parentElement !== c.nodeLayer) continue;
+            const visible =
+                node.x + node.width >= left &&
+                node.x <= right &&
+                node.y + node.height >= top &&
+                node.y <= bottom;
+            if (!visible) continue;
             // 已排队期间可能被 setData 复用了真实显示实例（拖动回写里
             // 很常见）：此时再走 createDisplay 会白造一个 CM，旧的
             // EditorView 还会因为没人 destroy 而泄漏，所以直接跳过。

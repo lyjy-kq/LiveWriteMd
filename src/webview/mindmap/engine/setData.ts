@@ -11,8 +11,7 @@
 import type { MapCanvas } from './canvas.js';
 import type { NodeDisplay } from '../miniCm.js';
 import type { MindMapTreeNode } from '../types.js';
-import { PROGRESSIVE_THRESHOLD } from './canvasConstants.js';
-import { buildMapModel, walkAll } from './model.js';
+import { buildMapModel, walkAll, walkVisible } from './model.js';
 import type { MapNode } from './model.js';
 import type { DisplayEntry } from './canvas.js';
 
@@ -203,10 +202,16 @@ export function setData(
 
     // 5. 重建元素外观；新节点 / 内容变化的节点重新量尺寸
     c.progressiveCount = 0;
-    // 只有首次渲染同步建一批真实 CM；后续更新全部交给 pump 按需换真
-    c.eagerDisplayBudget = oldRoot ? 0 : PROGRESSIVE_THRESHOLD;
+    // 首次渲染也全部走占位 + 换真泵：以前首屏同步建 24 个 mini-CM，
+    // 加上整树测量 / 连线 / 展开按钮，第一帧被一个数百毫秒的长任务
+    // 堵住（165Hz 下感知更明显）。占位文本与真实渲染同字号同字体，
+    // 首屏先出来，最近视口的占位在随后几帧内换真。
+    c.eagerDisplayBudget = 0;
+    // wrapper / 占位内容 / 尺寸测量都只做**可见节点**：3207 节点的
+    // 文档默认展开只显示几十个，其余收起子树的 DOM、computeDoc、
+    // 测量全是白费。展开时 mountNode 会补建（节点第一次可见才付钱）。
     const toMeasure: MapNode[] = [];
-    walkAll(newRoot, (node) => {
+    walkVisible(newRoot, (node) => {
         c.ensureWrapper(node);
         c.ensureContent(node);
         // 内容变了的节点 ensureContent 会重建显示实例并把 measured 置 false

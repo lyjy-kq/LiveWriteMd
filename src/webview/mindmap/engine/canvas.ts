@@ -673,26 +673,31 @@ export class MapCanvas {
     setActive(active: boolean): void {
         this.active = active;
         if (!active) return;
-        // 隐藏期间量出来的尺寸是 0：重新量一遍再布局
-        let needMeasure = false;
+        // 隐藏期间量出来的尺寸是 0：重新量一遍再布局。
+        // 只处理**可见**节点（收起子树根本不会参与布局），并且把
+        // 逐个 measureNode（每个一次强制布局）合并成一次 measureNodes。
+        const toMeasure: MapNode[] = [];
         if (this.root) {
-            walkAll(this.root, (node) => {
-                if (!node.measured || node.width <= 0 || node.height <= 0) needMeasure = true;
-            });
-        }
-        if (needMeasure && this.root) {
-            this.progressiveCount = 0;
-            walkAll(this.root, (node) => {
+            walkVisible(this.root, (node) => {
+                if (node.measured && node.width > 0 && node.height > 0) return;
                 this.ensureWrapper(node);
                 this.ensureContent(node);
-                this.measureNode(node);
+                if (!node.measured || node.width <= 0 || node.height <= 0) {
+                    toMeasure.push(node);
+                }
             });
+        }
+        if (toMeasure.length > 0) {
+            this.progressiveCount = 0;
+            this.measureNodes(toMeasure);
         }
         this.relayout();
         // 每次切回导图都 fit 一次（与旧实现一致，容器尺寸可能已经变了）
         this.fit();
         this.updateViewport();
         this.scheduleMeasureSettle();
+        // 隐藏期间换真泵会暂停；回来时把积压的可见占位继续换真
+        this.resumePump();
     }
 
 

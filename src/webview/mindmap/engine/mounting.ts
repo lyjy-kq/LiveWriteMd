@@ -16,8 +16,16 @@ import type { MapNode } from './model.js';
 // 挂载 / 虚拟化
 // ==================================================================
 
-/** 挂载节点到画布。 */
-export function mountNode(c: MapCanvas, node: MapNode) : void {
+/**
+ * 挂载节点到画布。
+ *
+ * @param enqueueUpgrade 占位节点挂上后是否排队换真。视口内的挂载传 true；
+ *   预热泵为大圈离屏节点挂载时传 false —— 离屏节点即使挂上了也不该
+ *   消耗 mini-CM 创建预算，等它真的进入视口再由 updateViewport 入队。
+ */
+export function mountNode(c: MapCanvas, node: MapNode, enqueueUpgrade = true) : void {
+    // 首次可见的节点才创建 wrapper（收起子树不再为 3207 个节点白建 DOM）
+    if (!node.wrapper) c.ensureWrapper(node);
     if (!node.wrapper) return;
     c.mountTotal += 1;
     c.refreshWrapperClasses(node);
@@ -41,11 +49,17 @@ export function mountNode(c: MapCanvas, node: MapNode) : void {
     if (!node.display && !node.placeholder && !node.wrapper.firstElementChild) {
         c.ensureContent(node);
     }
+    // 展开收起子树时，占位是此刻才建的：尺寸还是估值，挂上后补一次
+    // 批量测量（不要每个节点单独 measureNode，那是一次强制布局一步）。
+    if (!node.measured) {
+        c.settleUids.add(node.uid);
+        c.scheduleMeasureSettle();
+    }
     c.positionNode(node);
     // 占位节点进入视口：排队换真。
     // 换真泵只处理「已在画布上」的占位，离屏节点等挂载后再入队，
     // 避免大文档一次性把几十个 CM 全建出来。
-    if (node.placeholder) c.enqueueSwap(node.uid);
+    if (node.placeholder && enqueueUpgrade) c.enqueueSwap(node.uid);
     // 之前离屏、没赶上 settle 的新实例：进入视口后补一次
     else if (c.settleUids.has(node.uid)) c.scheduleMeasureSettle();
 }
@@ -134,6 +148,12 @@ export function updateViewport(c: MapCanvas) : void {
         } else if (!c.mounted.has(node.uid)) {
             c.mounted.add(node.uid);
             c.mountedVersion += 1;
+            // 预热时挂上但没换真的占位：进入小圈后再入队
+            if (node.placeholder) c.enqueueSwap(node.uid);
+        } else if (node.placeholder) {
+            // 已经挂载、但一直是占位（预热挂载 / 上次泵跳过）：现在在
+            // 视口里，补一次入队。enqueueSwap 自带去重，每帧调用无妨。
+            c.enqueueSwap(node.uid);
         }
     });
     // 折叠 / 删除而离开可见树的节点无条件卸载（大圈判据不适用：
@@ -231,7 +251,7 @@ export function schedulePrewarm(c: MapCanvas, delay = PREWARM_DELAY_MS) : void {
             if (!node.wrapper || node.wrapper.parentElement === c.nodeLayer) return;
             // 小圈必须始终是满的（数量有限，一次补齐）
             if (inBox(node, inner)) {
-                c.mountNode(node);
+                c.mountNode(node, true);
                 return;
             }
             if (!inBox(node, outer)) return;
@@ -240,7 +260,9 @@ export function schedulePrewarm(c: MapCanvas, delay = PREWARM_DELAY_MS) : void {
                 more = true;
                 return;
             }
-            c.mountNode(node);
+            // 大圈只是把 DOM 预热挂上，不排队换真：离屏的 mini-CM
+            // 没有任何人会看，却会持续消耗换真泵（加载期抖动的来源）。
+            c.mountNode(node, false);
             mountedRing++;
         });
         // 大圈外圈还有存货就接着排下一轮
